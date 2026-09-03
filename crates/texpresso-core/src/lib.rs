@@ -5,6 +5,7 @@
 
 pub mod compose;
 pub mod log_parser;
+pub mod outline;
 pub mod project;
 pub mod scheduler;
 pub mod settings;

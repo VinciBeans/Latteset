@@ -1,7 +1,7 @@
 // 服务层（modules.md §9.1）：唯一碰 IPC 的层。
 // 命令类型由 tauri-specta 自动生成（src/bindings.ts），本文件只做结果解包。
 
-import { commands, type CmdError } from "../bindings";
+import { commands, type CmdError, type FileContent } from "../bindings";
 
 type Result<T> = Promise<{ status: "ok"; data: T } | { status: "error"; error: CmdError }>;
 
@@ -17,6 +17,8 @@ export const ipc = {
   listDir: (path: string) => unwrap(commands.listDir(path)),
   readFile: (path: string) => unwrap(commands.readFile(path)),
   saveAll: (files: { path: string; content: string }[]) => unwrap(commands.saveAll(files)),
+  getOutline: (buffers: FileContent[], files: string[] | null) =>
+    unwrap(commands.getOutline(buffers, files)),
   compileNow: () => unwrap(commands.compileNow()),
   abortCompile: () => unwrap(commands.abortCompile()),
   synctexForward: (file: string, line: number, column: number) =>

@@ -9,6 +9,12 @@ export const commands = {
 	listDir: (path: string) => typedError<DirEntryInfo[], CmdError>(__TAURI_INVOKE("list_dir", { path })),
 	readFile: (path: string) => typedError<string, CmdError>(__TAURI_INVOKE("read_file", { path })),
 	saveAll: (files: FileContent[]) => typedError<null, CmdError>(__TAURI_INVOKE("save_all", { files })),
+	/**
+	 *  文档大纲（源结构树）：解析在 core `outline` 模块（2026-09-03 从前端下沉）。
+	 *  输入：打开标签的实时缓冲（**缓冲优先**，未落盘也反映）+ 无根文件时的兜底文件列表；
+	 *  项目根/根文件取当前项目状态。输出按文档顺序嵌套（file:line 定位用）。
+	 */
+	getOutline: (buffers: FileContent[], files: string[] | null) => typedError<OutlineNode[], CmdError>(__TAURI_INVOKE("get_outline", { buffers, files })),
 	compileNow: () => typedError<null, CmdError>(__TAURI_INVOKE("compile_now")),
 	abortCompile: () => typedError<null, CmdError>(__TAURI_INVOKE("abort_compile")),
 	synctexForward: (file: string, line: number, column: number) => typedError<SyncTexTarget, CmdError>(__TAURI_INVOKE("synctex_forward", { file, line, column })),
@@ -99,6 +105,25 @@ export type FilesChanged = {
 };
 
 export type FilesChangedEvent = FilesChanged;
+
+/**
+ *  文档大纲节点（get_outline 命令输出；解析逻辑见 [`crate::outline`]，2026-09-03 从
+ *  前端 `src/stores/outline.ts` 下沉，语义等价、单测锁定）。
+ */
+export type OutlineNode = {
+	/**  标题（`\section[short]{title}` 取 `{...}` 内内容并 trim）。 */
+	title: string,
+	/**  结构层级：0=part,1=chapter,2=section,3=subsection,4=subsubsection,5=paragraph,6=subparagraph。 */
+	level: number,
+	/**  项目内绝对路径（已归一化，与前端存储键一致）。 */
+	file: string,
+	/**  1-based 行号。 */
+	line: number,
+	/**  文件基名（界面显示用：`file:line`）。 */
+	fileBase: string,
+	/**  子节点（按文档顺序）。 */
+	children: OutlineNode[],
+};
 
 /**  pdf-updated 事件载荷。 */
 export type PdfUpdated = {

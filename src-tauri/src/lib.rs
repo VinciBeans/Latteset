@@ -123,6 +123,7 @@ fn build_specta_builder() -> tauri_specta::Builder<tauri::Wry> {
             commands::list_dir,
             commands::read_file,
             commands::save_all,
+            commands::get_outline,
             commands::compile_now,
             commands::abort_compile,
             commands::synctex_forward,

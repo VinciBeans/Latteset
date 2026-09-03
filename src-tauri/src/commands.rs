@@ -16,10 +16,11 @@ use texpresso_core::project::{collect_tex_files, find_candidates, resolve, Proje
 use texpresso_core::settings::{apply_patch, validate_overrides, ProjectOverrides, Settings, SettingsPatch};
 use texpresso_core::synctex::SourcePosition;
 use texpresso_core::types::{
-    DirEntryInfo, FileContent, ProjectInfo, SourcePositionDto, SyncTexTarget,
+    DirEntryInfo, FileContent, OutlineNode, ProjectInfo, SourcePositionDto, SyncTexTarget,
 };
 use texpresso_core::project::FileSystem;
 use texpresso_core::scheduler::SchedulerHandle;
+use std::collections::HashMap;
 use std::sync::Arc;
 use thiserror::Error;
 use tokio::sync::RwLock;
@@ -240,6 +241,41 @@ async fn save_content(state: &AppState, path: &Path, content: &str) -> Result<()
     }
     tokio::fs::write(&target, content).await?;
     Ok(())
+}
+
+// ---------------------------------------------------------------- 大纲
+
+/// 文档大纲（源结构树）：解析在 core `outline` 模块（2026-09-03 从前端下沉）。
+/// 输入：打开标签的实时缓冲（**缓冲优先**，未落盘也反映）+ 无根文件时的兜底文件列表；
+/// 项目根/根文件取当前项目状态。输出按文档顺序嵌套（file:line 定位用）。
+#[tauri::command]
+#[specta::specta]
+pub async fn get_outline(
+    buffers: Vec<FileContent>,
+    files: Option<Vec<String>>,
+    state: State<'_, AppState>,
+) -> Result<Vec<OutlineNode>, CmdError> {
+    let project = state
+        .project
+        .read()
+        .await
+        .clone()
+        .ok_or_else(|| CmdError::Invalid("尚未打开项目".into()))?;
+    let mut map = HashMap::with_capacity(buffers.len());
+    for fc in &buffers {
+        map.insert(texpresso_core::outline::normalize_path(&fc.path), fc.content.clone());
+    }
+    let fallback = files.map(|v| v.into_iter().map(PathBuf::from).collect::<Vec<_>>());
+    Ok(texpresso_core::outline::load(
+        &texpresso_core::outline::OutlineContext {
+            root: &project.root,
+            root_file: project.root_file.as_deref(),
+            buffers: &map,
+            fallback_files: fallback.as_deref(),
+        },
+        state.fs.as_ref(),
+    )
+    .await)
 }
 
 // ---------------------------------------------------------------- 编译

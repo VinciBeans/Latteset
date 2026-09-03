@@ -123,6 +123,25 @@ pub struct DirEntryInfo {
     pub is_dir: bool,
 }
 
+/// 文档大纲节点（get_outline 命令输出；解析逻辑见 [`crate::outline`]，2026-09-03 从
+/// 前端 `src/stores/outline.ts` 下沉，语义等价、单测锁定）。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
+pub struct OutlineNode {
+    /// 标题（`\section[short]{title}` 取 `{...}` 内内容并 trim）。
+    pub title: String,
+    /// 结构层级：0=part,1=chapter,2=section,3=subsection,4=subsubsection,5=paragraph,6=subparagraph。
+    pub level: u32,
+    /// 项目内绝对路径（已归一化，与前端存储键一致）。
+    pub file: String,
+    /// 1-based 行号。
+    pub line: u32,
+    /// 文件基名（界面显示用：`file:line`）。
+    #[serde(rename = "fileBase")]
+    pub file_base: String,
+    /// 子节点（按文档顺序）。
+    pub children: Vec<OutlineNode>,
+}
+
 /// SyncTeX 正向定位结果（源码 → PDF）。
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, Type)]
 pub struct SyncTexTarget {
