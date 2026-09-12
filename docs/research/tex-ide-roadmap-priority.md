@@ -77,12 +77,14 @@
 
 > 原计划内容（保留备查）：在 Windows 真机用中文文件名、中文目录、中文用户名、含空格路径四组样本跑通「打开 → 编译 → 预览 → SyncTeX」；把失败点固化为 e2e 用例。
 
-### ② 首次打开即用（引擎/编译链/字体自动推断）
-- **痛点**：P9 模板开箱即用 + P7 中文字体。用户下载学校/期刊模板"没做任何操作就报错：cls 未找到"。
-- **做什么**：打开项目时自动推断引擎与编译链——检测 `\documentclass`/`ctex`/`fontspec`/`biblatex`/`minted`（需 `-shell-escape`）/`subfiles`；缺失宏包给出可操作的提示；中文字体探测（`ctex-fontset-windows` 与系统字体可用性）。
+### ② 首次打开即用（引擎/编译链/字体自动推断） —— 🔍 **已分析（未实现）**，见 [P0-② 分析](./p0-2-first-open-analysis.md)
+- **分析结论（要点）**：本项**不能整体做**，实测把它砍成了三块——
+  1. **根文件多候选不可见**：`RootResolution::Multiple` 的候选列表在 `commands.rs:140` 被丢弃，前端只有 `console.warn`（`App.vue:94-97`）→ 用户"打开没反应"。修它只需 1 个契约字段 + 1 段 UI，**建议先做**（②-1）。
+  2. **引擎推断是刚需（实测）**：同一 `ctexart` 中文工程，`xelatex` exit 0；换成 `pdflatex` **exit 12**，log 全是 `! Use of ??? doesn't match its definition.`——用户不可能自诊（②-2）。
+  3. **编译链推断大部分不用做（实测）**：latexmk 自己就会跑 `bibtex`（日志 `Using bibtex to make bibliography file(s).`）与 `biber`（`biblatex/biber in use` → exit 0）。原清单里的 bib 工具/多次 pass 可删；只剩 `-shell-escape`（**待验证**，本机无 minted）。
+- **原计划（保留备查）**：打开项目时自动推断引擎与编译链——检测 `\documentclass`/`ctex`/`fontspec`/`biblatex`/`minted`（需 `-shell-escape`）/`subfiles`；缺失宏包给出可操作的提示；中文字体探测（`ctex-fontset-windows` 与系统字体可用性）。
 - **DoD**：给 3 个真实模板（ctexbook 中文论文、IEEEtran、biblatex 论文）零配置打开即可编译成功；推断结果在 UI 可见且可覆盖。
-- **验证方法**：把模板固化为 `test_file/projects/` 下的工程，纳入 e2e。
-- **风险**：推断规则会随模板千奇百怪而长尾化，需要"规则 + 手动覆盖"双轨，不能只靠启发式。
+- **风险**：推断规则会随模板千奇百怪而长尾化，需要"规则 + 手动覆盖"双轨，不能只靠启发式。分析文档另标注了**最大空白**：没有一手模板样本统计（决定 ②-2 优先级的关键证据缺失）。
 
 ### ③ 性能基准与回归基建
 - **痛点**：P5。当前 `test_file/projects/benchmark/` 在 [design.md](../design.md) 里标注**未提交**——意味着所有性能结论都无法回归。

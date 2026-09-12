@@ -124,3 +124,22 @@ DEBUG 编译失败：已从 .log 解析出错误条目 count=9 log=…\tmp\主�
 - **GUI 目视项（需 tauri server MCP 会话补做）**：pdf.js 经 asset 协议加载中文路径 PDF 的渲染、SyncTeX 高亮/跳转的可视确认。机制上 Tauri 的 `convertFileSrc` 会做 percent-encoding、asset scope 为 `**`，但**本次未目视确认**，不计入已验证。
 - **已知未修**：**编辑** GBK 源文件（`read_file` 严格 UTF-8）会失败并返回英文 IO 错误。本次范围是文件名/路径，未改该行为；若要支持"打开并转码显示 GBK 源文件"，需单独设计（含保存时的编码回写策略）。
 - 本机 `cargo test -p texpresso`（src-tauri）无法运行（见上一节），故当时 src-tauri 侧新增的中文用例（`fs_impl` / `runner` / `storage` / `commands`）**仅编译校验通过**（`cargo check -p texpresso --tests`）。**2026-09 更新**：随 ADR-0010 迁移后，`fs` / `runner` / `storage` 的中文用例已在 `texpresso-infra` 下实际运行通过（含 2 个需 latexmk 的 `#[ignore]` 集成用例）。
+
+## 探针文档含中文时不能用 pdflatex（2026-09 实测；附一条被证伪的假设）
+
+**现象**：用 PowerShell 生成探针 `.tex` 后 `latexmk -pdf` **exit 12**，文档内容看起来完全正常。
+
+**真实根因（已复核）**：探针里含**中文正文**，而 `-pdf`（pdflatex）不支持 CJK → 编译失败。换 `-xelatex` 即 exit 0。这与 P0-② 分析 §3.1 是同一个现象（引擎选错 = 首屏一堆不可读错误）。
+
+**⚠️ 被证伪的假设（记录以免重走）**：一度判断是 `Set-Content -Encoding UTF8` 写入了 **UTF-8 BOM**。实测证伪——
+
+| 写法 | 头 6 字节 | 结果 |
+|---|---|---|
+| `Set-Content -Encoding UTF8` | `5C 64 6F 63 75 6D`（`\docum`，**无 BOM**） | exit 0（纯 ASCII 内容） |
+| `[System.IO.File]::WriteAllText(..., UTF8Encoding($false))` | `5C 64 6F 63 75 6D` | exit 0 |
+
+本机为 **pwsh 7.6.5**：`-Encoding UTF8` 默认即为**无 BOM**（`utf8NoBOM`）。**BOM 不是原因**；把两次差异归因于 BOM 是错的，真正的差异是**内容里有中文**。
+
+**处置**：探针文档含中文时用 `xelatex`/`lualatex`；只有在 **Windows PowerShell 5.1**（非本机 `pwsh`）上才需要担心 `Set-Content -Encoding UTF8` 的 BOM 问题。
+
+> 与 AGENTS.md §4 的「PowerShell 转义」是同类排查场景：反斜杠过度转义、编码、**引擎选择**都会表现为 exit 12，先确认是哪一个再改。
