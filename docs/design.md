@@ -73,6 +73,42 @@
 
 对照预算：中小文档增量 1.5–2.3s，落在"大文档 3s 优秀"线内/附近；小文档接近及格线；**真正大文档（数百页/重图/bib）单遍必然超预算，属引擎上限**（后续文档预算说明需如实标注）。
 
+### 基准脚本与 2026-09 一轮实测（roadmap ③：性能基准与回归基建）
+
+**工具**（fixture 不入库，入库的是脚本——`test_file/projects/` 已 gitignore）：
+
+```bash
+node scripts/gen-bench-projects.mjs        # 生成六档（纯文本无二进制资产，任意机器可复现）
+node scripts/bench.mjs                     # 一条命令出报告；超预算退出码 1
+node scripts/bench.mjs --tiers=thesis --samples=5
+node scripts/bench.mjs --with-real         # 追加真实模板档（依赖本机 TeX Live 样例）
+```
+
+口径严格对齐产品：cwd=项目根、`latexmk -xelatex -outdir=tmp -synctex=1 -interaction=nonstopmode`，不加产品没传的参数；每档 3 次取中位数；先 warm-up 一次排掉文件系统冷缓存与字体缓存。**端到端 = debounce(500) + edit + preview(真机实测值)**。
+
+**实测（2026-09，本机 TeX Live 2026，xelatex，Windows）**：
+
+| 档 | 内容 | 冷编译 | 空跑(无改动) | 编辑触发 | 端到端(估) | 判定 |
+|---|---|---:|---:|---:|---:|---|
+| `tiny` | article 6 行 | 2307ms | 500ms | 1625ms | 2225ms | **FAIL**（小文档 2s 及格） |
+| `small-article` | 期刊论文（图表 + bibtex） | 6476ms | 502ms | 2593ms | 3193ms | **FAIL** |
+| `multifile` | ctexbook + `\include` 20 章 | 6465ms | 495ms | 2463ms | 3063ms | **FAIL** |
+| `graphics` | 30 个 TikZ 图 + 长表 | 2631ms | 499ms | 1826ms | 2426ms | EXCELLENT（大文档预算） |
+| `large` | 约 300 页纯文本 | 13532ms | 486ms | 4104ms | 4704ms | PASS（大文档 5s 及格） |
+| `thesis` | ctexbook 学位论文（目录/公式/bibtex） | 9412ms | 507ms | 3143ms | 3743ms | PASS |
+| `thesis-real-hithesis` | 真实模板样例（可选档，需 `--with-real`） | **>240s 未收敛** | — | — | — | 不计入判定 |
+
+**真机预览（tauri server MCP，同一 `multifile` 档：46 页 / 78KB）**：`fetch 11ms / parse 39ms / render 64ms / total 115ms / pagesRendered=7`
+→ **真实端到端 = 500 + 2463 + 115 = 3078ms**（脚本用 `--preview=100` 估算 3063ms，偏差 15ms，说明估算口径可用）；render 占预览耗时 **56%**，仍是主因。
+
+**三条结论**：
+
+1. **瓶颈在小文档的固定开销，不在大文档**。`tiny`（6 行）与 `large`（约 300 页）的编辑触发只差 2.5×（1625ms vs 4104ms），而内容量差两个数量级——说明 ≈1.5s 的固定开销（latexmk 启动 + xelatex 启动 + 字体加载）在主导小文档；`noop`（latexmk 判定最新、什么都不做）也要 **~0.5s**，这是任何触发的地板。
+2. **三档小文档全部超预算**，且按 design.md 的分类口径（"一次完整编译 ≤2s"）本机**已几乎不存在"小文档"**——连 6 行的 `tiny` 冷编译都要 2.3s。→ **预算口径需复核**：是放宽小文档预算，还是改为"相对基线/回归容忍度"（例如以 `tiny` 的 1.6s 为地板、其他档按倍数判定）。本轮不做结论，但数据已就位。
+3. **真实学位论文远超产品默认超时**：`thesis-real-hithesis` 冷编译 **>240s 未收敛**（另一次观察 >600s），而默认 `compile.timeout_secs = 120` → **必超时失败**。这是 roadmap ㉕ 的直接输入（合成 `thesis` 档 9.4s 是"论文规模"的下界，真实模板才是上界）。
+
+> 复现性：两轮独立运行的关键档差异 <5%（tiny edit 1617→1625ms、multifile edit 2461→2463ms），脚本可作回归基线。
+
 **端到端延迟**（编辑 → PDF 刷新 ≈ 防抖 500ms + latexmk + pdf.js 重载）：`multifile` 重载实测 `fetch≈7ms / parse≈103ms / render≈320ms / total≈400–450ms` → **render 占 ~75% 是瓶颈**（`canvasEpoch` 整页 canvas 重建 + 视口重绘 + 二次 `renderNearViewport`）。**A/B 优化已落地**（分页 DOM 虚拟化 + 同文件重载复用 canvas、仅缩放/换文档才重建）——见 [modules.md](./modules.md) §12。
 
 **A/B 优化后真实窗口复测（2026-08-25，tauri server MCP 驱动）**：`npm run tauri dev` + `VITE_TEXPRESSO_PROJECT=…/test_file/projects/multifile` 自动开项目 → 点「编译」→ `main.pdf`(3 页/108KB) 重载。**像素级视觉确认通过**（标题页/目录/正文正常，无黑屏/文字反转——此前受限点已解决）。**插桩修正**：把 `render` 从 setup 时间改为等挂载窗口渲染链落盘后的真实 canvas 绘制耗时（原 `pagesRendered` 恒 0）。**实测**：同文件复用 `fetch≈9–10ms / parse≈30ms / render≈59ms / total≈98–100ms / pagesRendered=2`；首次换文档 `render≈77ms / total≈112ms / pagesRendered=3`。**render 占总耗时 ~59%，仍为 PDF 重载开销主因**（一致结论）；3 页小文档总耗时 ~100ms 远低于延迟预算（先前 `render≈320ms/total≈400–450ms` 是 12 页文档数值，非同比）。

@@ -50,6 +50,36 @@
 
 **注意**：`test_file/e2e/drivers/`（msedgedriver 二进制）与 `test_file/e2e/node_modules/` 已 gitignore。
 
+## 真机验收清单（tauri server MCP 驱动，2026-09）
+
+> 用途：把"改完代码怎么确认真机没问题"固化成可重复的步骤。**性能基准的编译侧由 `scripts/bench.mjs` 自动测**，
+> 本清单负责**只有真实窗口才能验的部分**（预览耗时、点击链路、目视渲染）。前置：`npm run tauri dev`（需提权）
+> + `driver_session action=start`。
+
+**第 0 步（易踩）**：应用**重新构建/重启后**必须 `driver_session action=stop` → `action=start` 重建会话——
+`pluginVersion` 是建会话时抓取的元数据，不重建会一直显示旧值并误判"升级没生效"。
+
+| # | 检查项 | 操作 | 期望 |
+|---|---|---|---|
+| 1 | 项目打开 | `manage_window list` 确认窗口 → `webview_screenshot` | 标题栏显示项目绝对路径；左栏文件树非空 |
+| 2 | 错误列表（roadmap ④） | 点「编译」→ `webview_dom_snapshot` scoped `.error-list` | 条目两行式（原因 + `→` 建议）；头部「已诊断 N」；原始 `.log` 在 `title` |
+| 3 | 错误跳转 | `webview_find_element .entry` 取几何 → `webview_interact` 点第 2 条 → 读 `.cursor-pos` | 状态栏行号变为该条目的 `:行号` |
+| 4 | 根文件选择器（P0-②-1） | 打开多候选工程 → `webview_dom_snapshot` scoped `.picker-panel` → 点 `.file-row` | 弹窗列出候选（title 为绝对路径）；点选后弹窗关闭、`.needs-root` 匹配数归 0 |
+| 5 | 编译出 PDF | 点 `.btn.primary` → `webview_wait_for .page-wrap canvas` → `webview_screenshot` | 预览渲染出页面；页计数 `n / N` 正常 |
+| 6 | **预览耗时（基准）** | `webview_execute_js` 读 `window.__previewLastReload` | 得到 `{fetch,parse,render,total,pagesRendered}`；与 `scripts/bench.mjs` 的输出拼成端到端 |
+| 7 | 反向 SyncTeX | `webview_find_element .page-wrap canvas` 取页几何 → 点击正文区 → 读状态栏 | 编辑器切到对应 `.tex` 且行号≈点击句所在行（**注意**：点**目录区**会映射到生成的 `.toc`，属已知特性，非缺陷） |
+| 8 | 中文路径渲染（P0-①） | 用 `中文测试工程` 夹具重复 1/5 | 中文标题/目录/正文/公式正常渲染，`fetch` 无 404 |
+
+**取预览耗时的一行命令**（第 6 步的具体形态）：
+
+```js
+// webview_execute_js 的 script 参数
+(() => JSON.stringify(window.__previewLastReload))()
+```
+
+**失败面排查顺序**：① dev stdout 有无 `打开项目` / `触发编译` / `构造编译请求`（后端链路）；
+② `read_logs(console)` 有无前端异常；③ `ipc_get_backend_state` 确认连接的是本应用。
+
 ## Rust 单测：`cargo test -p texpresso`（src-tauri）在 Windows 启动即失败（2026-08）
 
 **现象**：`cargo test -p texpresso --lib` 编译成功，但测试二进制**加载即退出**——`STATUS_ENTRYPOINT_NOT_FOUND (0xc0000139)`，任何测试都未运行。
