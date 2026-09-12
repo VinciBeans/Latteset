@@ -13,7 +13,7 @@
 | [desktop-latex-editor-pain-points.md](./desktop-latex-editor-pain-points.md) | 桌面原生编辑器（TeXstudio/TeXworks/WinEdt/Texifier/Kile…）量化痛点 | **已完成**（2026-09） |
 | [online-latex-editor-pain-points.md](./online-latex-editor-pain-points.md) | 在线协作平台（Overleaf 为主 + Papeeria/Typst 对照） | **已完成**（2026-09） |
 | [vscode-latex-workshop-pain-points.md](./vscode-latex-workshop-pain-points.md) | 通用编辑器生态（VS Code + LaTeX Workshop，含迁移动机与回迁） | **已完成**（2026-09） |
-| [tex-ide-roadmap-priority.md](./tex-ide-roadmap-priority.md) | 由本调研派生的**可执行 Roadmap 排序**（W/D/C/V 评分 + 分档 + DoD + 批次） | **已完成**（2026-09） |
+| [tex-ide-roadmap-priority.md](./tex-ide-roadmap-priority.md) | 由本调研派生的**可执行 Roadmap 排序**（W/D/C/V 评分 + 分档 + DoD + 批次）；**第 2 版（2026-09 重整理）**：① 与 ②-1 已落地并移入基线、V/C 随 MCP 与 infra 拆分重估、新增 ⑲ 模板调研与快速通道小项 | **已完成**（第 2 版） |
 
 ## 0. 摘要（TL;DR）
 
