@@ -5,7 +5,8 @@
 use async_trait::async_trait;
 use std::path::Path;
 use texpresso_core::log_parser::{
-    diagnose, diagnose_timeout, pages_typeset, parse_log, TimeoutEvidence,
+    diagnose, diagnose_timeout, pages_typeset, parse_log, source_release_hint, DiagnosisKind,
+    TimeoutEvidence,
 };
 use texpresso_core::project::{collect_tex_files, FileSystem};
 use texpresso_core::scheduler::CompileRunner;
@@ -43,6 +44,44 @@ fn latexmk_input(root_file: &Path, project_root: &Path) -> String {
         .replace('\\', "/")
 }
 
+/// 编译命令构造（modules.md §2.6 算法）：cwd = 项目根，相对 input/include 才能解析。
+///
+/// 抽成独立函数是为了**可单测**（参数与环境变量都能直接断言，不必真的起进程）。
+fn compile_command(req: &CompileRequest, kind: CompileKind) -> tokio::process::Command {
+    let mut cmd = match kind {
+        // Quick：直调引擎一趟（实测比完整 latexmk 快 40% 中位，见 design.md §延迟预算实测附节）。
+        // 与 latexmk 的差异只在外层机制与收敛趟；产物路径与 Full 一致（都在 tmp/<stem>.pdf）。
+        CompileKind::Quick => {
+            let mut c = tokio::process::Command::new(req.engine.binary_name());
+            c.arg("-interaction=nonstopmode")
+                .arg("-synctex=1")
+                .arg(format!("-output-directory={OUT_DIR}"))
+                .arg(latexmk_input(&req.root_file, &req.project_root));
+            c
+        }
+        CompileKind::Full => {
+            let mut c = tokio::process::Command::new("latexmk");
+            c.arg(req.engine.latexmk_flag())
+                .arg(format!("-outdir={OUT_DIR}"))
+                .arg("-synctex=1")
+                .arg("-interaction=nonstopmode")
+                .arg(latexmk_input(&req.root_file, &req.project_root));
+            c
+        }
+    };
+    // 构建确定性（roadmap ㉚，2026-09 实测）：不设这个变量时，同一份源码连跑两次产出的 PDF
+    // **不是**逐字节相同的——差异只在 trailer 的 `/ID`（64 字节），而 XeTeX 用它做**内容无关**的
+    // 随机/时间种子。设成固定值后实测两份 PDF SHA-256 完全一致（见 scripts/check-determinism.mjs）。
+    // 这是"输出 diff / 只重排变化页"这类优化的前提：字节不同就分不清"真变了"还是"ID 抖了"。
+    // 副作用实测：**XeTeX 的 `\today` 不受它影响**（仍打印构建当天日期），PDF 里也不会因此多出
+    // `/CreationDate`——所以固定成 0（reproducible-builds 惯例）只影响 ID，不污染文档内容。
+    cmd.env("SOURCE_DATE_EPOCH", EPOCH_FOR_REPRODUCIBLE_BUILD);
+    cmd
+}
+
+/// 固定时间戳（0 = 1970-01-01，reproducible-builds 惯例）：只用来让引擎的 `/ID` 不随时钟抖动。
+const EPOCH_FOR_REPRODUCIBLE_BUILD: &str = "0";
+
 #[async_trait]
 impl CompileRunner for LatexmkRunner {
     async fn compile(&self, req: CompileRequest, cancel: CancellationToken) -> CompileOutcome {
@@ -62,29 +101,11 @@ impl CompileRunner for LatexmkRunner {
         }
 
         // 命令构造（modules.md §2.6 算法）：cwd = 项目根，相对 input/include 才能解析
-        let mut cmd = match kind {
-            // Quick：直调引擎一趟（实测比完整 latexmk 快 40% 中位，见 design.md §延迟预算实测附节）。
-            // 与 latexmk 的差异只在外层机制与收敛趟；产物路径与 Full 一致（都在 tmp/<stem>.pdf）。
-            CompileKind::Quick => {
-                let mut c = tokio::process::Command::new(req.engine.binary_name());
-                c.arg("-interaction=nonstopmode")
-                    .arg("-synctex=1")
-                    .arg(format!("-output-directory={OUT_DIR}"))
-                    .arg(latexmk_input(&req.root_file, &req.project_root));
-                debug!(engine = req.engine.binary_name(), "Quick 编译（单趟直调引擎）");
-                c
-            }
-            CompileKind::Full => {
-                let mut c = tokio::process::Command::new("latexmk");
-                c.arg(req.engine.latexmk_flag())
-                    .arg(format!("-outdir={OUT_DIR}"))
-                    .arg("-synctex=1")
-                    .arg("-interaction=nonstopmode")
-                    .arg(latexmk_input(&req.root_file, &req.project_root));
-                debug!(engine = req.engine.latexmk_flag(), "Full 编译（完整 latexmk 收敛）");
-                c
-            }
-        };
+        let mut cmd = compile_command(&req, kind);
+        match kind {
+            CompileKind::Quick => debug!(engine = req.engine.binary_name(), "Quick 编译（单趟直调引擎）"),
+            CompileKind::Full => debug!(engine = req.engine.latexmk_flag(), "Full 编译（完整 latexmk 收敛）"),
+        }
         cmd.current_dir(&req.project_root)
             .stdout(std::process::Stdio::null())
             .stderr(std::process::Stdio::null())
@@ -167,6 +188,8 @@ impl CompileRunner for LatexmkRunner {
                                     }
                                 })
                                 .collect();
+                            // roadmap ㉗：缺 .cls 且项目里确有 .ins/.dtx 时，把泛化建议换成具体命令
+                            let errors = self.enrich_source_release_hints(errors, &req.project_root).await;
                             let diagnosed = errors.iter().filter(|e| e.diagnosis.is_some()).count();
                             debug!(
                                 count = errors.len(),
@@ -194,6 +217,50 @@ impl CompileRunner for LatexmkRunner {
 }
 
 impl LatexmkRunner {
+    /// 源码版模板提示（roadmap ㉗）：编译报"缺 `.cls`"时，看看项目里是不是只有 `.ins`/`.dtx`。
+    ///
+    /// 判据是**看得见的事实**：项目根目录里存在哪些 `.ins`/`.dtx` 文件（源码版模板的发布形态）。
+    /// 具体的"该编哪个文件"由 core 的 [`source_release_hint`] 决定（同名优先、单一候选次之、
+    /// 拿不准就不改建议）。
+    async fn enrich_source_release_hints(
+        &self,
+        mut errors: Vec<ErrorEntry>,
+        project_root: &Path,
+    ) -> Vec<ErrorEntry> {
+        let needs_lookup = errors.iter().any(|e| {
+            e.diagnosis
+                .as_ref()
+                .is_some_and(|d| d.kind == DiagnosisKind::MissingClass && d.missing_file.is_some())
+        });
+        if !needs_lookup {
+            return errors;
+        }
+        // 只扫项目根（源码版模板的 .ins 就在根目录；扫全树代价大且没必要）
+        let candidates: Vec<String> = match self.fs.read_dir(project_root).await {
+            Ok(entries) => entries
+                .into_iter()
+                .filter(|e| !e.is_dir)
+                .filter_map(|e| e.path.file_name().map(|n| n.to_string_lossy().into_owned()))
+                .collect(),
+            Err(e) => {
+                debug!(root = %project_root.display(), "读项目根失败，跳过源码版模板识别：{e}");
+                return errors;
+            }
+        };
+        for entry in &mut errors {
+            let Some(diag) = entry.diagnosis.as_mut() else { continue };
+            if diag.kind != DiagnosisKind::MissingClass {
+                continue;
+            }
+            let Some(missing) = diag.missing_file.clone() else { continue };
+            if let Some(hint) = source_release_hint(&missing, &candidates) {
+                debug!(missing = %missing, "识别为源码版模板，替换为具体编译命令");
+                diag.hint = Some(hint);
+            }
+        }
+        errors
+    }
+
     /// 超时错误条目（roadmap ㉕）：采集**可观察证据** → 证据化诊断 → [`ErrorEntry`]。
     ///
     /// 证据三条：① 本次是否首编（开始时有无 `.aux`）；② 项目 `.tex` 源文件数；
@@ -294,11 +361,80 @@ mod tests {
 
     use super::*;
     use crate::synctex::SyncTexCli;
+    use std::path::PathBuf;
     use std::time::Duration;
     use texpresso_core::synctex::{SourcePosition, SyncTexProvider, SyncTexPosition};
 
     struct TempProject {
         dir: std::path::PathBuf,
+    }
+
+    // ---- 命令构造（不需要 latexmk，任何机器都能跑）----
+
+    fn sample_req() -> CompileRequest {
+        CompileRequest {
+            root_file: PathBuf::from("/proj/css/thesis.tex"),
+            project_root: PathBuf::from("/proj"),
+            engine: texpresso_core::types::Engine::XeLaTeX,
+            timeout: Duration::from_secs(120),
+            kind: CompileKind::Quick,
+        }
+    }
+
+    fn argv(cmd: &tokio::process::Command) -> Vec<String> {
+        cmd.as_std()
+            .get_args()
+            .map(|a| a.to_string_lossy().into_owned())
+            .collect()
+    }
+
+    #[test]
+    fn quick_command_calls_engine_directly() {
+        let cmd = compile_command(&sample_req(), CompileKind::Quick);
+        assert_eq!(cmd.as_std().get_program().to_string_lossy(), "xelatex");
+        assert_eq!(
+            argv(&cmd),
+            vec![
+                "-interaction=nonstopmode",
+                "-synctex=1",
+                "-output-directory=tmp",
+                // 嵌套根文件用**相对项目根的完整路径**（只取 stem 会在项目根下找不到文件）
+                "css/thesis.tex",
+            ]
+        );
+    }
+
+    #[test]
+    fn full_command_uses_latexmk_with_engine_flag() {
+        let mut req = sample_req();
+        req.engine = texpresso_core::types::Engine::LuaLaTeX;
+        let cmd = compile_command(&req, CompileKind::Full);
+        assert_eq!(cmd.as_std().get_program().to_string_lossy(), "latexmk");
+        assert_eq!(
+            argv(&cmd),
+            vec![
+                "-lualatex",
+                "-outdir=tmp",
+                "-synctex=1",
+                "-interaction=nonstopmode",
+                "css/thesis.tex",
+            ]
+        );
+    }
+
+    #[test]
+    fn both_paths_pin_source_date_epoch_for_reproducible_pdf() {
+        // roadmap ㉚：不固定这个变量时，同一份源码两次编译的 PDF 只差 trailer 的 /ID（实测 64 字节），
+        // 会让"输出 diff / 只重排变化页"分不清"真变了"和"ID 抖了"。
+        for kind in [CompileKind::Quick, CompileKind::Full] {
+            let cmd = compile_command(&sample_req(), kind);
+            let epoch = cmd
+                .as_std()
+                .get_envs()
+                .find(|(k, _)| k.to_string_lossy() == "SOURCE_DATE_EPOCH")
+                .map(|(_, v)| v.map(|v| v.to_string_lossy().into_owned()));
+            assert_eq!(epoch, Some(Some("0".to_string())), "{kind:?} 路径必须固定 SOURCE_DATE_EPOCH");
+        }
     }
 
     impl TempProject {

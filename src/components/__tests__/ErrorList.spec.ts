@@ -37,6 +37,7 @@ function timeoutEntry(suggested: number | null): ErrorEntry {
       cause: "编译在 120s 内没有跑完，但日志显示已经排版到第 37 页——是在推进，只是比上限慢",
       hint: `把编译超时提高到 ${suggested}s 后重试`,
       suggested_timeout_secs: suggested,
+      missing_file: null,
     },
   };
 }
@@ -118,6 +119,7 @@ describe("ErrorList（超时一键重试，roadmap ㉕）", () => {
           cause: "缺少宏包文件 nope.sty",
           hint: "执行 tlmgr install nope 安装",
           suggested_timeout_secs: null,
+          missing_file: "nope.sty",
         },
       },
     ]);

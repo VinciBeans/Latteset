@@ -4,6 +4,7 @@ import { describe, it, expect, beforeEach, vi } from "vitest";
 import { setActivePinia, createPinia } from "pinia";
 import { useEditorStore } from "../editor";
 import { useProjectStore } from "../project";
+import { ipc } from "../../services/ipc";
 
 vi.mock("../../services/ipc", () => ({
   ipc: {
@@ -87,5 +88,29 @@ describe("editorStore", () => {
     expect(editor.tabs.length).toBe(0);
     expect(editor.dirty.has(MAIN)).toBe(false);
     expect(editor.buffers.has(MAIN)).toBe(false);
+  });
+
+  // ---- roadmap ㉓：打开失败不再静默（非 UTF-8 源文件等）----
+
+  it("openFile：读盘失败 → 不开标签、设 openError（此前是无人接的 rejection）", async () => {
+    vi.mocked(ipc.readFile).mockRejectedValueOnce({
+      code: "Invalid",
+      message: "旧文件.tex 不是 UTF-8 编码（中文旧文件常见 GBK/GB18030），为避免保存时损坏原文件，编辑器不打开它。",
+    });
+    const editor = useEditorStore();
+    await editor.openFile(`${ROOT}/旧文件.tex`);
+    expect(editor.tabs.length).toBe(0);
+    expect(editor.activePath).toBeNull();
+    expect(editor.openError).toContain("不是 UTF-8 编码");
+  });
+
+  it("openFile：失败后再次成功打开 → 清掉 openError", async () => {
+    vi.mocked(ipc.readFile).mockRejectedValueOnce({ code: "Invalid", message: "坏了" });
+    const editor = useEditorStore();
+    await editor.openFile(`${ROOT}/bad.tex`);
+    expect(editor.openError).toBe("坏了");
+    await editor.openFile(MAIN);
+    expect(editor.openError).toBeNull();
+    expect(editor.tabs.map((t) => t.path)).toEqual([MAIN]);
   });
 });

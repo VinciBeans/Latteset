@@ -34,6 +34,13 @@ export function subscribeEvents(): () => void {
     }),
     events.settingsChanged.listen((e) => {
       useSettingsStore().setSettings(e.payload);
+      // 外部直接改 settings.json 也会走到这里（watch 热更新）：root_file 可能变了，
+      // 前端项目状态要跟上，否则状态栏还显示「未确定根文件」而编译其实已经能跑（roadmap ㉑）。
+      const project = useProjectStore();
+      const next = e.payload.root_file ?? null;
+      if (project.project && (project.project.root_file ?? null) !== next) {
+        project.syncProject().catch(() => {});
+      }
     }),
   );
 

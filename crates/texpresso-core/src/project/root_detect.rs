@@ -6,10 +6,29 @@
 //! `\includeonly` 未处理；编码假定 UTF-8。
 //! 逃生门：项目 settings.json 的 `root_file` 手动覆盖。
 
+use super::fs::FileSystem;
 use super::model::{RootCandidate, RootResolution};
+use super::scan::collect_tex_files;
 use regex::Regex;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
+
+/// 根文件探测的 **IO 编排**：收集 `.tex` → 读内容 → [`find_candidates`] → [`resolve`]。
+///
+/// 探测需要文件内容（`\documentclass` 声明 / `\input` 引用），而读盘一律经 [`FileSystem`] trait
+/// （设计决策 D4）——所以这个"编排"函数放在 core 里，由命令面与 watch 共用一份实现
+/// （此前只有命令面有它，watch 想同步 root_file 就得复制一遍）。
+/// 读单个文件失败（编码/权限）就跳过该文件：探测是尽力而为，不因一个坏文件整体失败。
+pub async fn detect_root(fs: &dyn FileSystem, root: &Path) -> std::io::Result<RootResolution> {
+    let files = collect_tex_files(fs, root).await?;
+    let mut contents: HashMap<PathBuf, String> = HashMap::with_capacity(files.len());
+    for f in &files {
+        if let Ok(text) = fs.read_to_string(f).await {
+            contents.insert(f.clone(), text);
+        }
+    }
+    Ok(resolve(find_candidates(&files, root, |p| contents.get(p).cloned())))
+}
 
 /// 提取 `\input{...}` / `\include{...}` 引用（modules.md §3.4）。
 fn extract_includes(content: &str) -> Vec<String> {
@@ -60,8 +79,7 @@ pub fn find_candidates(
 }
 
 /// 探测结果收敛（modules.md §5.4）：1 → Unique；>1 → Multiple（稳定排序）；0 → None。
-pub fn resolve(mut candidates: Vec<RootCandidate>) -> RootResolution {
-    match candidates.len() {
+pub fn resolve(mut candidates: Vec<RootCandidate>) -> RootResolution {    match candidates.len() {
         0 => RootResolution::None,
         1 => RootResolution::Unique(candidates.pop().unwrap().path),
         _ => {

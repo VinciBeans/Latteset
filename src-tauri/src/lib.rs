@@ -95,6 +95,8 @@ pub fn run() {
                 settings: settings.clone(),
                 scheduler: scheduler.clone(),
                 storage: storage.clone(),
+                // 外部改 settings.json 后要重解析 root_file（roadmap ㉑）→ 需要读盘能力
+                fs: fs.clone(),
                 overrides: overrides.clone(),
                 sink: Arc::new(TauriSink {
                     app: app.handle().clone(),

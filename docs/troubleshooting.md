@@ -73,6 +73,9 @@
 | 10 | 超时诊断 + 一键提超时重试（㉕） | 设置面板把超时改 **5s** → 清掉 `tmp/` 制造首编 → 点「编译」→ 读 `.error-list .entry` | 状态栏「失败·超时」；列表一条：原因含「已排版到第 N 页…在推进」（或「还没出现任何页面输出」）+ 建议 + 按钮**「提高到 900s 并重试」**（首编跳档）；点按钮后 `get_settings` 超时变为 900、编译启动并转「就绪」、条目消失。**注意**：这一项会把全局 `settings.json` 的超时改掉，验完记得改回 120 |
 | 11 | SyncTeX 生成产物回落（㉒） | 点 PDF **目录区**（`multifile` 第 3 页中部，x≈20% 页宽 / y≈65–85% 页高）→ 读 `.sync-note` 与标签页 | 工具条提示「此处来自自动生成的文件 main.toc（…）」或「已回落到最近的源码（main.tex:37，向下探测）」；**标签页不得出现 `main.toc`**；提示约 5s 后自动消失 |
 | 12 | 正向 SyncTeX 高亮（⑳，`webview_interact` 无修饰键） | 用 Vite 预打包 URL 动态 import Monaco → `ed.setPosition(...)` → 对编辑器 DOM 派发 `mousedown/mouseup/click`（带 `ctrlKey: true`）→ 读 `.highlight` 的 `display/left/top` | 恰好一个 `.highlight` 为 `display: block` 且落在目标页；编辑器 `onMouseDown(ctrlKey)` 是真实入口，派发等价于用户 Ctrl+点击 |
+| 13 | 非 UTF-8 源文件提示（㉓） | 夹具 `中文GBK工程` → 展开 `子目录` → 点 `gbk.tex` → 读 `.open-error` 与标签页 | 状态栏出现中文提示「…不是 UTF-8 编码…另存为 UTF-8…」；**不开新标签**（此前是无人接的 rejection） |
+| 14 | 源码版模板提示（㉗） | 夹具 `源码版模板工程`（`\documentclass{nosuchthesis}` + `nosuchthesis.ins/.dtx`）→ 点「编译」→ 读第一条错误 | 「缺少文档类文件 nosuchthesis.cls」+「项目里有源码版模板文件 `nosuchthesis.ins`：先执行 `xelatex nosuchthesis.ins`…」（**必须是 `.ins`**，不能是 `.dtx`） |
+| 15 | 外部改 settings.json 生效（㉑） | 夹具 `多候选工程`（先把 `.texpresso/settings.json` 置为 `{}` 并让它生效）→ 从**外部**写入 `{"root_file":"main.tex"}` → 看状态栏；随后改回 `{}` | 第一次：日志 `设置热更新：内存 root_file 已同步 from=None to=Some(…)` 且「未确定根文件」消失；改回：`from=Some(…) to=None` 且提示**回来**。**必须用非原子写法**（PowerShell `Set-Content` 就会"截断 → 写入"，正好覆盖竞态），原子替换测不出这条 |
 
 **取预览耗时的一行命令**（第 6 步的具体形态）：
 
@@ -283,6 +286,22 @@ xelatex -interaction=nonstopmode -synctex=1 -output-directory=tmp main.tex   # m
 ```
 
 诊断文案里已经写上这条建议（`DiagnosisKind::aux_write_failed`）。
+
+## 外部（非原子）写 settings.json：watcher 会读到半截文件（2026-09 实测，㉑ 顺带修）
+
+**现象**：用 PowerShell `Set-Content` / 记事本改 `.texpresso/settings.json`（或全局 `settings.json`），应用**有时不响应**——日志里能看到：
+
+```
+DEBUG watch 原始事件: [".texpresso\settings.json"] kind=Modify(Any)
+WARN 项目设置解析失败，忽略外部修改：….texpresso\settings.json      ← 读到的是"截断后、写入前"的空文件
+DEBUG watch 原始事件: [".texpresso\settings.json"] kind=Modify(Any)  ← 第二次事件
+```
+
+**根因**：这类写入是"**截断 → 写入 → 关闭**"三步，watcher 会收到**两个** Modify 事件，中间存在文件为空/被占用的窗口：第一次读拿到空内容（JSON 解析失败），第二次读可能撞上共享冲突（`read_to_string` 直接失败）。旧实现两种情况都只是"忽略这次修改"（后者连日志都没有），用户侧就是「改了没反应」。
+
+**处置（已落地）**：`handle_settings_change` 改为 **3 次 × 150ms 短重试**（每次重试重新读 + 重新解析），最终仍失败才打警告。**验收要点**：必须用非原子写法复现（`Set-Content` 即可），用"先写临时文件再 rename"的原子替换测不出这条。
+
+**另注**：应用自己写设置走的是原子写（`atomic_write` + 自写盘 hash 过滤），不受此影响。
 
 ## 探针文档含中文时不能用 pdflatex（附一条被证伪的假设）
 

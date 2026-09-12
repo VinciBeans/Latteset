@@ -12,8 +12,8 @@ use std::path::{Path, PathBuf};
 use tauri::State;
 use texpresso_core::compose::compile_request_manual;
 use texpresso_core::project::{
-    collect_tex_files, find_candidates, is_tex_file, resolve, resolve_creatable_in_project,
-    resolve_in_project, resolve_project_root, PathError, ProjectState, RootResolution,
+    is_tex_file, resolve_creatable_in_project, resolve_in_project, resolve_project_root, PathError,
+    ProjectState, RootResolution,
 };
 use texpresso_core::settings::{apply_patch, validate_overrides, ProjectOverrides, Settings, SettingsPatch};
 use texpresso_core::synctex::{classify_inverse_target, InverseTarget, SourcePosition};
@@ -93,20 +93,10 @@ async fn detect_root(
     state: &AppState,
     root: &Path,
 ) -> Result<RootResolution, CmdError> {
-    let files = collect_tex_files(state.fs.as_ref(), root)
+    // IO 编排在 core（`project::detect_root`），命令面只做错误翻译——watch 的热更新路径共用同一份实现
+    texpresso_core::project::detect_root(state.fs.as_ref(), root)
         .await
-        .map_err(|e| CmdError::Internal(format!("扫描项目失败：{e}")))?;
-    // 探测需要文件内容（\documentclass 声明 / \input 引用）：一次读入后闭包只查表，
-    // core 的 find_candidates 保持纯函数（读盘一律经 FileSystem trait）。
-    let mut contents: HashMap<PathBuf, String> = HashMap::with_capacity(files.len());
-    for f in &files {
-        if let Ok(text) = state.fs.read_to_string(f).await {
-            contents.insert(f.clone(), text);
-        }
-    }
-    Ok(resolve(find_candidates(&files, root, |p| {
-        contents.get(p).cloned()
-    })))
+        .map_err(|e| CmdError::Internal(format!("扫描项目失败：{e}")))
 }
 
 /// 当前项目信息（`get_project` 与 `open_project` 共用）。
@@ -244,7 +234,24 @@ pub async fn list_dir(path: String, state: State<'_, AppState>) -> Result<Vec<Di
 #[specta::specta]
 pub async fn read_file(path: String, state: State<'_, AppState>) -> Result<String, CmdError> {
     let path = validate_in_project(&state, Path::new(&path)).await?;
-    state.fs.read_to_string(&path).await.map_err(CmdError::from)
+    match state.fs.read_to_string(&path).await {
+        Ok(text) => Ok(text),
+        // 非 UTF-8（中文旧文件常见 GBK/GB18030）：给出**能行动**的中文提示——
+        // 此前是英文 IO 错误「stream did not contain valid UTF-8」，用户看不懂也不知道怎么办。
+        // 之所以不"容错解码后照常打开"：编辑器保存时会把替换字符（U+FFFD）写回磁盘，
+        // 等于**静默损坏**用户文件——宁可拒绝打开并说清怎么转码（roadmap ㉓）。
+        Err(e) if e.kind() == std::io::ErrorKind::InvalidData => {
+            let name = path
+                .file_name()
+                .map(|n| n.to_string_lossy().into_owned())
+                .unwrap_or_else(|| path.display().to_string());
+            Err(CmdError::Invalid(format!(
+                "{name} 不是 UTF-8 编码（中文旧文件常见 GBK/GB18030），为避免保存时损坏原文件，编辑器不打开它。\
+                 处理办法：用记事本/VS Code 等另存为 UTF-8（或 GB18030 → UTF-8 转换）后再打开"
+            )))
+        }
+        Err(e) => Err(CmdError::from(e)),
+    }
 }
 
 #[tauri::command]

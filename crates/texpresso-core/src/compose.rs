@@ -9,6 +9,7 @@ use crate::settings::Settings;
 use crate::types::{CompileKind, CompileRequest};
 use std::path::Path;
 use std::time::Duration;
+use tracing::debug;
 
 /// 翻译所需的上下文快照（由 src-tauri 组合层从状态中取）。
 #[derive(Clone, Copy)]
@@ -27,14 +28,27 @@ pub struct ComposeContext<'a> {
 /// **强度 = Quick**（roadmap ㉘）：编辑期只要快速出图，引用/目录可能落后一趟；
 /// 由「空闲收敛」（前端在停手后调 `compile_request_manual`）与「首编」兜底正确性。
 /// 若项目尚无构建产物，runner 会把 Quick 自动升级为 Full（见 infra::runner）。
+///
+/// **决策日志**（roadmap ㉛）：不触发时把**原因**打出来（哪个条件没过），
+/// 否则用户只能看到"改了没反应"。
 pub fn compile_request_for_change(ctx: ComposeContext<'_>, changed: &Path) -> Option<CompileRequest> {
-    let root_file = ctx.project.root_file.as_ref()?;
+    let Some(root_file) = ctx.project.root_file.as_ref() else {
+        debug!(changed = %changed.display(), "不触发编译：尚未确定根文件（root_file 为空）");
+        return None;
+    };
     if !changed.starts_with(&ctx.project.root) {
+        debug!(changed = %changed.display(), "不触发编译：变化路径在项目根之外");
         return None;
     }
     if is_ignored(changed, &ctx.project.root) {
+        debug!(changed = %changed.display(), "不触发编译：路径被忽略规则排除（tmp/、隐藏项或非 .tex）");
         return None;
     }
+    debug!(
+        changed = %changed.display(),
+        root = %root_file.display(),
+        "触发编译（编辑触发 = Quick 单趟）"
+    );
     Some(CompileRequest {
         root_file: root_file.clone(),
         project_root: ctx.project.root.clone(),

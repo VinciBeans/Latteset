@@ -20,6 +20,11 @@ export const useEditorStore = defineStore("editor", () => {
   const lastSaved = ref<Map<string, number>>(new Map());
   /** 外部修改冲突提示（打开且脏 → 保留本地）。 */
   const externalConflict = ref<Set<string>>(new Set());
+  /**
+   * 打开文件的失败提示（roadmap ㉓）：非 UTF-8 源文件、路径不可读等。
+   * 此前 openFile 的 rejection 无人接（文件树点击没有 await/catch）→ 用户看到的是"点了没反应"。
+   */
+  const openError = ref<string | null>(null);
 
   const project = useProjectStore();
   const activeTab = computed(() => tabs.value.find((t) => t.path === activePath.value) ?? null);
@@ -27,19 +32,33 @@ export const useEditorStore = defineStore("editor", () => {
   async function openFile(rawPath: string, revealLine?: number) {
     const path = project.resolvePath(rawPath);
     if (!tabs.value.some((t) => t.path === path)) {
-      const content = await ipc.readFile(path);
+      let content: string;
+      try {
+        content = await ipc.readFile(path);
+      } catch (e) {
+        openError.value = cmdErrorMessage(e);
+        console.error("打开文件失败：", e);
+        return;
+      }
       // 去重需在 await 后复检：并发的 openFile（如树节点快速双击）都在 await 前通过了 some 判断，
       // 此处复检避免重复开标签（复检后的 push 是同步的，不会再有并发窗口）。
       if (!tabs.value.some((t) => t.path === path)) {
         tabs.value.push({ path, name: path.split(/[/\\]/).pop() ?? path });
         buffers.value.set(path, content);
       }
+      openError.value = null;
     }
     activePath.value = path;
     if (revealLine) {
       // 让 EditorPane 感知定位请求
       pendingReveal.value = { path, line: revealLine };
     }
+  }
+
+  /** CmdError（`{code, message}`）取人话；未知形状退化为文本。 */
+  function cmdErrorMessage(e: unknown): string {
+    if (typeof e === "object" && e && "message" in e) return String((e as { message: unknown }).message);
+    return String(e);
   }
 
   function closeTab(path: string) {
@@ -129,7 +148,7 @@ export const useEditorStore = defineStore("editor", () => {
   }
 
   return {
-    tabs, activePath, dirty, buffers, lastSaved, externalConflict, activeTab,
+    tabs, activePath, dirty, buffers, lastSaved, externalConflict, openError, activeTab,
     openFile, closeTab, markDirty, markSaved, markSaving, rollbackSaving,
     onFilesChanged, acceptExternal,
     pendingReveal, consumeReveal,

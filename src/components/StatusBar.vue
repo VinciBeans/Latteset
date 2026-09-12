@@ -75,6 +75,15 @@ async function toggleMode() {
     >
       外部修改：{{ p.split("/").pop() }}
     </span>
+    <!-- 打开文件失败（roadmap ㉓：非 UTF-8 源文件等）——此前只有 console.error，点了没反应 -->
+    <span
+      v-if="editor.openError"
+      class="open-error"
+      :title="editor.openError"
+      @click="editor.openError = null"
+    >
+      {{ editor.openError }}
+    </span>
     <span class="spacer" />
     <span class="cursor">
       <span class="cursor-file">{{ editor.activeTab?.name ?? "" }}</span>
@@ -118,8 +127,7 @@ async function toggleMode() {
   border-radius: 5px;
 }
 /* 草稿编译提示（roadmap ㉘）：编辑期单趟出图，目录/引用页码可能落后一趟 */
-.draft {
-  background: rgba(255, 181, 74, 0.18);
+.draft {  background: rgba(255, 181, 74, 0.18);
   color: #b8791a;
   padding: 2px 9px;
   border-radius: 5px;
@@ -135,6 +143,17 @@ async function toggleMode() {
   font-weight: 600;
 }
 .needs-root:hover { background: rgba(255, 181, 74, 0.3); }
+/* 打开文件失败：一条可读的错误（点一下关掉） */
+.open-error {
+  cursor: pointer;
+  max-width: 60%;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  background: rgba(255, 122, 110, 0.14);
+  color: #e85f52;
+  padding: 2px 9px;
+  border-radius: 5px;
+  font-weight: 600;
+}
 .spacer { flex: 1; }
 .cursor { display: inline-flex; align-items: center; gap: 9px; }
 .cursor-file { color: var(--ink); font-family: var(--mono); max-width: 320px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

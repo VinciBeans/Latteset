@@ -154,6 +154,22 @@ node scripts/bench.mjs --with-real         # 追加真实模板档（依赖本�
 - 3 页文档总耗时 ~100ms 远低于延迟预算；更早一次 12 页 `multifile` 的 `render≈320ms / total≈400–450ms` 是旧插桩数值，与上表不可直接比较。
 - `test_file/projects/benchmark/` 为基准工程（未提交）。
 
+### 构建确定性（roadmap ㉚：为"输出 diff / 只重排变化页"打地基）
+
+**问题**：TeX 的 PDF 写入器会在 trailer 放一个 `/ID`，其取值与**时钟**有关（PDF 里本来不写 `/CreationDate`）。不处理时"同一份源码编译两次"字节不同，任何基于字节比较的增量渲染都分不清"真改了"还是"ID 抖了"。
+
+**实测（`node scripts/check-determinism.mjs`，三档样本 × 两条编译路径，各连跑两次、间隔 5s）**：
+
+| 场景 | 不固定 `SOURCE_DATE_EPOCH` | 固定 `SOURCE_DATE_EPOCH=0`（现在的默认） |
+|---|---|---|
+| `multifile` Full（latexmk） | ✗ 不一致（长度 95445 vs 95443） | ✓ 逐字节一致 |
+| `multifile` Quick（直调 xelatex） | ✗ 不一致（首差 @92143，共 67 字节） | ✓ 逐字节一致 |
+| `beamer工程` / `bench/thesis` × 两条路径 | ✗ 不一致 | ✓ 逐字节一致 |
+
+**结论与副作用（都已实测）**：runner 给两条编译路径都注入 `SOURCE_DATE_EPOCH=0` 后，六个组合全部逐字节一致；该变量**不影响 XeTeX 的 `\today`**（`\typeout{TODAYMARK=\today}` 仍打印构建当天日期），也**不会**让 PDF 多出 `/CreationDate`——所以固定 epoch 只掐掉 `/ID` 的时钟抖动，不污染用户文档的日期语义。
+
+**边界**：文档**内容**里含日期（`\date{\today}`）时，跨天编译字节当然会变——那是内容变了，不是构建不确定性。
+
 ## 预览
 
 - **内嵌 PDF 面板**（pdf.js）：编译成功后自动刷新、保持滚动位置（v1 必须）
@@ -173,6 +189,7 @@ node scripts/bench.mjs --with-real         # 追加真实模板档（依赖本�
 ## 编辑器
 
 - **v1（已实现）**：语法高亮（自研 Monarch）、查找替换、错误跳转、**中文 IME 兼容验证**（Windows 首发，webview 组合输入是已知坑，实操要点见 troubleshooting）
+  - **非 UTF-8 源文件（roadmap ㉓）**：打开时**明确拒绝并给中文提示**（"用记事本/VS Code 另存为 UTF-8…"），状态栏红色提示条显示，不开标签页。**不做 lossy 打开**：编辑器保存会把替换字符写回磁盘，等于静默损坏用户文件。此前是英文 IO 错误 + 无人接的 rejection（表现为"点了文件没反应"）。
 - **语言特性（已实现）**：环境块折叠（`\begin{env}`/`\end{env}`，含嵌套）、多光标（Alt+点击/Alt+方向，Ctrl+D 加选；修饰符用 alt 以免与 SyncTeX 的 Ctrl+点击冲突）、代码片段（LaTeX CompletionItemProvider，覆盖文档骨架/环境/章节/数学/格式/文件操作，Tab 展开）。解析与折叠语义见 [modules.md](./modules.md) §9.5
 - **v1.1（规划）**：texlab LSP、拼写检查
 

@@ -13,6 +13,9 @@ async-trait.workspace = true
 thiserror.workspace = true
 regex.workspace = true
 serde_json = "1.0.151"
+# 日志门面（roadmap ㉛）：让"为什么这次编译被合并/跳过/失败/重试"和触发点在同一处打出来。
+# 只是 facade，不是 IO——ADR-0006 的"core 无 IO"仍成立（订阅者由上层安装）。
+tracing.workspace = true
 
 [dev-dependencies]
 tokio = { version = "1", features = ["full"] }

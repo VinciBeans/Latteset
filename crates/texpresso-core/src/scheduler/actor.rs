@@ -15,6 +15,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
+use tracing::{debug, info, warn};
 
 /// 事件输出：三个通道闭包（由 src-tauri 注入为 tauri 事件；测试注入收集器）。
 /// scheduler 不知道 tauri 存在（信息局部性：依赖注入而非全局）。
@@ -146,7 +147,23 @@ impl Scheduler {
                     // 合并：最多一个等待条目，总是最新
                     // 事件纪律：仅当队列从空变非空才广播 Queued（状态无变化不重复发）
                     let was_empty = self.queue.is_empty();
+                    let replaced = self.queue.take();
                     let draft = req.kind == CompileKind::Quick;
+                    // roadmap ㉛：把"为什么这次要排队/被合并掉"打出来——用户看到的
+                    // 「点了没反应」「白编了一次」几乎都能从这几行日志还原
+                    match &replaced {
+                        Some(old) => debug!(
+                            old_root = %old.root_file.display(),
+                            new_root = %req.root_file.display(),
+                            kind = ?req.kind,
+                            "编译请求合并：队列中的旧请求被最新请求替换（合并队列只留一个待办）"
+                        ),
+                        None => debug!(
+                            root = %req.root_file.display(),
+                            kind = ?req.kind,
+                            "编译器忙：新请求入队等待（运行中的编译不打断）"
+                        ),
+                    }
                     self.queue.push(req);
                     if was_empty {
                         self.emitter.status(CompileStatusDto {
@@ -159,6 +176,8 @@ impl Scheduler {
             }
             SchedulerCommand::Abort => {
                 // 手动终止：停运行 + 清队列（design.md）
+                let dropped = self.queue.take().is_some();
+                debug!(had_pending = dropped, "手动终止：停运行中的编译并清空等待队列");
                 if let Some(job) = self.running.as_mut() {
                     job.aborted = true;
                 }
@@ -177,6 +196,13 @@ impl Scheduler {
         let token = cancel.clone();
         // roadmap ㉘：把强度带进状态事件，前端据此提示"引用待更新"
         let draft = req.kind == CompileKind::Quick;
+        // roadmap ㉛：编译生命周期日志——"这次到底编没编、编的是哪份、什么强度"一眼可见
+        debug!(
+            root = %req.root_file.display(),
+            kind = ?req.kind,
+            timeout_s = req.timeout.as_secs(),
+            "开始编译"
+        );
         let req_for_task = req.clone();
         let handle = tokio::spawn(async move { runner.compile(req_for_task, token).await });
         self.running = Some(RunningJob {
@@ -239,9 +265,19 @@ impl Scheduler {
         match decide(&outcome, has_pending) {
             Decide::StartPending => {
                 let req = self.queue.take().expect("has_pending 与队列一致");
+                debug!(
+                    finished = %running.request.root_file.display(),
+                    next = %req.root_file.display(),
+                    "上一次编译结束：直接执行等待中的最新请求（不重复跑旧内容）"
+                );
                 self.start(req);
             }
             Decide::FinishOk => {
+                info!(
+                    root = %running.request.root_file.display(),
+                    draft,
+                    "编译成功（无等待请求）"
+                );
                 self.emitter.status(CompileStatusDto {
                     phase: CompilePhase::Success,
                     kind: None,
@@ -249,6 +285,11 @@ impl Scheduler {
                 });
             }
             Decide::Fail(kind) => {
+                warn!(
+                    root = %running.request.root_file.display(),
+                    ?kind,
+                    "编译失败（不重试，等待用户操作）"
+                );
                 self.emitter.status(CompileStatusDto {
                     phase: CompilePhase::Failed,
                     kind: Some(kind),

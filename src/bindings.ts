@@ -97,6 +97,11 @@ export type Diagnosis = {
 	 *  避免把"该调到多少"这条规则在前后端各写一遍。
 	 */
 	suggested_timeout_secs: number | null,
+	/**
+	 *  **缺失的文件名**（roadmap ㉗）：仅"缺文件/缺宏包/缺文档类"三类会给（如 `thuthesis.cls`）。
+	 *  调用方据此去项目里找线索（例如同名的 `.ins`/`.dtx` → 源码版模板需先编译生成 `.cls`）。
+	 */
+	missing_file: string | null,
 };
 
 /**  诊断类别（前端据此选图标/分组；测试据此断言）。 */

@@ -7,7 +7,9 @@ pub mod scan;
 #[cfg(test)]
 pub mod real_error_corpus;
 
-pub use diagnosis::{diagnose, diagnose_timeout, Diagnosis, DiagnosisKind, TimeoutEvidence};
+pub use diagnosis::{
+    diagnose, diagnose_timeout, source_release_hint, Diagnosis, DiagnosisKind, TimeoutEvidence,
+};
 pub use model::{LogMessage, MessageKind};
 pub use progress::pages_typeset;
 pub use scan::parse_log;

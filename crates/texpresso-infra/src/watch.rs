@@ -15,7 +15,7 @@ use texpresso_core::scheduler::SchedulerHandle;
 use texpresso_core::settings::Settings;
 use texpresso_core::types::FilesChanged;
 use tokio::sync::{mpsc, RwLock};
-use tracing::{debug, error, warn};
+use tracing::{debug, error, info, warn};
 
 /// 监视任务命令（模块间通信只经此通道，信息局部性）。
 pub enum WatchCommand {
@@ -48,6 +48,8 @@ pub struct WatchState {
     pub settings: Arc<RwLock<Settings>>,
     pub scheduler: SchedulerHandle,
     pub storage: Arc<SettingsStorage>,
+    /// 文件系统（读盘一律经它；roadmap ㉑ 的 root_file 重解析要用）。
+    pub fs: Arc<dyn texpresso_core::project::FileSystem>,
     /// 项目覆盖（update_settings 的 root_file 写这里）。
     pub overrides: Arc<RwLock<texpresso_core::settings::ProjectOverrides>>,
     /// 结果出口（由上层注入）。
@@ -218,41 +220,128 @@ fn is_settings_path(path: &Path, state: &WatchState, project_root: Option<&Path>
 }
 
 /// 设置热更新（D6）：自写盘 hash 过滤 → 重载 → 广播 settings-changed。
+///
+/// **非原子写的竞态（2026-09 实测，roadmap ㉑）**：外部工具（PowerShell `Set-Content`、记事本、
+/// 许多编辑器）是"截断 → 写入 → 关闭"，watcher 会收到**两个** Modify 事件，而中间存在一个
+/// 文件为空/被占用的窗口：第一次读拿到空内容（解析失败），第二次读可能撞上共享冲突
+/// （`read_to_string` 失败）——旧实现在这两种情况下都只是"忽略这次修改"，于是用户看到
+/// 「手改了 settings.json 但应用没反应」。现在改为**短重试**（3 次 × 150ms），并在最终失败时
+/// 打警告（不再静默）。
 fn handle_settings_change(path: &Path, state: Arc<WatchState>) {
     let path = path.to_path_buf();
     // 先取出句柄：async move 会整体接管 state，直接 state.rt.spawn(...) 会同时借用又移动
     let rt = state.rt.clone();
     rt.spawn(async move {
         let is_global = path == state.storage.global_path();
-        let content = match tokio::fs::read_to_string(&path).await {
-            Ok(c) => c,
-            Err(_) => return,
-        };
-        if state.storage.is_self_write(&path, &content) {
-            debug!("设置自写盘，跳过重载：{}", path.display());
+        const ATTEMPTS: u32 = 3;
+        let mut last_problem = String::from("读取失败");
+        for attempt in 0..ATTEMPTS {
+            if attempt > 0 {
+                // 给写者一点时间完成"截断 → 写入 → 关闭"
+                tokio::time::sleep(std::time::Duration::from_millis(150)).await;
+            }
+            let content = match tokio::fs::read_to_string(&path).await {
+                Ok(c) => c,
+                Err(e) => {
+                    last_problem = format!("读取失败：{e}");
+                    continue;
+                }
+            };
+            if state.storage.is_self_write(&path, &content) {
+                debug!("设置自写盘，跳过重载：{}", path.display());
+                return;
+            }
+            if is_global {
+                match serde_json::from_str::<Settings>(&content) {
+                    Ok(parsed) => {
+                        let overrides = state.overrides.read().await.clone();
+                        *state.settings.write().await = SettingsStorage::effective(&parsed, &overrides);
+                    }
+                    Err(e) => {
+                        last_problem = format!("解析失败：{e}");
+                        continue;
+                    }
+                }
+            } else {
+                match serde_json::from_str::<texpresso_core::settings::ProjectOverrides>(&content) {
+                    Ok(parsed) => {
+                        *state.overrides.write().await = parsed;
+                        // **必须与磁盘上的纯全局合并**（不是与 state.settings）：
+                        // state.settings 是"全局 + 覆盖"的有效值，拿它当基数会让**清掉**覆盖失效
+                        // ——例如外部把 root_file 从 Some 改成"没有这一项"时，旧值会一直粘着
+                        // （2026-09 实测：清覆盖后 chip 不回来）。命令面（open_project/update_settings）
+                        // 一直读纯全局，这里与它对齐。
+                        let global = state.storage.load_global(state.fs.as_ref()).await;
+                        let overrides = state.overrides.read().await.clone();
+                        *state.settings.write().await = SettingsStorage::effective(&global, &overrides);
+                    }
+                    Err(e) => {
+                        last_problem = format!("解析失败：{e}");
+                        continue;
+                    }
+                }
+            }
+            // 成功读到并应用
+            let s = state.settings.read().await.clone();
+            sync_project_root_file(&state).await;
+            state.sink.settings_changed(s);
             return;
         }
-        if is_global {
-            if let Ok(parsed) = serde_json::from_str::<Settings>(&content) {
-                let overrides = state.overrides.read().await.clone();
-                *state.settings.write().await = SettingsStorage::effective(&parsed, &overrides);
-            } else {
-                warn!("全局设置解析失败，忽略外部修改：{}", path.display());
-                return;
-            }
-        } else {
-            if let Ok(parsed) = serde_json::from_str::<texpresso_core::settings::ProjectOverrides>(&content) {
-                *state.overrides.write().await = parsed;
-                let merged = SettingsStorage::effective(&state.settings.read().await.clone(), &state.overrides.read().await.clone());
-                *state.settings.write().await = merged;
-            } else {
-                warn!("项目设置解析失败，忽略外部修改：{}", path.display());
-                return;
+        warn!(
+            path = %path.display(),
+            attempts = ATTEMPTS,
+            "设置热更新放弃（{last_problem}）——若是编辑器正在写入，保存完成后会再触发一次"
+        );
+    });
+}
+
+/// 把（外部改过的）设置里的 `root_file` 同步进内存 `ProjectState`（roadmap ㉑）。
+///
+/// 为什么需要：`update_settings` 会同步内存（②-1 修过），但**外部直接编辑**
+/// `.texpresso/settings.json` / 全局 `settings.json` 走的是这条热更新路径——此前只重算了
+/// `state.settings`，`ProjectState.root_file` 仍是旧值，症状是「手改配置设了根文件，编译仍报
+/// 『未确定根文件』，必须重开项目」。
+///
+/// 语义与 `update_settings` 对齐：
+/// - 设了覆盖 → 按 D8（canonicalize + 根内校验）解析成绝对路径后写入；解析失败只警告**不落盘**，
+///   保持原值（避免把内存状态改成必然失败的路径）；
+/// - 清掉覆盖（`null`）→ 回到自动探测（唯一候选即根文件，多候选/无候选则为 None，由前端再选）。
+async fn sync_project_root_file(state: &Arc<WatchState>) {
+    let Some(project) = state.project.read().await.clone() else { return };
+    let settings = state.settings.read().await.clone();
+    let current = project.root_file.clone();
+
+    let resolved = match settings.root_file.clone() {
+        Some(rel) => {
+            let joined = project.root.join(&rel);
+            match texpresso_core::project::resolve_in_project(state.fs.as_ref(), &project.root, &joined).await {
+                Ok(abs) => Some(abs),
+                Err(e) => {
+                    warn!(path = %rel.display(), "外部设置里的 root_file 不可用，保持原根文件：{e:?}");
+                    return;
+                }
             }
         }
-        let s = state.settings.read().await.clone();
-        state.sink.settings_changed(s);
-    });
+        None => match texpresso_core::project::detect_root(state.fs.as_ref(), &project.root).await {
+            Ok(resolution) => resolution.unique(),
+            Err(e) => {
+                warn!("清掉 root_file 覆盖后重新探测失败：{e}");
+                return;
+            }
+        },
+    };
+
+    if resolved == current {
+        return; // 无变化（应用自己写盘也会走到这里）→ 不动内存、不打日志
+    }
+    info!(
+        from = ?current.as_ref().map(|p| p.display().to_string()),
+        to = ?resolved.as_ref().map(|p| p.display().to_string()),
+        "设置热更新：内存 root_file 已同步"
+    );
+    if let Some(p) = state.project.write().await.as_mut() {
+        p.root_file = resolved;
+    }
 }
 
 /// 组合层翻译（D3）：.tex 变化 → CompileRequest → 调度器。

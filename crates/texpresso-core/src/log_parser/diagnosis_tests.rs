@@ -290,3 +290,61 @@ fn aux_write_failure_is_diagnosed_directly() {
     assert_eq!(d.kind, DiagnosisKind::AuxWriteFailed);
     assert!(d.cause.contains("body/introduction.aux"));
 }
+
+// ---- 源码版模板（roadmap ㉗）：缺 .cls 但项目里有 .ins/.dtx ----
+
+use super::diagnosis::source_release_hint;
+
+#[test]
+fn missing_class_carries_machine_readable_file_name() {
+    // 期望表里的缺文件类诊断都要带上"缺的是哪个文件"，调用方才能去找线索
+    let msgs = parse_log("! LaTeX Error: File `thuthesis.cls' not found.\n");
+    let d = diagnose(msgs.first().expect("应解析出消息")).expect("应能诊断");
+    assert_eq!(d.kind, DiagnosisKind::MissingClass);
+    assert_eq!(d.missing_file.as_deref(), Some("thuthesis.cls"));
+}
+
+#[test]
+fn source_release_hint_prefers_same_stem() {
+    let cands = vec!["README.md".to_string(), "thuthesis.ins".to_string(), "other.ins".to_string()];
+    let hint = source_release_hint("thuthesis.cls", &cands).expect("同名 .ins 应命中");
+    assert!(hint.contains("`thuthesis.ins`"), "{hint}");
+    assert!(hint.contains("xelatex thuthesis.ins"), "要给可执行命令：{hint}");
+    assert!(hint.contains("thuthesis.cls"), "{hint}");
+}
+
+#[test]
+fn source_release_hint_prefers_ins_over_dtx_when_both_present() {
+    // 实测教训：.dtx 是文档源码、不是安装脚本，直接编它只会排版出文档。
+    // 目录序里 .dtx 常排在 .ins 前面，所以必须显式优先 .ins。
+    let cands = vec!["nosuchthesis.dtx".to_string(), "nosuchthesis.ins".to_string()];
+    let hint = source_release_hint("nosuchthesis.cls", &cands).expect("应命中");
+    assert!(hint.contains("xelatex nosuchthesis.ins"), "必须给 .ins 而不是 .dtx：{hint}");
+    assert!(!hint.contains("xelatex nosuchthesis.dtx"), "{hint}");
+}
+
+#[test]
+fn source_release_hint_accepts_single_candidate() {
+    // 不同名但项目里只有一个 .ins：源码版模板通常就一个，仍然给出可执行建议
+    let hint = source_release_hint("xxx.cls", &["BUCTthesis.ins".to_string()]).expect("单一候选应命中");
+    assert!(hint.contains("BUCTthesis.ins"));
+}
+
+#[test]
+fn source_release_hint_dtx_only_points_to_readme_without_fake_command() {
+    // 只有 .dtx：不能编造"xelatex X.dtx 生成 .cls"这种错命令
+    let hint = source_release_hint("hithesis.cls", &["hithesis.dtx".to_string()]).expect("应给出方向");
+    assert!(hint.contains("hithesis.dtx"));
+    assert!(hint.contains("README"), "应指向模板安装说明：{hint}");
+    assert!(!hint.contains("xelatex hithesis.dtx"), "不得给出错误命令：{hint}");
+}
+
+#[test]
+fn source_release_hint_declines_when_ambiguous_or_absent() {
+    // 多个不同名 .ins → 不猜（宁可不给这条建议）
+    let multi = vec!["a.ins".to_string(), "b.ins".to_string()];
+    assert_eq!(source_release_hint("c.cls", &multi), None);
+    // 项目里根本没有 .ins/.dtx → 保持原来的泛化建议
+    assert_eq!(source_release_hint("c.cls", &["main.tex".to_string()]), None);
+    assert_eq!(source_release_hint("c.cls", &[]), None);
+}

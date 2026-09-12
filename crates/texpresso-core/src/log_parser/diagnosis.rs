@@ -76,6 +76,9 @@ pub struct Diagnosis {
     /// "把 `compile.timeout_secs` 提到这个值再重试一次"。前端据此渲染按钮，
     /// 避免把"该调到多少"这条规则在前后端各写一遍。
     pub suggested_timeout_secs: Option<u32>,
+    /// **缺失的文件名**（roadmap ㉗）：仅"缺文件/缺宏包/缺文档类"三类会给（如 `thuthesis.cls`）。
+    /// 调用方据此去项目里找线索（例如同名的 `.ins`/`.dtx` → 源码版模板需先编译生成 `.cls`）。
+    pub missing_file: Option<String>,
 }
 
 fn d(kind: DiagnosisKind, cause: impl Into<String>, hint: impl Into<String>) -> Diagnosis {
@@ -84,7 +87,63 @@ fn d(kind: DiagnosisKind, cause: impl Into<String>, hint: impl Into<String>) -> 
         cause: cause.into(),
         hint: Some(hint.into()),
         suggested_timeout_secs: None,
+        missing_file: None,
     }
+}
+
+/// 带"缺失文件名"的诊断（缺宏包/缺文档类/缺文件三类用，roadmap ㉗）。
+fn d_missing(
+    kind: DiagnosisKind,
+    cause: impl Into<String>,
+    hint: impl Into<String>,
+    missing_file: impl Into<String>,
+) -> Diagnosis {
+    Diagnosis {
+        kind,
+        cause: cause.into(),
+        hint: Some(hint.into()),
+        suggested_timeout_secs: None,
+        missing_file: Some(missing_file.into()),
+    }
+}
+
+/// 源码版模板提示（roadmap ㉗）：项目里确实有 `.ins`/`.dtx` 时，把"可能需先编 .ins"换成**具体命令**。
+///
+/// 为什么值得单独判：⑲ 实测三个真实模板（thuthesis / BUCTthesis / hithesis）的 GitHub **源码版**
+/// 只带 `.ins`/`.dtx`，直接编译必然报 `File 'X.cls' not found`。泛泛的"可能需先编译 .ins"用户
+/// 看不懂下一步做什么；点名文件 + 给出命令才是可执行的。
+///
+/// 优先级（实测教训：两者同名时会按目录序选中 `.dtx`，而 `.dtx` 是**文档源码**、不是安装脚本，
+/// 直接 `xelatex X.dtx` 只会排版出文档而不是生成 `.cls`）：
+/// 1. 同名 `.ins` → 给具体命令；
+/// 2. 项目里唯一的 `.ins` → 给具体命令；
+/// 3. 只有同名 `.dtx`（没有 `.ins`）→ 说明是源码版并指向模板 README（不瞎给命令）；
+/// 4. 其余 → `None`（保留原来的泛化建议）。
+pub fn source_release_hint(missing_file: &str, candidates: &[String]) -> Option<String> {
+    let stem = std::path::Path::new(missing_file)
+        .file_stem()
+        .map(|s| s.to_string_lossy().to_lowercase())?;
+    let lower = |n: &String| n.to_lowercase();
+    let same_stem = |n: &String, ext: &str| lower(n).starts_with(&stem) && lower(n).ends_with(ext);
+    let ins_files: Vec<&String> = candidates.iter().filter(|n| lower(n).ends_with(".ins")).collect();
+
+    let picked = candidates
+        .iter()
+        .find(|n| same_stem(n, ".ins"))
+        .or_else(|| if ins_files.len() == 1 { ins_files.first().copied() } else { None });
+    if let Some(picked) = picked {
+        return Some(format!(
+            "项目里有源码版模板文件 `{picked}`：先在项目目录执行 `xelatex {picked}` 生成缺失的 `{missing_file}`，再重新编译（这类模板只发布 .ins/.dtx，不直接带 .cls）"
+        ));
+    }
+
+    // 只有 .dtx：它是文档源码，不能直接生成 .cls——给出方向但不编造命令
+    if let Some(dtx) = candidates.iter().find(|n| same_stem(n, ".dtx")) {
+        return Some(format!(
+            "项目里有源码版模板源码 `{dtx}`（没有 .cls）：需要先跑模板自带的 docstrip 安装脚本生成 `{missing_file}`（通常是 `xelatex {stem}.ins`，但项目里没找到 .ins）——请按模板 README 的安装说明操作"
+        ));
+    }
+    None
 }
 
 fn d_no_hint(kind: DiagnosisKind, cause: impl Into<String>) -> Diagnosis {
@@ -93,6 +152,7 @@ fn d_no_hint(kind: DiagnosisKind, cause: impl Into<String>) -> Diagnosis {
         cause: cause.into(),
         hint: None,
         suggested_timeout_secs: None,
+        missing_file: None,
     }
 }
 
@@ -151,6 +211,8 @@ pub fn diagnose_timeout(log: &str, ev: &TimeoutEvidence) -> Diagnosis {
             hint: fatal.hint.map(|h| format!("{h}（注意：这种情况提高编译超时救不了）")),
             // 提高超时救不了已有致命错误的运行 → 不给一键按钮
             suggested_timeout_secs: None,
+            // 保留原诊断的"缺失文件名"：调用方还要用它找源码版模板线索（㉗）
+            missing_file: fatal.missing_file,
         };
     }
 
@@ -173,6 +235,7 @@ pub fn diagnose_timeout(log: &str, ev: &TimeoutEvidence) -> Diagnosis {
                 "把编译超时提高到 {suggested}s 后重试（下方按钮一键完成）；大文档首编常需数分钟，仍不够可继续调大（上限 1800s）"
             )),
             suggested_timeout_secs: Some(suggested),
+            missing_file: None,
         },
         None => Diagnosis {
             kind: DiagnosisKind::CompileTimeoutStalled,
@@ -184,6 +247,7 @@ pub fn diagnose_timeout(log: &str, ev: &TimeoutEvidence) -> Diagnosis {
                 "先排除死循环（\\loop / \\foreach / \\whileloop）与等待终端输入（如 \\read）；若确认只是慢，把超时提高到 {suggested}s 后重试（下方按钮一键完成）"
             )),
             suggested_timeout_secs: Some(suggested),
+            missing_file: None,
         },
     }
 }
@@ -312,28 +376,31 @@ pub fn diagnose(m: &LogMessage) -> Option<Diagnosis> {
             let lower = n.to_ascii_lowercase();
             if lower.ends_with(".sty") {
                 let pkg = base_name(&n).trim_end_matches(".sty").to_string();
-                return Some(d(
+                return Some(d_missing(
                     DiagnosisKind::MissingPackage,
                     format!("缺少宏包文件 {n}"),
                     format!(
                         "若模板自带该文件，确认「打开项目」选的是模板根目录；否则执行 `tlmgr install {pkg}` 安装"
                     ),
+                    n,
                 ));
             }
             if lower.ends_with(".cls") {
                 let cls = base_name(&n).trim_end_matches(".cls").to_string();
-                return Some(d(
+                return Some(d_missing(
                     DiagnosisKind::MissingClass,
                     format!("缺少文档类文件 {n}"),
                     format!(
                         "学位论文模板常自带 .cls：确认项目根目录是否正确（或执行 `tlmgr install {cls}`）；若是 GitHub 源码版，可能需先编译 .ins 生成 .cls"
                     ),
+                    n,
                 ));
             }
-            return Some(d(
+            return Some(d_missing(
                 DiagnosisKind::MissingFile,
                 format!("找不到文件 {n}"),
                 "确认该文件确实在项目内，且路径/大小写与 \\input、\\includegraphics 里写的一致",
+                n,
             ));
         }
     }

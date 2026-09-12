@@ -695,23 +695,28 @@ settings-changed: Settings
 | # | 项 | 现状 |
 |---|---|---|
 | 1 | `LatexmkRunner` 命名偏窄 | 它同时驱动 latexmk（Full）与直调引擎（Quick）；改名牵动架构图 SVG 与三处文档，当前以注释说明 |
-| 2 | 编辑 GBK/非 UTF-8 源文件 | 不支持：`read_file` 是严格 UTF-8（`.log` 侧已 lossy，见 §4） |
+| 2 | 编辑非 UTF-8 源文件 | **不支持编辑**（设计取舍）：`read_file` 严格 UTF-8，遇 `InvalidData` 返回中文提示 + 状态栏红色提示条（㉓ 已做"至少说清楚"）；不做 lossy 打开，否则保存会把 U+FFFD 写回磁盘 = 静默损坏用户文件。`.log` 侧仍是 lossy（见 §4） |
 | 3 | bib/biber 场景的编辑期单趟 | 未实测：现有 fixture 编辑期不触发 bibtex；空闲收敛兜底应能覆盖，但没有实测结论 |
 | 4 | 大纲全量重扫 | 每次编译成功都重扫 include 图；优化方向见 §3.5 |
 | 5 | 延迟预算口径 | 本机三档小文档均超「小文档 2s 及格」（连 6 行的 `tiny` 冷编译也要 2.3s）→ 需复核是放宽口径还是改判「相对基线的回归容忍度」，见 [design.md](./design.md) §基准脚本 |
 | 6 | 真实论文模板（hithesis） | 阻塞点未定位：模板自带 latexmkrc × `-outdir=tmp` 约定下 `\include{子目录/...}` 写不出中间文件、报错后 latexmk 挂住；**调高超时也编不过**（roadmap ㉖，最小复现见 [troubleshooting.md](./troubleshooting.md)） |
-| 7 | 外部直接编辑 `.texpresso/settings.json` | 重算了有效设置，但不重算内存 `ProjectState.root_file`（roadmap ㉑：与 `update_settings` 同源缺陷的另一条触发路径） |
+| 7 | beamer 往返偏差 2–4 行 | 已定性、不修：换用「最小 H」「首个 H≤40」取块规则后往返结果**逐一相同** → 属 beamer/主题的 synctex 记录粒度；`\only<n>` 覆盖层内容在非本层页面上的反向映射天然不确定（基线数字见 [design.md](./design.md) §预览） |
 | 8 | 非 Windows 平台 | 未验证：进程组 kill 与平台相关路径处理均为 v1 后置 |
 | 9 | `cargo test -p texpresso`（src-tauri） | 本机因 WebView2 限制无法运行，见 [troubleshooting.md](./troubleshooting.md) |
+| 10 | 文档欠账（roadmap ㉔） | 已核对：`cli-mcp-plan.md` §1.3 的 `runner.rs`/`storage.rs` 引用早已是 `crates/texpresso-infra/...`，无残留（`src-tauri/src/{commands,events}.rs` 的引用本就正确） |
 
 ### 12.2 跨模块不变量（改回去即复发）
 
 - **Quick 的前置条件**：无 `tmp/<stem>.aux` 时 runner 必须把 Quick 升级为 Full，且 `Success{kind}` 报**实际**强度——否则引用全成 `??`，或前端多提示一次「引用待更新」并多跑一次空收敛。
-- **设置的读入口**：`open_project` 与 `update_settings` 都必须先读**纯全局**设置（`load_global`）再合并项目覆盖；`update_settings` 还必须同步内存 `ProjectState.root_file`——否则出现跨项目设置污染与「选了根文件仍报未确定根文件，必须重开项目」。
+- **设置的读入口**：`open_project`、`update_settings`、**以及 watch 的设置热更新**都必须先读**纯全局**设置（`load_global`）再合并项目覆盖；后两者还必须同步内存 `ProjectState.root_file`——否则出现跨项目设置污染、「选了根文件仍报未确定根文件，必须重开项目」，以及**外部清掉覆盖永远不生效**（拿有效值当基数会粘住旧值）。
 - **覆盖清洗逐字段**：`sanitize_overrides` 不能退回「整包丢弃」（会连带丢掉同一文件里合法的 compile 覆盖）。
 - **自写盘过滤**：`update_settings` 写盘记 hash、watch 消费一次——去掉即「自己写 → 自己重载 → 重复广播」。
+- **外部写文件是非原子的**：设置热更新必须容忍"截断 → 写入 → 关闭"的中间态（3×150ms 短重试），否则第一次读空文件、第二次撞共享冲突 → 用户看到「改了没反应」。
 - **路径校验只有一个入口**：命令面路径一律经 core `project::paths`（D8）；core 内部（如 outline 读盘）用词法前缀版，差异仅剩符号链接目标与 8.3 短名。
 - **`.log` 必须容错解码**：严格 UTF-8 读取会把「编译失败」退化为「拿不到任何错误信息」（GBK 源 + pdflatex）。
+- **两条编译路径都必须固定 `SOURCE_DATE_EPOCH`**：不固定时同一份源码两次编译的 PDF 只差 trailer 的 `/ID`（实测 Quick 路径 67 字节、Full 路径长度都变），会让"输出 diff / 只重排变化页"分不清"真改了"与"ID 抖了"。（实测：该变量**不影响** XeTeX 的 `\today`。）
+- **生成产物永不当作源码打开**（㉒）：反向定位命中 `tmp/*.toc` 之类时先就近回落真实源码、落空则只给提示——直接打开会出现一屏用户没写过的内容。
+- **失败必须可见**：`openFile` 的 rejection 与 SyncTeX 的正反向失败都要落到 UI（状态栏提示条 / 预览工具条同步提示），不能只有 `console.error`——否则一律表现为"点了没反应"。
 
 前端的三处异步守卫与 PreviewPane 渲染契约见 §9.2 / §9.4，SyncTeX 相关约束见 §5。
 
@@ -720,13 +725,14 @@ settings-changed: Settings
 | 要验的东西 | 入口 |
 |---|---|
 | 编译性能与预算回归 | `node scripts/bench.mjs`（fixture 由 `node scripts/gen-bench-projects.mjs` 生成；超预算退出码 1） |
+| 构建确定性（逐字节） | `node scripts/check-determinism.mjs`（三档 × Full/Quick 各两次；`--without-epoch` 可复现非确定性） |
 | SyncTeX 往返精度 | `node scripts/synctex-report.mjs`（三组样本；基线见 design.md §预览） |
 | core 逻辑（调度 / 解析 / 诊断 / 大纲） | `cargo test -p texpresso-core` |
 | 真实 latexmk / synctex 集成 | `cargo test -p texpresso-infra -- --ignored` |
 | 前端 store 与 composable | `npm run test` |
 | 类型检查与构建 | `npm run build` |
 | 只有真实窗口能验的部分 | [troubleshooting.md](./troubleshooting.md) §真机验收清单（tauri server MCP 驱动） |
-| 产品级实测数字与结论 | [design.md](./design.md)（延迟预算、预览重载、编辑期单趟收益） |
+| 产品级实测数字与结论 | [design.md](./design.md)（延迟预算、预览重载、编辑期单趟收益、SyncTeX 精度、构建确定性） |
 | 已完成项及其证据 | [roadmap §1 基线](./research/tex-ide-roadmap-priority.md) |
 
 ### 12.4 与上层文档的关系
