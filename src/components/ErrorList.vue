@@ -4,13 +4,16 @@
    诊断（roadmap ④）：条目带 diagnosis 时优先展示「原因 + 怎么改」两行，原始 .log 消息降到 title 提示；
    无诊断则退回原文首行（宁可不说，也不瞎说）。 -->
 <script setup lang="ts">
-import { computed } from "vue";
+import { computed, ref } from "vue";
 import { useCompileStore } from "../stores/compile";
 import { useEditorStore } from "../stores/editor";
+import { useSettingsStore } from "../stores/settings";
+import { ipc } from "../services/ipc";
 import type { ErrorEntry } from "../bindings";
 
 const compile = useCompileStore();
 const editor = useEditorStore();
+const settings = useSettingsStore();
 
 /** 展示上限（去重后的组数）。 */
 const MAX_DISPLAY = 30;
@@ -45,6 +48,23 @@ const diagnosed = computed(() => grouped.value.items.filter((g) => g.entry.diagn
 function jump(file: string | null, line: number | null) {
   if (!file) return;
   editor.openFile(file, line ?? 1);
+}
+
+// ---- 超时一键重试（roadmap ㉕）----
+const retrying = ref(false);
+
+/** 把编译超时提到诊断建议值并立即重跑（建议值由后端按证据算出，见 core `diagnose_timeout`）。 */
+async function raiseTimeoutAndRetry(secs: number) {
+  if (retrying.value) return;
+  retrying.value = true;
+  try {
+    await settings.update({ timeout_secs: secs });
+    await ipc.compileNow();
+  } catch (e) {
+    console.error("提高超时并重试失败：", e);
+  } finally {
+    retrying.value = false;
+  }
 }
 </script>
 
@@ -81,6 +101,16 @@ function jump(file: string | null, line: number | null) {
           </div>
           <div class="hint" v-if="g.entry.diagnosis?.hint">
             <span class="hint-icon">→</span>{{ g.entry.diagnosis.hint }}
+          </div>
+          <!-- 超时一键重试（roadmap ㉕）：值来自后端证据化诊断，前端不自己造数字 -->
+          <div class="action" v-if="g.entry.diagnosis?.suggested_timeout_secs">
+            <button
+              class="retry-btn"
+              :disabled="retrying"
+              @click.stop="raiseTimeoutAndRetry(g.entry.diagnosis!.suggested_timeout_secs!)"
+            >
+              {{ retrying ? "重试中…" : `提高到 ${g.entry.diagnosis.suggested_timeout_secs}s 并重试` }}
+            </button>
           </div>
         </div>
       </div>
@@ -162,6 +192,21 @@ function jump(file: string | null, line: number | null) {
   white-space: nowrap;
 }
 .hint-icon { color: var(--blueberry); font-weight: 700; margin-right: 4px; }
+/* 一键操作行（roadmap ㉕：超时"提高上限并重试"） */
+.action { margin-top: 5px; }
+.retry-btn {
+  display: inline-flex; align-items: center;
+  height: 22px; padding: 0 10px;
+  background: rgba(93, 95, 239, 0.10);
+  border: 1.5px solid var(--blueberry);
+  border-radius: 6px;
+  color: var(--blueberry);
+  font-size: 11.5px; font-weight: 600;
+  cursor: pointer;
+  transition: background 0.12s;
+}
+.retry-btn:hover:not(:disabled) { background: rgba(93, 95, 239, 0.2); }
+.retry-btn:disabled { opacity: 0.5; cursor: default; }
 .badge {
   flex: 0 0 auto;
   display: inline-flex; align-items: center; justify-content: center;

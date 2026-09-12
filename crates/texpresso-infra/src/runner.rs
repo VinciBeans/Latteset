@@ -4,8 +4,10 @@
 
 use async_trait::async_trait;
 use std::path::Path;
-use texpresso_core::log_parser::{diagnose, parse_log};
-use texpresso_core::project::FileSystem;
+use texpresso_core::log_parser::{
+    diagnose, diagnose_timeout, pages_typeset, parse_log, TimeoutEvidence,
+};
+use texpresso_core::project::{collect_tex_files, FileSystem};
 use texpresso_core::scheduler::CompileRunner;
 use texpresso_core::types::{CompileKind, CompileOutcome, CompileRequest, ErrorEntry, ErrorKind};
 use tokio_util::sync::CancellationToken;
@@ -51,14 +53,12 @@ impl CompileRunner for LatexmkRunner {
         // 强度决策（roadmap ㉘）：编辑触发的 Quick 走「直调引擎单趟」；其余走完整 latexmk。
         // 但 **Quick 需要已有构建产物**才有意义（单趟依赖上一趟的 .aux/.toc）；首次编译无 aux 时
         // 单趟会产出「引用全是 ??」的 PDF——故此处自动升级为 Full。
+        // 探测失败（权限/竞态）按「无产物」保守处理：升级为 Full 只是更慢，不会出错。
+        let had_aux = self.fs.exists(&tmp_dir.join(format!("{stem}.aux"))).await.unwrap_or(false);
         let mut kind = req.kind;
-        if kind == CompileKind::Quick {
-            let aux = tmp_dir.join(format!("{stem}.aux"));
-            // 探测失败（权限/竞态）按「无产物」保守处理：升级为 Full 只是更慢，不会出错。
-            if !self.fs.exists(&aux).await.unwrap_or(false) {
-                debug!(aux = %aux.display(), "无构建产物，Quick 升级为 Full（首编）");
-                kind = CompileKind::Full;
-            }
+        if kind == CompileKind::Quick && !had_aux {
+            debug!(stem, "无构建产物，Quick 升级为 Full（首编）");
+            kind = CompileKind::Full;
         }
 
         // 命令构造（modules.md §2.6 算法）：cwd = 项目根，相对 input/include 才能解析
@@ -112,7 +112,9 @@ impl CompileRunner for LatexmkRunner {
                     warn!(pid, "编译超时（{}s），树杀进程", req.timeout.as_secs());
                     kill_tree(pid);
                 }
-                CompileOutcome::Timeout
+                // roadmap ㉕：超时不静默重试，改为**现场采集证据**给出可操作诊断
+                let entry = self.timeout_entry(&req, &stem, &tmp_dir, had_aux).await;
+                CompileOutcome::Timeout { entry }
             }
             _ = cancel.cancelled() => {
                 if let Some(pid) = pid {
@@ -188,6 +190,70 @@ impl CompileRunner for LatexmkRunner {
             },
         };
         outcome
+    }
+}
+
+impl LatexmkRunner {
+    /// 超时错误条目（roadmap ㉕）：采集**可观察证据** → 证据化诊断 → [`ErrorEntry`]。
+    ///
+    /// 证据三条：① 本次是否首编（开始时有无 `.aux`）；② 项目 `.tex` 源文件数；
+    /// ③ `.log` 里已排版到第几页（推进证据，见 [`pages_typeset`]）。
+    /// 三项都是"看得见的事实"，诊断文案不据此猜测因果（宁可说"可能"，也不断言"卡住"）。
+    /// 日志另交给 [`diagnose_timeout`]：里面若已有致命错误，超时就只是症状（提高超时救不了）。
+    async fn timeout_entry(
+        &self,
+        req: &CompileRequest,
+        stem: &str,
+        tmp_dir: &Path,
+        had_aux: bool,
+    ) -> ErrorEntry {
+        let log_path = tmp_dir.join(format!("{stem}.log"));
+        // 树杀刚发出，日志可能只落盘了一部分；读得到多少算多少（best-effort）
+        let log = self.fs.read_to_string_lossy(&log_path).await.unwrap_or_default();
+        let pages = pages_typeset(&log);
+        let tex_files = collect_tex_files(self.fs.as_ref(), &req.project_root)
+            .await
+            .ok()
+            .map(|v| v.len());
+        let timeout_secs = u32::try_from(req.timeout.as_secs()).unwrap_or(u32::MAX);
+
+        let evidence = TimeoutEvidence {
+            timeout_secs,
+            first_build: !had_aux,
+            tex_files,
+        };
+        // 诊断看两样东西：本次运行的日志（里面可能已有致命错误 → 超时只是症状）与上面的证据
+        let diagnosis = diagnose_timeout(&log, &evidence);
+        debug!(
+            timeout_secs,
+            first_build = evidence.first_build,
+            tex_files = ?tex_files,
+            pages = ?pages,
+            kind = ?diagnosis.kind,
+            "编译超时，已采集诊断证据"
+        );
+
+        // message 保留"机器看到的事实"，诊断给"人话原因 + 怎么改"（前端首行显示诊断原因，
+        // 这条 message 落到 title 里，供排查时对照）
+        let mut facts = vec![if had_aux { "增量编译".to_string() } else { "首次编译".to_string() }];
+        if let Some(n) = tex_files {
+            facts.push(format!("{n} 个 .tex 源文件"));
+        }
+        if let Some(p) = pages {
+            facts.push(format!("日志已排版到第 {p} 页"));
+        } else {
+            facts.push("日志无页输出".to_string());
+        }
+        ErrorEntry {
+            message: format!(
+                "编译超过 {timeout_secs}s 上限，已强制终止（进程树已杀）。证据：{}",
+                facts.join("，")
+            ),
+            file: None,
+            line: None,
+            kind: ErrorKind::Timeout,
+            diagnosis: Some(diagnosis),
+        }
     }
 }
 
@@ -461,10 +527,10 @@ mod tests {
         }
     }
 
-    /// 超时路径：1ms 超时必触发 → 树杀 → Timeout。
+    /// 超时路径：1ms 超时必触发 → 树杀 → Timeout + **证据化条目**（roadmap ㉕）。
     #[tokio::test]
     #[ignore]
-    async fn compile_timeout_kills_tree() {
+    async fn compile_timeout_kills_tree_and_reports_evidence() {
         if !latexmk_available() {
             eprintln!("跳过：系统未安装 latexmk（需要 TeX Live/MiKTeX）");
             return;
@@ -483,7 +549,24 @@ mod tests {
         let outcome = runner
             .compile(request, tokio_util::sync::CancellationToken::new())
             .await;
-        assert_eq!(outcome, CompileOutcome::Timeout);
+
+        match outcome {
+            CompileOutcome::Timeout { entry } => {
+                // 超时必须带「原因 + 怎么改」——这正是 ㉕ 要修的东西（此前超时不给任何条目）
+                assert_eq!(entry.kind, ErrorKind::Timeout);
+                let diag = entry.diagnosis.expect("超时条目必须带诊断");
+                // 1ms 超时时项目还没有 .aux → 判定为首编 → 直接建议到 900s（避免"注定不够"的一轮）
+                let suggested = diag.suggested_timeout_secs.expect("应给出一键重试的超时值");
+                assert_eq!(suggested, 900, "首编应跳档到 900s：{diag:?}");
+                assert!(
+                    entry.message.contains("1s") || entry.message.contains("0s"),
+                    "消息应含实际上限：{}",
+                    entry.message
+                );
+                // 树没被杀干净的话这里会留下 latexmk 子进程（kill_tree 的既有断言在别的用例里）
+            }
+            other => panic!("预期超时，得到：{other:?}"),
+        }
     }
 
     /// 取消路径：提前取消 → Aborted。

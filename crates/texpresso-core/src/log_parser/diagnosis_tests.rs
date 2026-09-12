@@ -169,3 +169,124 @@ fn clean_log_yields_no_errors_and_no_diagnosis() {
         .collect();
     assert!(errors.is_empty(), "干净日志不应解析出错误：{errors:?}");
 }
+
+// ---- 超时诊断（roadmap ㉕）：证据在手才开口 ----
+
+use super::diagnosis::{diagnose_timeout, suggest_timeout_secs, TimeoutEvidence};
+
+fn ev(first_build: bool) -> TimeoutEvidence {
+    TimeoutEvidence {
+        timeout_secs: 120,
+        first_build,
+        tex_files: Some(11),
+    }
+}
+
+#[test]
+fn timeout_with_progress_says_slow_not_stuck() {
+    // 日志已排版到第 37 页 = 在推进 → 只能下"慢"的结论，绝不能暗示卡住
+    let log = "[35] [36] [37]\n";
+    let d = diagnose_timeout(log, &ev(true));
+    assert_eq!(d.kind, DiagnosisKind::CompileTimeout);
+    assert!(d.cause.contains("第 37 页"), "原因须含推进证据：{}", d.cause);
+    assert!(d.cause.contains("在推进"), "原因须点明不是卡住：{}", d.cause);
+    assert!(d.cause.contains("首次编译"), "原因须点明首编：{}", d.cause);
+    assert!(d.cause.contains("11 个 .tex"), "原因须含规模证据：{}", d.cause);
+    assert!(!d.cause.contains("卡住"), "有推进证据时不得说卡住：{}", d.cause);
+    assert_eq!(d.suggested_timeout_secs, Some(900), "首编应跳档到 900s");
+}
+
+#[test]
+fn timeout_without_progress_offers_both_interpretations() {
+    // 无页输出：大文档首编可能整段时间都在加载字体 → 不能说"卡住"，要给两种可能
+    let d = diagnose_timeout("", &ev(true));
+    assert_eq!(d.kind, DiagnosisKind::CompileTimeoutStalled);
+    assert!(d.cause.contains("可能"), "须保留两种可能：{}", d.cause);
+    assert!(d.cause.contains("加载字体") || d.cause.contains("前置处理"), "{}", d.cause);
+    let hint = d.hint.clone().unwrap_or_default();
+    assert!(hint.contains("死循环"), "无推进证据时先让用户排除死循环：{hint}");
+    assert!(hint.contains("900"), "建议值须出现在建议文案里：{hint}");
+    assert_eq!(d.suggested_timeout_secs, Some(900));
+}
+
+#[test]
+fn timeout_suggestion_ladder_avoids_repeating_the_same_wall() {
+    // 非首编走阶梯：120→300→900→1800（不重复同一个"注定不够"的值）
+    assert_eq!(suggest_timeout_secs(120, false), 300);
+    assert_eq!(suggest_timeout_secs(300, false), 900);
+    assert_eq!(suggest_timeout_secs(900, false), 1800);
+    assert_eq!(suggest_timeout_secs(1800, false), 1800, "已是上限则不再提高");
+    // 首编直接跳到 900：首编最慢，让用户在注定不够的 300s 上再等一次代价太高
+    assert_eq!(suggest_timeout_secs(120, true), 900);
+    assert_eq!(suggest_timeout_secs(900, true), 1800);
+}
+
+#[test]
+fn timeout_diagnosis_never_exceeds_settings_ceiling() {
+    // 建议值必须落在设置允许的范围内，否则前端一键操作会被后端校验拒绝
+    for cur in [5, 120, 300, 600, 900, 1800] {
+        for first in [true, false] {
+            let v = suggest_timeout_secs(cur, first);
+            assert!((5..=1800).contains(&v), "建议值越界：{v}（cur={cur} first={first}）");
+            assert!(v >= cur, "建议值不应低于当前值：{v} < {cur}");
+        }
+    }
+}
+
+#[test]
+fn pages_typeset_feeds_timeout_diagnosis() {
+    // 端到端：真实日志片段 → 页码 → 诊断（折行标记必须被认出来）
+    let log = "\\openout2 = `chapters/math.aux'.\n[3] [4] [5] [6\n\n\n\n\n] 第二章\n";
+    assert_eq!(super::pages_typeset(log), Some(6));
+    let mut e = ev(false);
+    e.timeout_secs = 60;
+    let d = diagnose_timeout(log, &e);
+    assert_eq!(d.kind, DiagnosisKind::CompileTimeout);
+    assert!(d.cause.contains("第 6 页"), "{}", d.cause);
+    assert_eq!(d.suggested_timeout_secs, Some(300), "非首编走阶梯");
+}
+
+/// 真实日志（2026-09-12 20:15 冷跑 `thesis-real-hithesis` 原样摘录）：
+/// 模板 `\include{body/introduction}` + 我们的 `-outdir=tmp` → `tmp/body/` 不存在 →
+/// 写不出 `body/introduction.aux` → Emergency stop。**进程随后没退出**（latexmk 挂在文件错误上
+/// 零 CPU 干等），所以产品看到的是"超时"而不是"内容错误"——这正是超时诊断必须先认日志错误的原因。
+const REAL_HITHESIS_TIMEOUT_LOG: &str = "\
+! I can't write on file `body/introduction.aux'.
+\\@include ...mmediate \\openout \\@partaux \"#1.aux\" 
+                                                  \\immediate \\write \\@partau...
+l.106 \\include{body/introduction}
+                                 
+(Press Enter to retry, or Control-Z to exit; default file extension is `.tex')
+Please type another output file name
+! Emergency stop.
+";
+
+#[test]
+fn timeout_prefers_fatal_error_found_in_log() {
+    let d = diagnose_timeout(REAL_HITHESIS_TIMEOUT_LOG, &ev(true));
+    // 报出真正要修的错误（写不出中间文件），而不是含糊的"慢/卡住"
+    assert_eq!(d.kind, DiagnosisKind::AuxWriteFailed);
+    assert!(d.cause.contains("body/introduction.aux"), "{}", d.cause);
+    assert!(d.cause.contains("早已失败"), "须说明超时只是症状：{}", d.cause);
+    let hint = d.hint.clone().unwrap_or_default();
+    assert!(hint.contains("\\input"), "须给出可操作替代：{hint}");
+    assert!(hint.contains("救不了"), "须说明提高超时无效：{hint}");
+    // 关键：不给"一键提高超时"——那救不了这个错误
+    assert_eq!(
+        d.suggested_timeout_secs, None,
+        "日志里已有致命错误时不得建议提高超时"
+    );
+}
+
+#[test]
+fn aux_write_failure_is_diagnosed_directly() {
+    // 同一段日志走普通（非超时）路径也要能诊断——多数情况下 TeX 会正常退出并报内容错误
+    let msgs = parse_log(REAL_HITHESIS_TIMEOUT_LOG);
+    let fatal = msgs
+        .iter()
+        .find(|m| matches!(m.kind, super::MessageKind::Error))
+        .expect("应解析出错误消息");
+    let d = diagnose(fatal).expect("应能诊断");
+    assert_eq!(d.kind, DiagnosisKind::AuxWriteFailed);
+    assert!(d.cause.contains("body/introduction.aux"));
+}

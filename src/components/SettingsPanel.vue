@@ -23,8 +23,10 @@ const ENGINES: { value: Engine; label: string; hint: string }[] = [
 
 const DEBOUNCE_MIN = 100;
 const DEBOUNCE_MAX = 5000;
-const TIMEOUT_MIN = 10;
-const TIMEOUT_MAX = 600;
+// 与 core `TIMEOUT_SECS_RANGE` 保持一致（5..=1800）：上限取 1800s 是因为真实学位论文
+// 首编可达数分钟（roadmap ㉕），上限太低会让用户"调到顶也编不过"。
+const TIMEOUT_MIN = 5;
+const TIMEOUT_MAX = 1800;
 
 const debounceInput = ref("");
 const timeoutInput = ref("");

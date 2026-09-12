@@ -80,6 +80,12 @@ export type Diagnosis = {
 	cause: string,
 	/**  怎么改（可操作步骤）。无法给出时为空。 */
 	hint: string | null,
+	/**
+	 *  **一键操作的机器可读参数**（roadmap ㉕）：目前只有超时诊断会给——
+	 *  "把 `compile.timeout_secs` 提到这个值再重试一次"。前端据此渲染按钮，
+	 *  避免把"该调到多少"这条规则在前后端各写一遍。
+	 */
+	suggested_timeout_secs: number | null,
 };
 
 /**  诊断类别（前端据此选图标/分组；测试据此断言）。 */
@@ -118,6 +124,12 @@ export type DiagnosisKind =
 "option_clash" | 
 /**  源文件含非法 UTF-8（常见于 GBK 旧文件）。 */
 "non_utf8_source" | 
+/**  **编译超时但在推进**（日志里有页输出）：文档比上限大，不是卡住（roadmap ㉕）。 */
+"compile_timeout" | 
+/**  **编译超时且无推进证据**（日志里没有任何页输出）：可能仍在做前置处理，也可能真卡住（roadmap ㉕）。 */
+"compile_timeout_stalled" | 
+/**  **写不出中间文件**：`\include{子目录/文件}` 需要 `tmp/子目录/` 存在，而它不存在（roadmap ㉖ 的首个实测证据）。 */
+"aux_write_failed" | 
 /**  其他宏包报错（兜底，至少点出宏包名）。 */
 "package_error" | 
 /**  其他 LaTeX 报错（兜底）。 */

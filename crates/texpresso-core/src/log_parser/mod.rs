@@ -2,12 +2,14 @@
 
 pub mod diagnosis;
 pub mod model;
+pub mod progress;
 pub mod scan;
 #[cfg(test)]
 pub mod real_error_corpus;
 
-pub use diagnosis::{diagnose, Diagnosis, DiagnosisKind};
+pub use diagnosis::{diagnose, diagnose_timeout, Diagnosis, DiagnosisKind, TimeoutEvidence};
 pub use model::{LogMessage, MessageKind};
+pub use progress::pages_typeset;
 pub use scan::parse_log;
 
 /// 解码 `.log` 字节为文本：**能严格解就严格解，不能则 lossy**（非法字节 → U+FFFD）。

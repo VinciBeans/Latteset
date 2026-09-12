@@ -73,10 +73,9 @@ impl SchedulerHandle {
     }
 }
 
-/// 运行中任务（重试计数是唯一跨调用信息，收在这里）。
+/// 运行中任务。
 struct RunningJob {
     request: CompileRequest,
-    attempt: u8,
     handle: tokio::task::JoinHandle<CompileOutcome>,
     /// 已收到手动终止：on_finished 时即使 runner 忽略 cancel 返回了 Success/Timeout，
     /// 也按 Aborted 呈现（设计语义：终止 = 停 + 清队，不误报成功/错误/PDF）。
@@ -142,7 +141,7 @@ impl Scheduler {
         match cmd {
             SchedulerCommand::Compile(req) => {
                 if self.running.is_none() {
-                    self.start(req, 0);
+                    self.start(req);
                 } else {
                     // 合并：最多一个等待条目，总是最新
                     // 事件纪律：仅当队列从空变非空才广播 Queued（状态无变化不重复发）
@@ -172,7 +171,7 @@ impl Scheduler {
         }
     }
 
-    fn start(&mut self, req: CompileRequest, attempt: u8) {
+    fn start(&mut self, req: CompileRequest) {
         let runner = self.runner.clone();
         let cancel = CancellationToken::new();
         let token = cancel.clone();
@@ -182,7 +181,6 @@ impl Scheduler {
         let handle = tokio::spawn(async move { runner.compile(req_for_task, token).await });
         self.running = Some(RunningJob {
             request: req,
-            attempt,
             handle,
             aborted: false,
         });
@@ -211,6 +209,10 @@ impl Scheduler {
         // 内容与 IO 错误：先广播错误列表（前端在收到 Running 时清空）
         match &outcome {
             CompileOutcome::ContentError { errors } => self.emitter.errors(errors.clone()),
+            // 超时同样进错误列表（roadmap ㉕）：条目由 runner 现场构造，带证据化诊断
+            // （为什么慢 / 疑似卡住 + 一键提高超时重试）。此前超时**什么都不显示**，
+            // 用户只看到状态栏一个「失败 · 超时」，不知道下一步做什么。
+            CompileOutcome::Timeout { entry } => self.emitter.errors(vec![entry.clone()]),
             CompileOutcome::IoError { message } => self.emitter.errors(vec![ErrorEntry {
                 message: message.clone(),
                 file: None,
@@ -234,13 +236,10 @@ impl Scheduler {
             CompileOutcome::Success { kind, .. } => *kind == CompileKind::Quick,
             _ => running.request.kind == CompileKind::Quick,
         };
-        match decide(running.attempt, &outcome, has_pending) {
+        match decide(&outcome, has_pending) {
             Decide::StartPending => {
                 let req = self.queue.take().expect("has_pending 与队列一致");
-                self.start(req, 0);
-            }
-            Decide::Retry => {
-                self.start(running.request.clone(), running.attempt + 1);
+                self.start(req);
             }
             Decide::FinishOk => {
                 self.emitter.status(CompileStatusDto {
@@ -293,6 +292,17 @@ mod tests {
             file: None,
             line: None,
             kind: ErrorKind::ContentError,
+            diagnosis: None,
+        }
+    }
+
+    /// 超时条目（roadmap ㉕）：`kind = Timeout`，实际由 runner 现场构造（含诊断）。
+    fn timeout_entry(msg: &str) -> ErrorEntry {
+        ErrorEntry {
+            message: msg.into(),
+            file: None,
+            line: None,
+            kind: ErrorKind::Timeout,
             diagnosis: None,
         }
     }
@@ -444,41 +454,68 @@ mod tests {
         );
     }
 
-    // ---- 超时重试 ----
+    // ---- 超时（roadmap ㉕：不自动重试，改为立刻失败 + 广播证据化错误条目） ----
 
     #[tokio::test]
-    async fn timeout_retries_once_then_succeeds() {
+    async fn timeout_fails_immediately_without_retry() {
         let (h, log, runner) = setup(FakeRunner::with_results(vec![
-            CompileOutcome::Timeout,
+            CompileOutcome::Timeout {
+                entry: timeout_entry("编译超过 120s 上限"),
+            },
             CompileOutcome::Success {
                 pdf_path: PathBuf::from("proj/main.pdf"),
                 kind: CompileKind::Full,
             },
         ]));
         h.compile(req("main.tex"));
-        wait_until(|| log.statuses().len() >= 3).await;
-        // 重试：不重发 Queued，直接 Running
-        assert_eq!(
-            log.statuses(),
-            vec![running_dto(), running_dto(), success_dto()]
-        );
-        // 同一请求执行了两次
-        assert_eq!(runner.calls().len(), 2);
-        assert_eq!(runner.calls()[0], runner.calls()[1]);
-    }
-
-    #[tokio::test]
-    async fn timeout_twice_fails_with_timeout() {
-        let (h, log, _) = setup(FakeRunner::with_results(vec![
-            CompileOutcome::Timeout,
-            CompileOutcome::Timeout,
-        ]));
-        h.compile(req("main.tex"));
         wait_until(|| log.statuses().contains(&failed_dto(FailureKind::Timeout))).await;
         assert_eq!(
             log.statuses(),
-            vec![running_dto(), running_dto(), failed_dto(FailureKind::Timeout)]
+            vec![running_dto(), failed_dto(FailureKind::Timeout)]
         );
+        // 关键行为：**只跑了一次**（旧版会静默重试，用户白等一个完整超时窗口）
+        assert_eq!(runner.calls().len(), 1, "超时不得自动重试");
+        // 且超时必须进错误列表（旧版什么都不显示）
+        assert_eq!(
+            log.errors(),
+            vec![vec![timeout_entry("编译超过 120s 上限")]],
+            "超时应广播带诊断的条目"
+        );
+    }
+
+    #[tokio::test]
+    async fn timeout_with_pending_starts_pending_without_failing() {
+        // 等待中的是新内容：直接跑它，不为旧内容展示失败（与内容错误同语义）
+        let (h, log, runner) = setup(FakeRunner::with_hold_and_results(vec![
+            CompileOutcome::Timeout {
+                entry: timeout_entry("旧内容超时"),
+            },
+            CompileOutcome::Success {
+                pdf_path: PathBuf::from("proj/main.pdf"),
+                kind: CompileKind::Full,
+            },
+        ]));
+        h.compile(req("a.tex"));
+        wait_until(|| runner.calls().len() == 1).await;
+        h.compile(req("b.tex"));
+        runner.release();
+        wait_until(|| runner.calls().len() == 2).await;
+        runner.release();
+        wait_until(|| log.statuses().len() >= 4).await;
+        assert_eq!(
+            log.statuses(),
+            vec![
+                running_dto(),
+                CompileStatusDto {
+                    phase: CompilePhase::Queued,
+                    kind: None,
+                    draft: false,
+                },
+                running_dto(),
+                success_dto(),
+            ]
+        );
+        assert!(!log.statuses().iter().any(|s| s.phase == CompilePhase::Failed));
     }
 
     // ---- 内容错误 ----

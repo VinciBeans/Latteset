@@ -4,7 +4,10 @@ use std::path::Path;
 
 use super::model::{ProjectOverrides, Settings};
 
-const TIMEOUT_SECS_RANGE: std::ops::RangeInclusive<u32> = 5..=600;
+// 超时上限 1800s（30 分钟）：真实学位论文模板首编可达数分钟（roadmap ㉕ 实测
+// `thesis-real-hithesis` 冷编译 >240s，调高到 600s 上限仍可能不够——上限本身
+// 就是"无法通过调高自救"的死路），故上限取"够跑完真实大文档"而非"够跑完合成档"。
+const TIMEOUT_SECS_RANGE: std::ops::RangeInclusive<u32> = 5..=1800;
 const DEBOUNCE_MS_RANGE: std::ops::RangeInclusive<u32> = 100..=2000;
 
 /// 校验合并后的有效设置；返回全部违规项（空 = 通过）。
@@ -133,6 +136,12 @@ mod tests {
         assert!(validate(&s).is_ok());
         s.compile.timeout_secs = 600;
         assert!(validate(&s).is_ok());
+        // 上限 1800（roadmap ㉕：真实论文档在 600s 内未必跑得完，上限必须留出空间）
+        s.compile.timeout_secs = 1800;
+        assert!(validate(&s).is_ok());
+        s.compile.timeout_secs = 1801;
+        assert!(validate(&s).is_err(), "1801 应越界");
+        s.compile.timeout_secs = 120; // 复位，避免影响下面的 debounce 断言
         s.compile.debounce_ms = 100;
         assert!(validate(&s).is_ok());
         s.compile.debounce_ms = 2000;

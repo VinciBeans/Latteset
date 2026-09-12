@@ -52,6 +52,12 @@ pub enum DiagnosisKind {
     OptionClash,
     /// 源文件含非法 UTF-8（常见于 GBK 旧文件）。
     NonUtf8Source,
+    /// **编译超时但在推进**（日志里有页输出）：文档比上限大，不是卡住（roadmap ㉕）。
+    CompileTimeout,
+    /// **编译超时且无推进证据**（日志里没有任何页输出）：可能仍在做前置处理，也可能真卡住（roadmap ㉕）。
+    CompileTimeoutStalled,
+    /// **写不出中间文件**：`\include{子目录/文件}` 需要 `tmp/子目录/` 存在，而它不存在（roadmap ㉖ 的首个实测证据）。
+    AuxWriteFailed,
     /// 其他宏包报错（兜底，至少点出宏包名）。
     PackageError,
     /// 其他 LaTeX 报错（兜底）。
@@ -66,6 +72,10 @@ pub struct Diagnosis {
     pub cause: String,
     /// 怎么改（可操作步骤）。无法给出时为空。
     pub hint: Option<String>,
+    /// **一键操作的机器可读参数**（roadmap ㉕）：目前只有超时诊断会给——
+    /// "把 `compile.timeout_secs` 提到这个值再重试一次"。前端据此渲染按钮，
+    /// 避免把"该调到多少"这条规则在前后端各写一遍。
+    pub suggested_timeout_secs: Option<u32>,
 }
 
 fn d(kind: DiagnosisKind, cause: impl Into<String>, hint: impl Into<String>) -> Diagnosis {
@@ -73,6 +83,7 @@ fn d(kind: DiagnosisKind, cause: impl Into<String>, hint: impl Into<String>) -> 
         kind,
         cause: cause.into(),
         hint: Some(hint.into()),
+        suggested_timeout_secs: None,
     }
 }
 
@@ -81,6 +92,99 @@ fn d_no_hint(kind: DiagnosisKind, cause: impl Into<String>) -> Diagnosis {
         kind,
         cause: cause.into(),
         hint: None,
+        suggested_timeout_secs: None,
+    }
+}
+
+/// 超时诊断的证据（全部来自**可观察事实**，不做猜测）。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TimeoutEvidence {
+    /// 本次生效的超时上限（秒）。
+    pub timeout_secs: u32,
+    /// 本次是否为**首次编译**（开始时无 `tmp/<stem>.aux`）——首编最慢（要建 aux/toc 并多趟收敛）。
+    pub first_build: bool,
+    /// 项目内 `.tex` 源文件数（扫描失败 = None）。
+    pub tex_files: Option<usize>,
+}
+
+/// 建议的下一个超时值：阶梯 `300 → 900 → 1800`（与设置上限一致），首编直接跳到 900。
+///
+/// 为什么首编跳档：首编要建 `.aux`/`.toc` 并跑收敛趟，③⑦ 的实测都显示它显著慢于增量；
+/// 让用户在"注定不够"的 300s 上再失败一次（真实论文档是分钟级等待）代价太高。
+/// 这只是**起点不是预测**——不够时可以继续点（上限 1800s）。
+pub fn suggest_timeout_secs(current: u32, first_build: bool) -> u32 {
+    const LADDER: [u32; 3] = [300, 900, 1800];
+    let next = LADDER
+        .iter()
+        .copied()
+        .find(|&v| v > current)
+        .unwrap_or(1800);
+    if first_build {
+        next.max(900)
+    } else {
+        next
+    }
+}
+
+/// 超时诊断（roadmap ㉕）：把"编译超时了"翻译成"为什么 + 怎么办"。
+///
+/// **判据优先级**（从强到弱）：
+/// 1. **日志里已经有致命错误** → 超时只是症状：进程报错后没退出（实测 `latexmk` 会挂在
+///    文件错误上零 CPU 干等），真正要修的是那条错误，**提高超时救不了它**——此时不给
+///    "一键提高超时"（`suggested_timeout_secs = None`），直接把那条错误的诊断摆出来；
+/// 2. 日志里有页输出 → 在推进，只是比上限慢（[`DiagnosisKind::CompileTimeout`]）；
+/// 3. 两者都无 → **不武断说"卡住"**（大文档首编可能整段时间都在加载字体/展开宏包），
+///    给出两种可能并让用户先排除死循环（[`DiagnosisKind::CompileTimeoutStalled`]）。
+pub fn diagnose_timeout(log: &str, ev: &TimeoutEvidence) -> Diagnosis {
+    // 1) 日志自有致命错误优先（实测触发者：hithesis 的 `I can't write on file ...aux`）
+    if let Some(fatal) = super::parse_log(log)
+        .iter()
+        .find(|m| m.kind == MessageKind::Error)
+        .and_then(diagnose)
+    {
+        return Diagnosis {
+            kind: fatal.kind,
+            cause: format!(
+                "本次编译在 {}s 内没跑完、已被终止；但日志显示它其实**早已失败**——真正要修的是这条：{}",
+                ev.timeout_secs, fatal.cause
+            ),
+            hint: fatal.hint.map(|h| format!("{h}（注意：这种情况提高编译超时救不了）")),
+            // 提高超时救不了已有致命错误的运行 → 不给一键按钮
+            suggested_timeout_secs: None,
+        };
+    }
+
+    // 2) / 3) 按推进证据判断"慢"还是"疑似卡住"
+    let suggested = suggest_timeout_secs(ev.timeout_secs, ev.first_build);
+    let scale = match ev.tex_files {
+        Some(n) => format!("共 {n} 个 .tex 源文件"),
+        None => "源文件规模未知".to_string(),
+    };
+    let first = if ev.first_build { "首次编译" } else { "增量编译" };
+
+    match super::pages_typeset(log) {
+        Some(pages) => Diagnosis {
+            kind: DiagnosisKind::CompileTimeout,
+            cause: format!(
+                "编译在 {}s 内没有跑完，但日志显示已经排版到第 {pages} 页——是在推进，只是比上限慢（{first}，{scale}）",
+                ev.timeout_secs
+            ),
+            hint: Some(format!(
+                "把编译超时提高到 {suggested}s 后重试（下方按钮一键完成）；大文档首编常需数分钟，仍不够可继续调大（上限 1800s）"
+            )),
+            suggested_timeout_secs: Some(suggested),
+        },
+        None => Diagnosis {
+            kind: DiagnosisKind::CompileTimeoutStalled,
+            cause: format!(
+                "编译在 {}s 内没有跑完，且日志里还没出现任何页面输出（{first}，{scale}）——可能仍在做前置处理（加载字体、展开宏包），也可能真的卡住了",
+                ev.timeout_secs
+            ),
+            hint: Some(format!(
+                "先排除死循环（\\loop / \\foreach / \\whileloop）与等待终端输入（如 \\read）；若确认只是慢，把超时提高到 {suggested}s 后重试（下方按钮一键完成）"
+            )),
+            suggested_timeout_secs: Some(suggested),
+        },
     }
 }
 
@@ -321,7 +425,19 @@ pub fn diagnose(m: &LogMessage) -> Option<Diagnosis> {
         ));
     }
 
-    // 15) Emergency stop（连锁反应的收尾，通常不是根因）
+    // 15) 写不出中间文件（roadmap ㉖ 的首个实测证据：2026-09 冷跑 hithesis 复现）
+    // **必须排在 Emergency stop 之前**：这段日志里两条常常落在同一条聚合消息里，而
+    // "写不出文件"才是根因、也才有可操作修法；Emergency stop 只是它的收尾。
+    if text.contains("I can't write on file") {
+        let file = capture_quoted(text).unwrap_or_else(|| "（未知文件）".into());
+        return Some(d(
+            DiagnosisKind::AuxWriteFailed,
+            format!("写不出中间文件 `{file}`——`\\include{{子目录/文件}}` 要在中间文件目录里写同名 `.aux`，而那个子目录不存在"),
+            "把主文件里的 `\\include{子目录/文件}` 改成 `\\input{子目录/文件}`（\\input 不写子文件 .aux，实测可绕开）；根因是模板自带的构建约定与本产品「中间文件统一收纳 tmp/」的冲突（roadmap ㉖）",
+        ));
+    }
+
+    // 16) Emergency stop（连锁反应的收尾，通常不是根因）
     if text.contains("Emergency stop") {
         return Some(d(
             DiagnosisKind::EmergencyStop,
@@ -329,7 +445,6 @@ pub fn diagnose(m: &LogMessage) -> Option<Diagnosis> {
             "先修列表里第一条错误再重新编译；只看这一条会找不到根因",
         ));
     }
-
     // 16) 兜底：至少点出是哪个宏包/文档类报的错
     if let Some(pkg) = capture_package_name(text) {
         let first = m.message.lines().next().unwrap_or("").trim();

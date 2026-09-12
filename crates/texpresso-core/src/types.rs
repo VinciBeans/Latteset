@@ -234,7 +234,11 @@ pub enum CompileOutcome {
         kind: CompileKind,
     },
     /// 超时强制终止（runner 已树杀进程）。
-    Timeout,
+    ///
+    /// 携带**证据化**的错误条目（roadmap ㉕）：超时不再静默重试（同一上限重跑一遍
+    /// 只是再等一个完整超时窗口），改为把「为什么慢 / 疑似卡住 + 怎么改 + 一键提高超时重试」
+    /// 直接摆到错误列表里。证据（首编、源文件数、日志页码）由 runner 现场采集。
+    Timeout { entry: ErrorEntry },
     /// 内容错误：进程非零退出，.log 已解析为错误条目。
     ContentError { errors: Vec<ErrorEntry> },
     /// 收到取消信号（手动终止，runner 已树杀进程）。

@@ -70,6 +70,7 @@
 | 7 | 反向 SyncTeX | `webview_find_element .page-wrap canvas` 取页几何 → 点击正文区 → 读状态栏 | 编辑器切到对应 `.tex` 且行号≈点击句所在行（**注意**：点**目录区**会映射到生成的 `.toc`，属已知特性，非缺陷） |
 | 8 | 中文路径渲染（P0-①） | 用 `中文测试工程` 夹具重复 1/5 | 中文标题/目录/正文/公式正常渲染，`fetch` 无 404 |
 | 9 | 编辑期草稿 + 空闲收敛（㉘） | 点「编译」建产物 → **在编辑器里敲一行**（见下「如何在应用内输入」）→ 记录状态栏时间线 | `排版中…` → `就绪` + **「引用待更新」** → 约 2s 后再次 `排版中…`（空闲收敛的 Full）→ 提示消失；dev stdout 同 cycle 有 `Quick 编译（单趟直调引擎）` 与 `Full 编译（完整 latexmk 收敛）` |
+| 10 | 超时诊断 + 一键提超时重试（㉕） | 设置面板把超时改 **5s** → 清掉 `tmp/` 制造首编 → 点「编译」→ 读 `.error-list .entry` | 状态栏「失败·超时」；列表一条：原因含「已排版到第 N 页…在推进」（或「还没出现任何页面输出」）+ 建议 + 按钮**「提高到 900s 并重试」**（首编跳档）；点按钮后 `get_settings` 超时变为 900、编译启动并转「就绪」、条目消失。**注意**：这一项会把全局 `settings.json` 的超时改掉，验完记得改回 120 |
 
 **取预览耗时的一行命令**（第 6 步的具体形态）：
 
@@ -229,6 +230,43 @@ DEBUG 编译失败：已从 .log 解析出错误条目 count=9 log=…\tmp\主�
 - **正向 SyncTeX 高亮**（源码 Ctrl+点击 → PDF 高亮）本次未目视：`webview_interact` 不支持带修饰键点击，Monaco 的 ctrl+click 需 OS 级按键（pc-control）或 MCP 会话补做。
 - **已知未修**：**编辑** GBK 源文件（`read_file` 严格 UTF-8）会失败并返回英文 IO 错误。本次范围是文件名/路径，未改该行为；若要支持"打开并转码显示 GBK 源文件"，需单独设计（含保存时的编码回写策略）。
 - 本机 `cargo test -p texpresso`（src-tauri）无法运行（见上一节），故当时 src-tauri 侧新增的中文用例（`fs_impl` / `runner` / `storage` / `commands`）**仅编译校验通过**（`cargo check -p texpresso --tests`）。**2026-09 更新**：随 ADR-0010 迁移后，`fs` / `runner` / `storage` 的中文用例已在 `texpresso-infra` 下实际运行通过（含 2 个需 latexmk 的 `#[ignore]` 集成用例）。
+
+## `\include{子目录/文件}` + `-output-directory`：中间目录里必须先有同名子目录（2026-09，㉕ 调查中实测）
+
+**现象**：真实学位论文模板 `thesis-real-hithesis`（TeX Live 自带样例，已复制进 bench fixture）用产品完全相同的命令冷编译，跑约 **4 分钟**后在主文件第 106 行报错：
+
+```
+! I can't write on file `body/introduction.aux'.
+\@include ...mmediate \openout \@partaux "#1.aux"
+l.106 \include{body/introduction}
+(Press Enter to retry, or Control-Z to exit; ...)
+Please type another output file name
+! Emergency stop.
+```
+
+随后 **`latexmk`/`perl` 进程并没有退出**（实测挂了 10 分钟、CPU 累计仅 0.5s/7.7s），于是产品侧看到的是「超时」而不是「内容错误」。
+
+**根因（已用最小工程复现）**：`\include{body/introduction}` 要写 `tmp/body/introduction.aux`，而 **xelatex 不会创建输出目录的子目录**——`tmp/body/` 不存在 → `\openout` 失败。
+
+```powershell
+# 最小复现（tmp 存在但 tmp/sub 不存在）
+xelatex -interaction=nonstopmode -synctex=1 -output-directory=tmp main.tex   # main.tex: \include{sub/part}
+# → ! I can't write on file `sub/part.aux'.  / ! Emergency stop.  / exit 1
+```
+
+**为什么合成多文件档（`multifile`）没事**：**latexmk 会在第一趟失败后把子目录建出来并自动重跑一趟**，所以 `tmp/chapters/`、`tmp/sections/` 是 latexmk 建的、第二趟就成功了（对照实测：同一最小工程用 `latexmk -xelatex -outdir=tmp ...` → 第一趟报同样的错、但 `tmp/sub` 被创建、第二轮 `Output written ... / All targets are up-to-date`、exit 0）。hithesis 这一档没有恢复，**嫌疑指向它自带的 `latexmkrc`（覆写 `$pdflatex`、内建 `--shell-escape` 与尾部 `;cp`）与 `-outdir=tmp` 的相互作用**——这正是 roadmap **㉖** 的题目；目前只做到"确认不是超时问题"，**尚未定位到可复现的 rc 最小组合**（用一个精简 rc 复刻其关键行跑最小工程，仍能正常恢复）。
+
+**对产品的两个直接结论**：
+
+1. **超时诊断必须先看日志里的致命错误**（㉕ 已实现）：这种"报错后不退出"的运行，产品只会走到超时；若只按"慢/卡住"提示，用户永远修不好。现在超时诊断会优先报日志里的那条错误，且**不给"提高超时"按钮**（提高超时救不了它）。
+2. **可用绕过（已实测）**：把主文件里的 `\include{子目录/文件}` 改成 `\input{子目录/文件}`——`\input` 不写子文件 `.aux`，因此不需要 `tmp/子目录/`：
+
+```powershell
+xelatex -interaction=nonstopmode -synctex=1 -output-directory=tmp main.tex   # main.tex: \input{sub/part}
+# → Output written on tmp/main.pdf (1 page). / exit 0（tmp/sub 仍不存在也没关系）
+```
+
+诊断文案里已经写上这条建议（`DiagnosisKind::aux_write_failed`）。
 
 ## 探针文档含中文时不能用 pdflatex（2026-09 实测；附一条被证伪的假设）
 

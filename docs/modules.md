@@ -72,35 +72,32 @@ impl Queue {
 ```rust
 pub struct RunningJob {
     pub request: CompileRequest,
-    pub attempt: u8,          // 0 = 首次，1 = 已重试一次
 }
 
 pub enum Decide {
     StartPending,            // 执行队列中的最新请求（跳过错过的旧版本）
-    Retry,                   // 超时且无等待：同一请求重试一次
     FinishOk,                // 成功且无等待：无事可做
-    Fail(FailureKind),       // 展示失败（不重试）
+    Fail(FailureKind),       // 展示失败
 }
 
-/// 输入只有：重试计数 + 编译结果 + 是否有等待条目。不读任何外部信息。
-pub fn decide(attempt: u8, outcome: &CompileOutcome, has_pending: bool) -> Decide;
+/// 输入只有：编译结果 + 是否有等待条目。不读任何外部信息（无跨调用状态）。
+pub fn decide(outcome: &CompileOutcome, has_pending: bool) -> Decide;
 ```
 
 **算法**（来自 design.md 失败语义表，逐一对应；见 `scheduler/policy.rs`）：
 
-| outcome | has_pending | attempt | 决策 |
-|---|---|---|---|
-| Success | — | — | 有 pending → `StartPending`；无 → `FinishOk` |
-| Timeout | true | — | `StartPending`（跳过重试） |
-| Timeout | false | 0 | `Retry` |
-| Timeout | false | 1 | `Fail(Timeout)` |
-| ContentError | true | — | `StartPending`（不重试） |
-| ContentError | false | — | `Fail(ContentError)` |
-| Aborted | true | — | `StartPending`（abort 后的新请求是新意图） |
-| Aborted | false | — | `Fail(Aborted)` |
-| IoError | — | — | 视同 ContentError（不重试） |
+| outcome | has_pending | 决策 |
+|---|---|---|
+| Success | — | 有 pending → `StartPending`；无 → `FinishOk` |
+| Timeout | true | `StartPending`（新内容优先，跳过报错） |
+| Timeout | false | `Fail(Timeout)`（**不重试**，roadmap ㉕） |
+| ContentError | true | `StartPending`（不重试） |
+| ContentError | false | `Fail(ContentError)` |
+| Aborted | true | `StartPending`（abort 后的新请求是新意图） |
+| Aborted | false | `Fail(Aborted)` |
+| IoError | — | 视同 ContentError（不重试） |
 
-**信息局部性**：`decide` 只读 `running` 与 `outcome`，不碰队列、不碰设置、不碰时间。重试计数是唯一跨调用信息，收在 `RunningJob.attempt`。
+**信息局部性**：`decide` 只读 `outcome` 与 `has_pending`，不碰队列、不碰设置、不碰时间——㉕ 去掉超时重试后，**连跨调用状态都没有了**（旧版要 `RunningJob.attempt`）。
 
 ### 2.4 runner.rs — CompileRunner 接口（core）
 
@@ -187,7 +184,7 @@ pub enum FailureKind { Timeout, ContentError, Aborted }
 //   Success/Cancel 之外的阶段按**请求**强度报；Success 按 `CompileOutcome::Success{kind}`（**实际**强度）报
 //   ——故首编被 runner 升级为 Full 时不误报草稿。
 // 时序：Queued(入队时) → Running(启动时) → Success / Failed
-// 重试不重发 Queued，只重发 Running（attempt 对外不可见，前端不感知）
+// 不重发：同一请求不会跑第二遍（㉕ 去掉超时重试后，attempt 概念一并消失）
 ```
 
 ### 2.6 LatexmkRunner 实现（texpresso-infra）
@@ -406,7 +403,7 @@ pub struct CompileSettings { pub mode: CompileMode, pub debounce_ms: u64, pub ti
 pub fn default_settings() -> Settings;
 /// 项目覆盖全局，逐键合并（项目缺失字段继承全局）
 pub fn merge(global: Settings, project: Settings) -> Settings;
-/// 范围校验：timeout 5..=600、debounce 100..=2000、engine ∈ {xelatex,pdflatex,lualatex}
+/// 范围校验：timeout 5..=1800（㉕ 上限由 600 放宽）、debounce 100..=2000、engine ∈ {xelatex,pdflatex,lualatex}
 pub fn validate(s: &Settings) -> Result<(), Vec<String>>;
 /// 局部更新：只改 patch 里的键，其余不动
 pub fn apply_patch(base: &mut Settings, patch: SettingsPatch) -> Result<()>;
@@ -617,4 +614,5 @@ settings-changed: Settings
 - **根文件候选可见可交互（2026-09，roadmap P0-②-1）**：修掉「打开项目没反应」并补齐一处阻断缺陷。**根因**：`RootResolution::Multiple(_)` 的候选列表在命令层被直接丢弃（`Multiple(_) | None => None`），`ProjectInfo` 只有 `{root, root_file}`，前端拿到 `root_file: null` 后仅有一句 `console.warn`。**改动**：① core `RootResolution` 增 `candidates()` / `unique()`（把「解析结果 → 契约字段」的映射收敛到一处，含单测），`ProjectInfo` 增 `root_candidates: Vec<PathBuf>`（语义：未用手动覆盖时 `Unique`→单元素、`Multiple`→全部、`None`→空；覆盖生效→空）；② 命令面抽 `detect_root()` 供 `open_project` 与 `update_settings`（清除覆盖时回到自动探测）复用，新增只读命令 `get_project`；③ **修阻断缺陷**：`update_settings` 的 root_file 分支此前只写覆盖与有效设置，**不同步内存 `ProjectState.root_file`**（`project.write()` 全仓仅出现在 `open_project`），症状是「在设置/选择器里选了根文件 → 编译仍报『未确定根文件』，必须重开项目」；现在 `Some(rel)` 按 D8 解析为绝对路径（**失败即拒绝、不落盘**，避免存下必然失败的覆盖）后写入内存，`null` 走 `detect_root` 重探测；④ **前端**：新增 `RootFilePicker.vue`（多候选列候选、零候选退回列全部 `.tex`，展示相对路径、emit **项目内相对路径**）、`project.relativizePath()`（绝对→相对，供 `update_settings` 唯一可接受的形态）、`project.syncProject()`（选后经 `get_project` 重新同步）、`StatusBar` 增「未确定根文件 · 点击选择」入口（弹窗关掉后仍可重开）；`App.vue` 用弹窗取代 `console.warn`（含 `VITE_TEXPRESSO_PROJECT` 自动打开路径）。**验证**：core 130 通过（新增 `RootResolution` 3 例）；vitest **52 通过**（新增 `relativizePath` 8 例 + `RootFilePicker` 9 例，含「中文路径」「项目外过滤」「busy 禁用」「相对路径载荷」）；`vue-tsc --noEmit` + `npm run build` 通过。**真机端到端**（夹具 `test_file/projects/多候选工程/`：`main.tex` + `附录.tex` 均含 `\documentclass`）：dev stdout 依次为 `打开项目：…（根文件 None，候选 2 个）` → 用户点选后 `root_file 已同步（内存）：Some("…\main.tex")` → `设置自写盘，跳过重载`（自写盘过滤生效）→ 后续编辑 `构造编译请求: root=…\main.tex` → 项目根产出 `main.pdf`。**2026-09 补做（tauri server MCP 驱动真实窗口）**：`driver_session` 连接 → `webview_screenshot` 确认弹窗渲染（标题「选择根文件」+ 文案「检测到 2 个可能的根文件（都含 `\documentclass`）…」+ 两项候选，状态栏显示「未确定根文件 · 点击选择」）→ `webview_dom_snapshot` 核对无障碍树（`dialog 选择根文件` / `list` 两项 / title 为绝对路径 / `contentinfo` 含取消按钮）→ `webview_find_element` 取几何（2 个 `.file-row`）→ `webview_interact` 点 `main.tex` → 弹窗关闭、`main.tex` 打开、`.needs-root` 匹配数归 0（状态栏提示消失）→ 点「编译」→ `webview_wait_for .page-wrap canvas` → 截图确认 PDF 渲染（1/1 页，`\input` 的子文件内容也在）。**未修（已记录）**：外部直接编辑 `.texpresso/settings.json` 时 watch 只更新覆盖与有效设置、**不同步** `ProjectState.root_file`（同一缺陷的另一触发路径；需 infra `WatchState` 持有 `FileSystem` 才能复用 `detect_root`，留待后续）。
 - **错误诊断升级（2026-09，roadmap ④）**：把 `.log` 原始报错翻译成「原因 + 怎么改」，取代"只有原文 + 行号"的及格线。**为什么值得做**：调研显示"错误信息不可读"是全行业最高频痛点（TeXstudio 只显示 `Process exited with error(s)`）；而 ⑲ 调研又证明**引擎自动推断没必要**——正确替代是「不猜，但选错时明确告诉用户怎么改」。**实现**：新增 `crates/texpresso-core/src/log_parser/diagnosis.rs`——纯函数 `diagnose(&LogMessage) -> Option<Diagnosis>`，19 类 `DiagnosisKind`（缺包/缺类/缺文件/缺字体/ctex 字体集/引擎不匹配/需不支持的引擎/未定义命令/组未闭合/数学模式/多右括号/缺 begin document/重复上下标/表格外 &/Emergency stop/选项冲突/非 UTF-8 源/宏包兜底/LaTeX 兜底）；**匹配不到就返回 `None`**（前端降级为原文，宁可不说也不瞎说）。两个关键实现点：① **续行前缀必须先剥**——fontspec 报错的续行带 `(fontspec)` 前缀，正好卡在 `cannot be` 与 `found` 之间，不剥则永远匹配不到（⑲ 样本暴露）；② `parse_log` 的位置标记行（`l.N \cmd`）**此前被丢弃**，导致取不到未定义命令名——改为在补行号的同时把该行原文并入消息（`l.5 \usepackage{nope}` → 诊断能说出 `\usepackage`，前端仍只渲染首行，观感不变）。**契约**：`ErrorEntry` 增 `diagnosis: Option<Diagnosis{kind,cause,hint}>`（specta 导出到 bindings）。**前端** `ErrorList.vue`：有条目诊断时渲染两行（首行「原因」、次行「→ 建议」），无诊断退回原文首行，原始 `.log` 消息降到 `title`；头部增「已诊断 N」徽标；去重键由"消息首行"改为"诊断原因优先"。**语料与测试**：`scripts/gen-log-error-corpus.ps1` 生成 `real_error_corpus.rs`（**23 例真实日志片段**：14 例收割自 ⑲ 模板编译矩阵的失败样本 + 9 例来自故意写错的最小文档，含 GBK 非 UTF-8 源）；期望值**手写**在 `diagnosis_tests.rs`（避免实现自证），断言类别/原因关键词/行号/是否有建议 + DoD 覆盖率 ≥80% + 干净日志不误报。**验证**：`cargo test -p texpresso-core` **134 通过**、`texpresso-infra` 17 通过、vitest 52、`npm run build` 通过；**真机（tauri server MCP）**：夹具 `test_file/projects/诊断测试工程/`（`\undefinedcommandhere` + `$ x_a_b $`）→ 错误列表出现「命令 \undefinedcommandhere 未定义」+「多为拼写错误；若拼写无误，通常是缺少提供该命令的宏包」与「同一个位置重复使用了上下标」+「用花括号分组，例如 x_{a_b}」，头部「已诊断 2」；`webview_interact` 点第二条 → 状态栏 `.cursor-pos` 由 `Ln 1` 变 **`Ln 4, Col 1`**（点击跳转生效）；换成 `\usepackage{nosuchpackagexyz}` 复验 → 「缺少宏包文件 nosuchpackagexyz.sty」+「…否则执行 `tlmgr install nosuchpackagexyz` 安装」，紧随的 `Emergency stop` 条目给出「这通常是「前面某条错误」的连锁反应 / 先修列表里第一条错误」。**顺带修掉一个验证中发现的缺陷**：`EmergencyStop` 的 cause 里写了 markdown `**`，UI 不渲染 markdown，会露出字面星号（已改中文引号）。
 - **编辑期单趟编译 + 空闲收敛（2026-09，roadmap ㉘）**：把 ㉘ 的实测收益（单趟比完整 latexmk 快 40% 中位）落成产品行为。**强度模型**：`CompileKind{Quick, Full}` 进 `types.rs`——`compile_request_for_change` = Quick（编辑触发）、`compile_request_manual` = Full（手动「编译」+ 前端空闲收敛共用）；runner 里 Quick 直调 `xelatex -interaction=nonstopmode -synctex=1 -output-directory=tmp <root>`（不经 latexmk），Full 仍走 `latexmk`。**两个关键正确性设计**：① **无产物自动升级**——Quick 但 `tmp/<stem>.aux` 不存在（首编）会让引用全成 `??`，故 runner 经新增的 `FileSystem::exists` 探测后把该趟升级为 Full；② **状态报"实际强度"**——`CompileOutcome::Success` 增 `kind` 字段、`CompileStatusDto` 增 `draft: bool`，Success 用**实际** `kind`、其余阶段用**请求** `kind`（保守），于是升级趟不会误报草稿（否则前端会多提示一次"引用待更新"并多跑一次无意义收敛）。**前端**：`stores/compile.ts` 增 `draft`（只在 success 时更新：`queued/running/failed` 时屏幕上的 PDF 仍是旧的，失败不产出新 PDF，故不误清提示）；`StatusBar.vue` 显示琥珀色「引用待更新」；新增 `composables/useIdleConvergence.ts`——「成功且是草稿」后 **2000ms** 无编辑则调 `compile_now` 收敛，任何编辑（`App.onEditorChange`）或新编译都会取消待收敛。**延时为何是 2s 而非 500ms 防抖值**：调度器合并队列只留一个待办条目，正在跑的收敛 Full 会把紧随其后的编辑态 Quick 堵在队列里（大项目 Full ≈4s），延时太短反而拖慢"编辑→出图"；期间靠状态栏提示表达"引用可能旧"。**测试**：core 139（新增 `CompileKind`/`draft` 贯穿事件、`quick_upgraded_to_full_reports_not_draft` 等）、infra 17 + **2 个真实引擎集成用例**（`quick_path_skips_latexmk_and_reports_quick`：断言有产物时 Quick 生效、PDF/synctex 齐全、且 `tmp/main.fdb_latexmk` mtime **不变**（确证没走 latexmk）；`quick_upgrades_to_full_without_artifacts`：断言无产物时升级为 Full 且 `.log` 无 `There were undefined references`）、vitest 60（新增 `useIdleConvergence` 5 例 + compile store 的 draft 3 例）、`npm run build` 通过。**真机（tauri server MCP 驱动 `multifile`）**：MutationObserver 记下的一个完整 cycle —— `就绪` → `排版中`(t=1980) → `就绪`+「引用待更新」(t=6780) → `排版中`(t=8786，**Δ=2006ms** = 空闲收敛的 Full) → `就绪`、提示消失(t=12169)；后端日志同一 cycle 为 `触发编译` → `Quick 编译（单趟直调引擎） engine="xelatex"` → `手动编译` + `Full 编译（完整 latexmk 收敛）`；`tmp/main.fdb_latexmk` 由收敛那一趟更新（20:03:26.266，晚于 Quick 趟），**确证收敛不是空转跳过**。**未验证**：bib/biber 场景（现有 fixture 编辑期不触发 bibtex；收敛兜底应覆盖，但无实测）。**命名债**：`LatexmkRunner` 现在同时驱动 latexmk 与直调引擎，名字偏窄（改名会牵动架构图 SVG 与 `cli-mcp-plan.md` 等三处文档，暂以注释说明）。
+- **编译超时：从"静默重试"改为"证据化诊断 + 一键提超时重试"（2026-09，roadmap ㉕）**：超时此前是产品里最没用的失败态——**不进错误列表**（状态栏只有「失败 · 超时」）、**静默重试一次**（默认 120s → 用户白等 240s 才看到任何提示），而 ③ 实测真实论文档 cold 远超默认上限。**四处改动**：① **上限 600 → 1800s**（`settings/validate.rs` 与 `SettingsPanel.vue` 同步）：600 的上限本身就是"调到顶也编不过"的死路；② **不再自动重试**——`policy::decide` 去掉 `attempt`/`Decide::Retry`（同一源码同一上限重跑几乎必然再超时，只是让用户多等一个完整窗口），「重试」变成用户可见的动作；③ **超时进错误列表**：`CompileOutcome::Timeout` 由无载荷变为携带 `ErrorEntry`，runner 现场采集证据（是否首编 / `.tex` 源文件数 / 日志已排版到第几页）构造条目，actor 与 ContentError/IoError 同路径广播；④ **一键重试**：`Diagnosis` 增 `suggested_timeout_secs: Option<u32>`（机器可读的操作参数，规则只在后端写一次），`ErrorList.vue` 据此渲染「提高到 Ns 并重试」→ `update_settings` + `compile_now`（顺序固定：先改设置再重跑）。**判据（从强到弱）**：日志里已有致命错误 → **报那条错误且不给一键按钮**（提高超时救不了；实测 hithesis 报错后 latexmk 挂住不退出，产品看到的正是"超时"）；否则看日志有无页输出 → 有则"在推进、只是比上限慢"（`compile_timeout`），无则给两种可能（`compile_timeout_stalled`，不武断说"卡住"）。**建议值规则**：阶梯 `300 → 900 → 1800`；**首编直接跳 900**（首编最慢，让用户在注定不够的 300s 上再等一次代价太高）。**顺带补一类真实诊断**：`aux_write_failed`——`! I can't write on file 'body/introduction.aux'`（`\include{子目录/文件}` 要求中间目录里有同名子目录）。**这是 ㉕ 调查中挖出的 ㉖ 首个硬证据**：最小复现见 [troubleshooting.md](./troubleshooting.md)「`\include{子目录}` + `-output-directory` 的中间目录」。**测试**：core 149（新增 `progress::pages_typeset` 5 例——含 `max_print_line` 把 `[6`/`]` 折到多行的真实日志形态；`diagnose_timeout` 6 例含真实捕获日志；`decide` 超时不重试；validate 上限）、infra 17 + 真实引擎用例 `compile_timeout_kills_tree_and_reports_evidence`（断言条目带诊断且首编建议 900）、vitest 64（新增 `ErrorList.spec.ts` 4 例：按钮标签取后端建议值、点击顺序 update→compileNow、无建议值不渲染）、`npm run build` 通过。**真机（tauri server MCP）**：夹具 `bench/thesis` 清掉 `tmp/`（制造首编）→ 设置面板把超时改 5s → 点「编译」→ 5s 后状态栏「失败 · 超时」，错误列表出现一条：*「编译在 5s 内没有跑完，但日志显示已经排版到第 24 页——是在推进，只是比上限慢（首次编译，共 9 个 .tex 源文件）」* + 建议 + 按钮**「提高到 900s 并重试」**；点按钮 → `get_settings` 立刻变为 `timeout_secs: 900` → `手动编译` + `Full 编译（完整 latexmk 收敛）` → 就绪、条目消失。**无静默重试**由日志与用例双重确认（同一 cycle 仅一次 `编译超时（5s），树杀进程`；`timeout_fails_immediately_without_retry` 断言 `runner.calls().len() == 1`）。**真实模板 DoD 未达成（诚实记录）**：hithesis 冷跑 ~4 分钟后报 `I can't write on file 'body/introduction.aux'` 并挂住，**调高超时也编不过**——阻塞点在模板 latexmkrc × `-outdir=tmp` 约定（㉖），不在超时；③ 的 ">240s/>600s 未收敛" 记录待 ㉖ 修好后重测。
 - **性能基准与回归基建（2026-09，roadmap ③）**：把"性能结论"从一次性实测变成**一条命令可复现的回归**。**两个脚本**（fixture 不入库，入库的是脚本——`test_file/projects/` 已 gitignore）：`scripts/gen-bench-projects.mjs` 生成**六档纯文本 fixture**（tiny / small-article / multifile / graphics / large / thesis，用确定性 LCG 生成填充文本，任意机器逐字节可复现；另在检测到本机 TeX Live 样例时复制一份 `thesis-real-hithesis` 作为**可选真实档**，默认不跑）；`scripts/bench.mjs` 逐档测 **cold（删 tmp 后首跑）/ noop（无改动重跑）/ edit（改一个源文件后重跑）** 各 3 次取中位数，按 `端到端 = debounce + edit + preview` 对照 [design.md](./design.md) §延迟预算判定 EXCELLENT/PASS/FAIL，**任一 FAIL → 退出码 1**。**工程要点**：① 调用方式严格对齐 `runner`（cwd=项目根、`-xelatex -outdir=tmp -synctex=1 -interaction=nonstopmode`，不加产品没传的参数）；② 用 `spawnSync(..., stdio:'ignore')`——**不开管道**，因此沙箱内无需提权即可跑，失败原因改从 `tmp/<stem>.log` 读；③ 超时后 latexmk 的孙进程会残留（Windows 上 `latexmk.exe → runscript.tlu → perl` 三层，`spawnSync` 只杀直接子进程），故显式 `taskkill perl/xelatex/latexmk`；④ `--no-warmup` 供真实档用（单次编译分钟级，预热代价过高）。**实测结论见 [design.md](./design.md) §「基准脚本与 2026-09 一轮实测」**，三条要点：**瓶颈在小文档的固定开销而非大文档**（tiny 6 行 edit 1625ms vs large 300 页 4104ms；`noop` 本身就要 ~0.5s）；**三档小文档全部超 2s 及格线**且"冷编译 ≤2s 的小文档"在本机已几乎不存在 → **预算口径需复核**（本轮只给数据不下结论）；**真实学位论文档 cold >240s 未收敛**而默认超时是 120s（㉕ 的直接输入）。**真机（MCP）**：`webview_execute_js` 读 `window.__previewLastReload` 得 `fetch 11 / parse 39 / render 64 / total 115ms / pagesRendered=7`（46 页/78KB），真实端到端 3078ms 与脚本估算 3063ms 仅差 15ms。**顺带**：把"改完怎么验真机"固化成 [troubleshooting.md](./troubleshooting.md) 的「真机验收清单（tauri server MCP 驱动）」8 项，含 `driver_session` 重建会话的坑。
