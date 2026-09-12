@@ -61,3 +61,65 @@
 - 前端单测走 `npm run test`（vitest，需提权 `danger-full-access` 跑 esbuild worker；本轮 28 pass）。
 - src-tauri 接线层的纯逻辑单测（`fs_impl::strip_verbatim`、`runner::root_stem/latexmk_input`、`watch::should_process/is_structural_event/normalize_event_paths`、`storage::effective/is_self_write/project_overrides_path`、`commands::pdf_path_for_root`）**可编译、逻辑已验证**，但本机无法直接 `cargo test` 执行；在能解析 WebView2 的 Windows 环境（真机宿主）再运行。
 - **已穷尽尝试仍失败**：把 `webview2-com-sys-*/out/{arch}/WebView2Loader.dll` 拷到 `target/debug` **及 `target/debug/deps`（测试 exe 同目录）** 并加入 PATH；`dumpbin /imports` 显示静态导入均为系统 DLL、延迟导入仅 `VCRUNTIME140.dll`；`danger-full-access` 提权运行——均仍 `STATUS_ENTRYPOINT_NOT_FOUND`。**非沙箱权限、非 PATH、非运行时缺失**，是 Tauri v2 shell crate 测试二进制的已知 Windows 工具链限制。
+
+## 中文文件名/路径兼容性实测（2026-09，roadmap P0-①）
+
+**总结论**：**文件名/路径层面的中文全链路可用**（无阻塞缺陷，回归测试已固化）；唯一实测出的真实缺陷**不在路径，而在日志编码**（见下节，已修复）。
+
+### 实测环境与样本
+
+- TeX Live 2026（`latexmk` / `xelatex` / `pdflatex` / `synctex` 1.5），Windows，活动代码页 **65001**；并在 **`chcp 936`** 下逐项重复——**控制台代码页对结论无影响**（见下 synctex 字节实测）。
+- 样本工程 `test_file/projects/中文测试工程/`（**gitignore**，需手动重建）：中文目录 + 中文文件名 `中文主文件.tex` + 中文子目录 `章节/第一章.tex`（`\include` 引入）+ `ctexart` 中文正文。
+
+### 逐项实测结果（全部通过）
+
+| 环节 | 结果 | 证据 |
+|---|---|---|
+| `latexmk` 编译 | ✅ exit 0 | `latexmk -xelatex -outdir=tmp -synctex=1 -interaction=nonstopmode 中文主文件.tex`，CP65001 与 CP936 均成功 |
+| 中间产物 | ✅ 中文名正确 | `tmp/中文主文件.{log,aux,fls,toc,xdv,synctex.gz}` 全部产出 |
+| **App 真机链路** | ✅ 全通 | `npm run tauri dev` + `VITE_TEXPRESSO_PROJECT` 打开中文工程 → 日志实见 `打开项目：…\中文测试工程`、`开始监视项目：…`（notify 注册成功）、`手动编译: root=…\中文主文件.tex` → 项目根产出 **`中文主文件.pdf` (40,648 B)**；`tmp/` 事件被正确忽略 |
+| `synctex view`（正向） | ✅ | 中文绝对路径 `-i 5:1:E:/…/中文主文件.tex` → `Page:1` |
+| `synctex edit`（反向） | ✅ | 回传 `Input:E:/…/中文测试工程/./中文主文件.tex`（中文完好） |
+| `.log` 中文文件名 | ✅ | 日志内 `(./中文主文件.tex` 为 UTF-8；解析能带出中文文件名 + 行号（回归测试 `parse_log_keeps_chinese_file_name_and_line`） |
+| `canonicalize` + `\\?\` 剥离 | ✅ | `\\?\E:\项目\…` → `E:\项目\…`（既有 `strip_verbatim` 对中文安全） |
+| 中文应用配置目录 | ✅ | 模拟 `C:\Users\中文用户\AppData\…`：全局设置与项目覆盖 `.texpresso/settings.json` 均原子读写通过 |
+
+**关键编码事实（字节级实测，值得记住）**：`synctex` 的 stdout **恒为 UTF-8**（`中` = `E4 B8 AD`），**与代码页无关**——CP65001 与 CP936 下抓到的字节完全一致。故现有 `String::from_utf8_lossy(&out.stdout)` 的用法**正确**（此前怀疑它会按代码页输出，已证伪）。
+
+### 真实缺陷（已修复）：GBK 源文件 + pdflatex → `.log` 含非法 UTF-8 → 错误列表拿不到任何信息
+
+**现象**：源 `.tex` 是 GBK 编码（中文用户遗留文件很常见）时，`.log` 可能**不是合法 UTF-8**，而 `runner` 用严格 `read_to_string` 读日志 → 读取失败 → 前端只拿到「编译失败且无法读取日志（…）：stream did not contain valid UTF-8」，**真正的 TeX 错误一条都看不到**——恰好击中调研里最高频的痛点（错误诊断）。
+
+**实测差异（同一 GBK 源，两个引擎行为不同）**：
+
+| 引擎 | `.log` 是否合法 UTF-8 | 说明 |
+|---|---|---|
+| `xelatex` | ✅ 合法 | 引擎自己把非法字节替换为 U+FFFD 写进日志（`Invalid UTF-8 byte or sequence at line 3 replaced by U+FFFD.`） |
+| **`pdflatex`** | ❌ **非法** | 实测含 **73 个非法字节**（首个 `0xD6`，offset 1893）——原始 GBK 字节被直接回显 |
+
+**修复**：新增 `texpresso_core::log_parser::decode_log(bytes)`——能严格解就严格解，否则 lossy（非法字节 → U+FFFD）；`FileSystem` trait 增 `read_to_string_lossy`（默认退化为严格读取，`TokioFs` 覆盖为 lossy 解码），`runner` 读 `.log` 改走它。
+
+**修复后判据（实测）**：同一个非法日志 lossy 解码后，`! LaTeX Error: Invalid UTF-8 byte sequence.` 与 `l.3 ` 等 **ASCII 骨架完好**，`parse_log` 仍能给出消息 + 行号——诊断信息"有损"远好于"没有"。回归测试 `log_parser::decode_tests::invalid_bytes_do_not_lose_error_skeleton` 锁定该行为。
+
+**App 端到端复现与验证（已完成）**：夹具 `test_file/projects/中文GBK工程/`（gitignore，需重建）——`主文件.tex`（纯 ASCII）+ `子目录/gbk.tex`（**GBK 编码**，含 `\undefinedcommandhere`）+ `.texpresso/settings.json` 覆盖 `{"compile":{"engine":"pdflatex"}}`。步骤：
+
+1. `VITE_TEXPRESSO_PROJECT=…\中文GBK工程 npm run tauri dev`；
+2. 触碰 `主文件.tex`（改 mtime）经 watch 触发编译；
+3. 观察 dev stdout。
+
+**实测输出（修复后）**：
+
+```
+DEBUG 构造编译请求: root=…\中文GBK工程\主文件.tex engine=PdfLaTeX
+DEBUG 编译失败：已从 .log 解析出错误条目 count=9 log=…\tmp\主文件.log
+```
+
+即：非法 UTF-8 日志被容错解码后**成功解析出 9 条错误送达前端**。修复前该路径会退化为 `编译失败且无法读取日志（…）：stream did not contain valid UTF-8`（`warn!` 分支），错误列表**一条都没有**。该日志行为本次一并补上（此前编译失败在 stdout 完全不可见）。
+
+> 注：把"文件名编码"与"内容编码"两个变量隔离——根文件与子文件名均为 ASCII，GBK 只出现在子文件**内容**里；中文**文件名/路径**的验证由 `中文测试工程` 夹具覆盖。
+
+### 未覆盖 / 下一步
+
+- **GUI 目视项（需 tauri server MCP 会话补做）**：pdf.js 经 asset 协议加载中文路径 PDF 的渲染、SyncTeX 高亮/跳转的可视确认。机制上 Tauri 的 `convertFileSrc` 会做 percent-encoding、asset scope 为 `**`，但**本次未目视确认**，不计入已验证。
+- **已知未修**：**编辑** GBK 源文件（`read_file` 严格 UTF-8）会失败并返回英文 IO 错误。本次范围是文件名/路径，未改该行为；若要支持"打开并转码显示 GBK 源文件"，需单独设计（含保存时的编码回写策略）。
+- 本机 `cargo test -p texpresso`（src-tauri）无法运行（见上一节），故 src-tauri 侧新增的中文用例（`fs_impl` / `runner` / `storage` / `commands`）**仅编译校验通过**（`cargo check -p texpresso --tests`），待真机宿主执行；core 侧 10 条中文用例已实际运行通过。

@@ -15,6 +15,7 @@
 | [cli-mcp-plan.md](./cli-mcp-plan.md) | 计划任务：CLI + MCP 交互接口（现状盘点、工具清单、P0/P1 优化点与落地顺序；**仅记录，待实现**） |
 | [adr/](./adr/) | 决策记录（ADR），当前 9 项 |
 | [troubleshooting.md](./troubleshooting.md) | 排障记录（Windows 路径/工具链/日志解析场景） |
+| [research/](./research/) | 市场调研：TeX IDE 核心痛点（[总览](./research/tex-ide-pain-points.md)、[桌面编辑器专项](./research/desktop-latex-editor-pain-points.md)、[在线平台专项](./research/online-latex-editor-pain-points.md)、[VS Code 专项](./research/vscode-latex-workshop-pain-points.md)）与[**可执行 Roadmap 排序**](./research/tex-ide-roadmap-priority.md)；用于产品取舍的外部事实依据 |
 
 ## 阅读顺序
 

@@ -16,3 +16,5 @@ pub mod types;
 mod integration_tests;
 #[cfg(test)]
 mod testutil;
+#[cfg(test)]
+mod unicode_path_tests;

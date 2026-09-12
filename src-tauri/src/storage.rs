@@ -187,6 +187,41 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn chinese_config_and_project_paths_round_trip() {
+        // 模拟中文 Windows 用户名：app_config_dir 落在 `C:\Users\中文用户\AppData\...`，
+        // 项目根也可能含中文。全局设置 + 项目覆盖都必须能原子读写。
+        let base = std::env::temp_dir().join(format!("texpresso-配置-{}", std::process::id()));
+        let config_dir = base.join("用户配置");
+        let project_root = base.join("项目").join("中文测试工程");
+        std::fs::create_dir_all(&config_dir).unwrap();
+        std::fs::create_dir_all(&project_root).unwrap();
+
+        let s = SettingsStorage::new(config_dir.join("settings.json"));
+
+        // 全局：写 → 读回一致（并验证原子写落盘）
+        let mut custom = Settings::default();
+        custom.compile.timeout_secs = 77;
+        s.save_global(&custom).await;
+        assert!(s.global_path().exists(), "中文配置目录应落盘 settings.json");
+        let loaded = s.load_global(&TokioFs).await;
+        assert_eq!(loaded.compile.timeout_secs, 77);
+
+        // 项目覆盖：写 → 读回一致（中文项目根下的 .texpresso/settings.json）
+        let mut o = ProjectOverrides::default();
+        o.root_file = Some("中文主文件.tex".into());
+        s.save_overrides(&project_root, &o).await;
+        let override_path = project_overrides_path(&project_root);
+        assert!(override_path.exists(), "中文项目根应落盘 .texpresso/settings.json");
+        let loaded_o = s.load_overrides(&TokioFs, &project_root).await;
+        assert_eq!(
+            loaded_o.root_file.as_deref(),
+            Some(Path::new("中文主文件.tex"))
+        );
+
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[tokio::test]
     async fn save_then_self_write_filter_consumes() {
         // 覆盖：写盘（原子写）→ 自写盘 hash 过滤消费一次 → 再次/不同内容为 false
         let dir = std::env::temp_dir().join(format!("texpresso-storage-it-{}", std::process::id()));

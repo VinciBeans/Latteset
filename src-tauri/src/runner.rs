@@ -9,7 +9,7 @@ use texpresso_core::project::FileSystem;
 use texpresso_core::scheduler::CompileRunner;
 use texpresso_core::types::{CompileOutcome, CompileRequest, ErrorEntry, ErrorKind};
 use tokio_util::sync::CancellationToken;
-use tracing::warn;
+use tracing::{debug, warn};
 
 /// 编译中间目录（design.md：统一收纳 tmp/，与 core 忽略规则一致）。
 const OUT_DIR: &str = "tmp";
@@ -105,10 +105,12 @@ impl CompileRunner for LatexmkRunner {
                 }
                 Ok(_) => {
                     // 非零退出：.log 是权威（modules.md §4：不做流式输出）
+                    // 用**容错解码**读取：GBK 源文件经 pdflatex 会把非法 UTF-8 字节写进日志，
+                    // 严格读取会导致「编译失败却拿不到任何错误信息」（2026-09 实测，roadmap P0-①）。
                     let log_path = tmp_dir.join(format!("{stem}.log"));
-                    match self.fs.read_to_string(&log_path).await {
-                        Ok(text) => CompileOutcome::ContentError {
-                            errors: parse_log(&text)
+                    match self.fs.read_to_string_lossy(&log_path).await {
+                        Ok(text) => {
+                            let errors: Vec<ErrorEntry> = parse_log(&text)
                                 .into_iter()
                                 .map(|m| ErrorEntry {
                                     message: m.message,
@@ -116,11 +118,20 @@ impl CompileRunner for LatexmkRunner {
                                     line: m.line,
                                     kind: ErrorKind::ContentError,
                                 })
-                                .collect(),
-                        },
-                        Err(e) => CompileOutcome::IoError {
-                            message: format!("编译失败且无法读取日志（{}）：{e}", log_path.display()),
-                        },
+                                .collect();
+                            debug!(
+                                count = errors.len(),
+                                log = %log_path.display(),
+                                "编译失败：已从 .log 解析出错误条目"
+                            );
+                            CompileOutcome::ContentError { errors }
+                        }
+                        Err(e) => {
+                            warn!(log = %log_path.display(), "编译失败且无法读取日志：{e}");
+                            CompileOutcome::IoError {
+                                message: format!("编译失败且无法读取日志（{}）：{e}", log_path.display()),
+                            }
+                        }
                     }
                 }
                 Err(e) => CompileOutcome::IoError {
@@ -380,5 +391,156 @@ mod tests {
             latexmk_input(Path::new(r"D:\other\a.tex"), root),
             "D:/other/a.tex"
         );
+    }
+
+    // ---------------------------------------------------------------- 中文/非 ASCII 路径（roadmap P0-①）
+
+    #[test]
+    fn chinese_path_input_and_stem() {
+        // 传给 latexmk 的输入必须是相对项目的正斜杠路径，中文原样保留（不得被转义/丢字）
+        let root = Path::new(r"E:\项目\中文测试工程");
+        assert_eq!(
+            latexmk_input(Path::new(r"E:\项目\中文测试工程\中文主文件.tex"), root),
+            "中文主文件.tex"
+        );
+        assert_eq!(
+            latexmk_input(Path::new(r"E:\项目\中文测试工程\章节\第一章.tex"), root),
+            "章节/第一章.tex"
+        );
+        // 产物名沿用 basename 的 stem，中文 stem 需与 pdf_dst 计算一致
+        assert_eq!(root_stem(Path::new(r"E:\项目\中文测试工程\中文主文件.tex")), "中文主文件");
+    }
+
+    /// 中文路径全链路（真实 latexmk + synctex）：中文目录 + 中文文件名 + 中文子目录。
+    ///
+    /// 实测基线（2026-09，TeX Live 2026 / Windows，CP65001 与 CP936 均验证）：
+    /// 编译 exit 0、`tmp/` 产出 `.log`/`.synctex.gz`、PDF 正常，synctex 双向可用且中文源路径可回传。
+    #[tokio::test]
+    #[ignore]
+    async fn compile_chinese_paths_with_synctex() {
+        if !latexmk_available() {
+            eprintln!("跳过：系统未安装 latexmk（需要 TeX Live/MiKTeX）");
+            return;
+        }
+        // 目录名含中文（temp_dir()/texpresso-it-中文目录-<pid>）
+        let project = TempProject::new("中文目录");
+        project.put(
+            "中文主文件.tex",
+            "\\documentclass[UTF8]{ctexart}\n\\begin{document}\n\\include{章节/第一章}\n\\end{document}\n",
+        );
+        project.put("章节/第一章.tex", "\\section{子文件章节}\n中文正文。\n");
+
+        let runner = LatexmkRunner {
+            fs: std::sync::Arc::new(crate::fs_impl::TokioFs),
+        };
+        let request = CompileRequest {
+            root_file: project.dir.join("中文主文件.tex"),
+            project_root: project.dir.clone(),
+            engine: texpresso_core::types::Engine::XeLaTeX,
+            timeout: Duration::from_secs(60),
+        };
+        let outcome = runner
+            .compile(request, tokio_util::sync::CancellationToken::new())
+            .await;
+
+        let pdf_path = match outcome {
+            CompileOutcome::Success { pdf_path } => pdf_path,
+            other => panic!("中文路径应编译成功，实得：{other:?}"),
+        };
+        assert_eq!(pdf_path, project.dir.join("中文主文件.pdf"));
+        assert!(pdf_path.exists(), "PDF 应拷贝到项目根（中文名）");
+        assert!(
+            project.dir.join("tmp/中文主文件.log").exists(),
+            "中文名的 .log 应落在 tmp/"
+        );
+        assert!(
+            project.dir.join("tmp/中文主文件.synctex.gz").exists(),
+            "中文名的 synctex 数据应产出"
+        );
+
+        if std::process::Command::new("synctex").arg("--version").output().is_err() {
+            eprintln!("跳过 SyncTeX 断言：未安装 synctex");
+            return;
+        }
+        let cli = SyncTexCli;
+        // 正向：从中文子文件定位 → 页码有效
+        let pos = cli
+            .forward(
+                &SourcePosition {
+                    file: project.dir.join("章节/第一章.tex"),
+                    line: 1,
+                    column: 1,
+                },
+                &pdf_path,
+            )
+            .await
+            .expect("中文路径正向定位应成功");
+        assert!(pos.page >= 1);
+
+        // 反向：PDF → 源码，回传的**中文文件名必须完好**（这是跳回源码的判据）
+        let back = cli
+            .inverse(
+                &SyncTexPosition {
+                    page: pos.page,
+                    x: pos.x,
+                    y: pos.y,
+                },
+                &pdf_path,
+            )
+            .await
+            .expect("中文路径反向定位应成功");
+        let back_name = back
+            .file
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        assert!(
+            back_name == "第一章.tex" || back_name == "中文主文件.tex",
+            "反向定位应回传中文源文件名，实得：{}",
+            back.file.display()
+        );
+    }
+
+    /// 中文路径的内容错误：`.log` 解析须带出中文文件名 + 行号（错误列表点击跳转的判据）。
+    #[tokio::test]
+    #[ignore]
+    async fn compile_chinese_path_content_error_keeps_file_and_line() {
+        if !latexmk_available() {
+            eprintln!("跳过：系统未安装 latexmk（需要 TeX Live/MiKTeX）");
+            return;
+        }
+        let project = TempProject::new("中文错误");
+        project.put(
+            "中文主文件.tex",
+            "\\documentclass{article}\n\\begin{document}\n\\undefinedcommandhere\n\\end{document}\n",
+        );
+
+        let runner = LatexmkRunner {
+            fs: std::sync::Arc::new(crate::fs_impl::TokioFs),
+        };
+        let outcome = runner
+            .compile(req(&project), tokio_util::sync::CancellationToken::new())
+            .await;
+
+        match outcome {
+            CompileOutcome::ContentError { errors } => {
+                assert!(!errors.is_empty(), "应有解析出的错误条目");
+                let with_line = errors
+                    .iter()
+                    .find(|e| e.line.is_some())
+                    .expect("错误应带行号");
+                assert_eq!(with_line.line, Some(3));
+                assert!(
+                    with_line
+                        .file
+                        .as_deref()
+                        .map(|f| f.contains("中文主文件.tex"))
+                        .unwrap_or(false),
+                    "错误条目应带中文文件名，实得：{:?}",
+                    with_line.file
+                );
+            }
+            other => panic!("预期内容错误，得到：{other:?}"),
+        }
     }
 }

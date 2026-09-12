@@ -469,4 +469,24 @@ mod tests {
             PathBuf::from(r"C:\proj\thesis.pdf")
         );
     }
+
+    #[test]
+    fn pdf_path_keeps_chinese_stem() {
+        // 中文根文件 → 产物名沿用中文 stem（与 runner 的 pdf_dst 计算必须一致，否则预览找不到文件）
+        assert_eq!(
+            pdf_path_for_root(&project(
+                r"E:\项目\中文测试工程",
+                Some(r"E:\项目\中文测试工程\中文主文件.tex")
+            )),
+            PathBuf::from(r"E:\项目\中文测试工程\中文主文件.pdf")
+        );
+        // 中文子目录下的根文件同样平铺到项目根
+        assert_eq!(
+            pdf_path_for_root(&project(
+                r"E:\项目\中文测试工程",
+                Some(r"E:\项目\中文测试工程\章节\第一章.tex")
+            )),
+            PathBuf::from(r"E:\项目\中文测试工程\第一章.pdf")
+        );
+    }
 }

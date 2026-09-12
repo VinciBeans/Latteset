@@ -41,6 +41,14 @@ impl FileSystem for TokioFs {
     async fn read_to_string(&self, path: &Path) -> io::Result<String> {
         tokio::fs::read_to_string(path).await
     }
+
+    /// 容错解码覆写：诊断类文件（`.log`）不保证合法 UTF-8——GBK 源文件经 pdflatex
+    /// 会把原始字节回显进日志，严格读取会让用户彻底拿不到错误信息（见
+    /// `texpresso_core::log_parser::decode_log` 的实测说明）。
+    async fn read_to_string_lossy(&self, path: &Path) -> io::Result<String> {
+        let bytes = tokio::fs::read(path).await?;
+        Ok(texpresso_core::log_parser::decode_log(&bytes))
+    }
 }
 
 #[cfg(test)]
@@ -74,6 +82,24 @@ mod tests {
         assert_eq!(
             strip_verbatim(Path::new("/proj/main.tex")),
             Path::new("/proj/main.tex")
+        );
+    }
+
+    #[test]
+    fn strips_verbatim_with_chinese_components() {
+        // canonicalize 的中文路径同样带 \\?\ 前缀；剥离不得破坏中文（前端 resolvePath 依赖无前缀形态）
+        assert_eq!(
+            strip_verbatim(Path::new(r"\\?\E:\项目\中文测试工程\中文主文件.tex")),
+            Path::new(r"E:\项目\中文测试工程\中文主文件.tex")
+        );
+        assert_eq!(
+            strip_verbatim(Path::new(r"\\?\UNC\服务器\共享\中文目录\a.tex")),
+            Path::new(r"\\服务器\共享\中文目录\a.tex")
+        );
+        // 无前缀的中文路径原样返回
+        assert_eq!(
+            strip_verbatim(Path::new(r"E:\项目\中文测试工程")),
+            Path::new(r"E:\项目\中文测试工程")
         );
     }
 }
