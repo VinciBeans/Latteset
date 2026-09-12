@@ -63,6 +63,9 @@ AGENTS.md
 # ============ 本地测试工程（test_file/projects，含编译产物 tmp/、*.pdf，勿上传） ============
 test_file/projects/
 
+# ============ 调研临时产物（语料扫描 JSON / 编译矩阵工作区，勿上传；脚本在 scripts/） ============
+test_file/research/
+
 # ============ 端到端测试本地驱动/依赖（勿上传） ============
 test_file/e2e/drivers/
 .npm-cache/

@@ -13,7 +13,9 @@
 | [desktop-latex-editor-pain-points.md](./desktop-latex-editor-pain-points.md) | 桌面原生编辑器（TeXstudio/TeXworks/WinEdt/Texifier/Kile…）量化痛点 | **已完成**（2026-09） |
 | [online-latex-editor-pain-points.md](./online-latex-editor-pain-points.md) | 在线协作平台（Overleaf 为主 + Papeeria/Typst 对照） | **已完成**（2026-09） |
 | [vscode-latex-workshop-pain-points.md](./vscode-latex-workshop-pain-points.md) | 通用编辑器生态（VS Code + LaTeX Workshop，含迁移动机与回迁） | **已完成**（2026-09） |
-| [tex-ide-roadmap-priority.md](./tex-ide-roadmap-priority.md) | 由本调研派生的**可执行 Roadmap 排序**（W/D/C/V 评分 + 分档 + DoD + 批次）；**第 2 版（2026-09 重整理）**：① 与 ②-1 已落地并移入基线、V/C 随 MCP 与 infra 拆分重估、新增 ⑲ 模板调研与快速通道小项 | **已完成**（第 2 版） |
+| [tex-ide-roadmap-priority.md](./tex-ide-roadmap-priority.md) | 由本调研派生的**可执行 Roadmap 排序**（W/D/C/V 评分 + 分档 + DoD + 批次）；**第 2 版 + ⑲ 修订**：① ②-1 ⑲ 已落地、②-2 引擎推断经实测**砍掉**、新增快速通道小项与 ㉕–㉗ | **已完成**（第 2 版） |
+| [template-corpus-survey.md](./template-corpus-survey.md) | **模板语料调研（⑲）**：7,374 份样例静态扫描 + 19 个真实模板 × 双引擎编译矩阵 → 默认 XeLaTeX 选错案例 **0/19** | **已完成**（2026-09） |
+| [cn-thesis-template-engines.md](./cn-thesis-template-engines.md) | 中文高校学位论文模板的**官方引擎要求**（19 个，逐条原文 URL）：19/19 要求或兼容 XeLaTeX | **已完成**（2026-09） |
 
 ## 0. 摘要（TL;DR）
 
