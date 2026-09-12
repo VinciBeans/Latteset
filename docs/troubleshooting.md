@@ -130,6 +130,30 @@ DEBUG 编译失败：已从 .log 解析出错误条目 count=9 log=…\tmp\主�
 
 **顺带复现并确认一个已记录的特性**（非缺陷，modules.md §12 有记）：点击 PDF **目录区**会映射到生成文件 `中文主文件.toc`（新开标签），正文区才映射回 `.tex`。中文文件名在两种情况下都正确解析——这也反证反向 SyncTeX 的中文链路是通的。
 
+### MCP Bridge 插件升级 0.12 → 0.13（2026-09 实测，真机复验通过）
+
+`@hypothesi/tauri-mcp-server@0.13.0` 会对插件版本做 skew 检查；本项目插件此前 pin 在 `0.12`，故 `driver_session` 每次都回
+`The connected app cannot report its plugin version.`（0.12 的 `get_backend_state` 还没有 `bridge.pluginVersion` 字段）。
+升级 `src-tauri/Cargo.toml` → `tauri-plugin-mcp-bridge = "0.13"` 后逐项复验：
+
+| 项 | 结果 | 证据 |
+|---|---|---|
+| 编译 | ✅ | `cargo check` 通过（插件 0.13.0）；capability 无需改动——0.13 的 `permissions/default.toml` 与 0.12 权限项完全一致，新增的窗口命令走既有权限 | 
+| 插件初始化 | ✅ | dev stdout：`[MCP][PLUGIN][INFO] MCP Bridge plugin initialized for 'TeXPresso' (com.texpresso.app) on 0.0.0.0:9223` |
+| 版本上报 | ✅ | `ipc_get_backend_state` → `bridge.pluginVersion = 0.13.0`；`driver_session status` → `pluginVersion 0.13.0` / `serverVersion 0.13.0` / **`versionWarning: null`**（升级前为 `pluginVersion: null` + 警告） |
+| `manage_window` | ✅ | `list` 返回 main 窗口；`resize 1440×900` → `info` 报 2182×1406 物理像素（×1.5 缩放 = 1440×900 逻辑，与 0.13「物理↔CSS 像素换算」修复一致）；新增的 `maximize` 可把最小化窗口恢复正常几何 |
+| 业务链路回归 | ✅ | 打开 `中文测试工程` → 「编译」→ stdout `手动编译: root=…中文主文件.tex` + PDF 生成 → 预览渲染 3 页（控制台 `[preview] reload#1 … pages=3 fetch=14 parse=45 render=60 total=118ms`） |
+| SyncTeX 反向 | ✅ | `webview_interact` 点第一页正文 → 状态栏光标跳到 `中文主文件.tex` **Ln 9**（`\section{第一章：中文标题}`） |
+| JS 执行 / 日志 | ✅ | `webview_execute_js` 返回 `document.title`、预览 canvas 数；`read_logs(console)` 读到 bridge 与 vite 日志 |
+
+**⚠️ 坑：`driver_session status` 的 `pluginVersion` 来自 session 建立时抓取的元数据**（`mcp-server-tauri` 的
+`fetchAppMetadata` 只在 start 时调用一次）。应用重建后仅重启应用**不会**刷新该字段——必须
+`driver_session action=stop` → `action=start` 重新建会话，否则会一直看到旧的 `pluginVersion: null` 与升级警告，
+误判成"升级没生效"。
+
+**⚠️ `focus` 的实测边界**：0.13 的 `manage_window action=focus` 调用返回成功，但**不会把最小化的窗口还原**
+（Windows 下实测 `x/y = -32000` 不变），也不能从别的应用手里抢前台；还原用 `maximize`，或 `resize` 到目标尺寸。
+
 ### 仍未覆盖 / 已知未修
 
 - **正向 SyncTeX 高亮**（源码 Ctrl+点击 → PDF 高亮）本次未目视：`webview_interact` 不支持带修饰键点击，Monaco 的 ctrl+click 需 OS 级按键（pc-control）或 MCP 会话补做。
