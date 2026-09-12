@@ -19,6 +19,7 @@ import { useAutoSave } from "./composables/useAutoSave";
 import { ipc } from "./services/ipc";
 import { subscribeEvents } from "./services/events";
 import SettingsPanel from "./components/SettingsPanel.vue";
+import RootFilePicker from "./components/RootFilePicker.vue";
 import type { ProjectInfo } from "./bindings";
 
 const project = useProjectStore();
@@ -65,7 +66,8 @@ onMounted(async () => {
   const envProject = import.meta.env.VITE_TEXPRESSO_PROJECT as string | undefined;
   if (envProject) {
     try {
-      await openProjectInto(envProject);
+      const info = await openProjectInto(envProject);
+      if (!info.root_file) openRootPicker();
     } catch (e) {
       console.error("自动打开项目失败：", e);
     }
@@ -85,16 +87,58 @@ async function openProjectInto(dir: string): Promise<ProjectInfo> {
   return info;
 }
 
+// ---- 根文件选择器（roadmap P0-②-1）----
+// 打开项目后未探测到唯一根文件时，用弹窗让用户选；取代此前的 console.warn
+// （用户看到的是「打开项目没反应」）。候选列表来自后端 ProjectInfo.root_candidates。
+const rootPickerOpen = ref(false);
+const rootPickerBusy = ref(false);
+const rootPickerError = ref("");
+
+/** 零候选时的兜底列表：项目内全部 .tex（与大纲兜底同源：文件树已过滤 tmp/ 与隐藏项）。 */
+const rootPickerFallback = computed(() =>
+  project.tree.filter((e) => !e.is_dir && /\.tex$/i.test(e.name)).map((e) => e.path)
+);
+
+function openRootPicker() {
+  if (!project.project) return;
+  rootPickerError.value = "";
+  rootPickerBusy.value = false;
+  rootPickerOpen.value = true;
+}
+
+/** 选择候选 → 写项目覆盖 → 同步内存项目状态 → 打开该文件 → 刷新大纲。
+ *  顺序关键：后端 update_settings 现在会同步 `ProjectState.root_file`（此前不同步，
+ *  表现为「选完仍报未确定根文件」），故选择后必须重新 get_project 再打开文件。 */
+async function onRootPicked(relPath: string) {
+  rootPickerBusy.value = true;
+  rootPickerError.value = "";
+  try {
+    await settings.update({ root_file: relPath });
+    const info = await project.syncProject();
+    if (!info.root_file) {
+      // 后端解析出的绝对路径为空 → 覆盖未生效（路径非法等），保留弹窗让用户改选
+      rootPickerError.value = `无法使用该路径作为根文件：${relPath}`;
+      return;
+    }
+    await editor.openFile(info.root_file);
+    await outline.refresh();
+    rootPickerOpen.value = false;
+  } catch (e) {
+    const msg = typeof e === "object" && e && "message" in e ? String((e as { message: unknown }).message) : String(e);
+    rootPickerError.value = `设置根文件失败：${msg}`;
+    console.error("设置根文件失败：", e);
+  } finally {
+    rootPickerBusy.value = false;
+  }
+}
+
 /** 打开项目（dialog 选文件夹）。 */
 async function chooseProject() {
   const dir = await open({ directory: true, title: "打开 TeX 项目文件夹" });
   if (!dir) return;
   try {
     const info = await openProjectInto(dir);
-    if (!info.root_file) {
-      // 多候选/零候选：v1 提示手动选择根文件
-      console.warn("未探测到唯一根文件，请在设置中手动指定 root_file");
-    }
+    if (!info.root_file) openRootPicker();
   } catch (e) {
     console.error("打开项目失败：", e);
   }
@@ -214,9 +258,20 @@ const settingsOpen = ref(false);
       </div>
     </div>
 
-    <StatusBar :cursor-line="cursorLine" :cursor-col="cursorCol" />
+    <StatusBar :cursor-line="cursorLine" :cursor-col="cursorCol" @pick-root="openRootPicker" />
 
     <SettingsPanel v-if="settingsOpen" @close="settingsOpen = false" />
+
+    <RootFilePicker
+      v-if="rootPickerOpen && project.project"
+      :root="project.project.root"
+      :candidates="project.project.root_candidates"
+      :fallback-files="rootPickerFallback"
+      :busy="rootPickerBusy"
+      :error="rootPickerError"
+      @select="onRootPicked"
+      @close="rootPickerOpen = false"
+    />
   </div>
 </template>
 

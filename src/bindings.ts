@@ -6,6 +6,11 @@ import * as __TAURI_EVENT from "@tauri-apps/api/event";
 /** Commands */
 export const commands = {
 	openProject: (folder: string) => typedError<ProjectInfo, CmdError>(__TAURI_INVOKE("open_project", { folder })),
+	/**
+	 *  当前项目信息（只读）：前端在 root_file 变化后重新同步用（roadmap P0-②-1）。
+	 *  `root_candidates` 不在内存里保存，重新探测以获得与 `open_project` 一致的语义。
+	 */
+	getProject: () => typedError<ProjectInfo, CmdError>(__TAURI_INVOKE("get_project")),
 	listDir: (path: string) => typedError<DirEntryInfo[], CmdError>(__TAURI_INVOKE("list_dir", { path })),
 	readFile: (path: string) => typedError<string, CmdError>(__TAURI_INVOKE("read_file", { path })),
 	saveAll: (files: FileContent[]) => typedError<null, CmdError>(__TAURI_INVOKE("save_all", { files })),
@@ -132,10 +137,23 @@ export type PdfUpdated = {
 
 export type PdfUpdatedEvent = PdfUpdated;
 
-/**  打开项目后的项目信息（open_project 命令输出）。 */
+/**  打开项目后的项目信息（open_project / get_project 命令输出）。 */
 export type ProjectInfo = {
 	root: string,
 	root_file: string | null,
+	/**
+	 *  根文件探测得到的候选（升序，项目内绝对路径）。
+	 * 
+	 *  语义（roadmap P0-②-1）：**仅当未使用手动覆盖时**计算——
+	 *  - `Unique(p)` → `[p]`（探测到唯一根文件，`root_file` 即它）；
+	 *  - `Multiple(list)` → 全部候选（`root_file` 为 None，**由前端让用户选**）；
+	 *  - `None` → 空（`root_file` 为 None，前端退回"列出全部 .tex"）；
+	 *  - 手动覆盖生效 → 空（用户已指定，不再探测）。
+	 * 
+	 *  此前 `Multiple` 的候选列表在命令层被直接丢弃，前端只拿到 `root_file: null`
+	 *  且仅有 `console.warn`——表现为「打开项目没反应」。
+	 */
+	root_candidates: string[],
 };
 
 /**  合并后的有效设置（全局 + 项目覆盖）。 */

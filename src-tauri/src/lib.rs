@@ -125,6 +125,7 @@ fn build_specta_builder() -> tauri_specta::Builder<tauri::Wry> {
     tauri_specta::Builder::<tauri::Wry>::new()
         .commands(tauri_specta::collect_commands![
             commands::open_project,
+            commands::get_project,
             commands::list_dir,
             commands::read_file,
             commands::save_all,

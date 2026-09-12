@@ -50,7 +50,23 @@ export const useProjectStore = defineStore("project", () => {
     return normalizePath(base);
   }
 
-  return { project, tree, root, openProject, refreshTree, refreshTreeDebounced, resolvePath };
+  /** 重新读取当前项目信息（roadmap P0-②-1）：root_file 变化后同步内存状态用。
+   *  后端 `get_project` 会按当前覆盖重新探测候选，语义与 `open_project` 一致。 */
+  async function syncProject() {
+    project.value = await ipc.getProject();
+    return project.value;
+  }
+
+  return {
+    project,
+    tree,
+    root,
+    openProject,
+    syncProject,
+    refreshTree,
+    refreshTreeDebounced,
+    resolvePath,
+  };
 });
 
 /** 归一化文件路径：折叠连续斜杠、剥 `.`、合并 `..`（浏览器环境手写，不依赖 node:path）。
@@ -73,4 +89,20 @@ export function normalizePath(p: string): string {
     return /^[A-Za-z]:$/.test(head) ? head + "/" + out.slice(1).join("/") : "/" + out.join("/");
   }
   return out.join("/");
+}
+
+/** 项目内绝对路径 → 项目根相对路径（正斜杠）。
+ *
+ *  用途（roadmap P0-②-1）：根文件选择器拿到的是后端返回的**绝对**候选路径，而
+ *  `update_settings({ root_file })` 只接受**项目内相对路径**（`validate_overrides` 拒 `..`
+ *  与空串），故必须在此转换。两侧都来自后端（canonicalize 后），统一归一化后做前缀比较。
+ *
+ *  不在项目根内 → 返回空串（调用方据此判为不可用，不应发起更新）。 */
+export function relativizePath(abs: string, root: string): string {
+  if (!abs || !root) return "";
+  const a = normalizePath(abs.replace(/\\/g, "/"));
+  const r = normalizePath(root.replace(/\\/g, "/"));
+  if (!a || !r || a === r) return "";
+  const prefix = r.endsWith("/") ? r : `${r}/`;
+  return a.startsWith(prefix) ? a.slice(prefix.length) : "";
 }

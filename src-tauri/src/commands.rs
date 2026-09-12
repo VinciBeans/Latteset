@@ -84,6 +84,39 @@ async fn validate_in_project(state: &AppState, path: &Path) -> Result<PathBuf, C
         .map_err(|e| path_error(e, path, "路径"))
 }
 
+/// 根文件探测（modules.md §5.4）：收集 .tex → 读内容 → 候选收敛。
+///
+/// 抽成独立函数供两处复用：`open_project`（无覆盖时）与 `update_settings`
+/// （清除 root_file 覆盖时回到"自动探测"语义——必须与重新打开项目的结果一致）。
+async fn detect_root(
+    state: &AppState,
+    root: &Path,
+) -> Result<RootResolution, CmdError> {
+    let files = collect_tex_files(state.fs.as_ref(), root)
+        .await
+        .map_err(|e| CmdError::Internal(format!("扫描项目失败：{e}")))?;
+    // 探测需要文件内容（\documentclass 声明 / \input 引用）：一次读入后闭包只查表，
+    // core 的 find_candidates 保持纯函数（读盘一律经 FileSystem trait）。
+    let mut contents: HashMap<PathBuf, String> = HashMap::with_capacity(files.len());
+    for f in &files {
+        if let Ok(text) = state.fs.read_to_string(f).await {
+            contents.insert(f.clone(), text);
+        }
+    }
+    Ok(resolve(find_candidates(&files, root, |p| {
+        contents.get(p).cloned()
+    })))
+}
+
+/// 当前项目信息（`get_project` 与 `open_project` 共用）。
+fn project_info(project: &ProjectState, root_candidates: Vec<PathBuf>) -> ProjectInfo {
+    ProjectInfo {
+        root: project.root.clone(),
+        root_file: project.root_file.clone(),
+        root_candidates,
+    }
+}
+
 // ---------------------------------------------------------------- 项目
 
 #[tauri::command]
@@ -106,7 +139,7 @@ pub async fn open_project(folder: String, state: State<'_, AppState>) -> Result<
     *state.settings.write().await = settings.clone();
 
     // 根文件：手动覆盖优先；否则探测（modules.md §5.4）
-    let root_file = match settings.root_file.clone() {
+    let (root_file, root_candidates) = match settings.root_file.clone() {
         Some(override_path) => {
             // 路径安全（D8）：root_file 覆盖解析后必须落在项目根内且为 .tex。
             // 仅 `starts_with` 对含 `..` 的路径不够（词法匹配），须 canonicalize 解析后再判。
@@ -120,26 +153,13 @@ pub async fn open_project(folder: String, state: State<'_, AppState>) -> Result<
                     override_path.display()
                 )));
             }
-            Some(resolved)
+            // 用户已显式指定 → 不再探测，候选为空
+            (Some(resolved), Vec::new())
         }
         None => {
-            let files = collect_tex_files(state.fs.as_ref(), &canonical)
-                .await
-                .map_err(|e| CmdError::Internal(format!("扫描项目失败：{e}")))?;
-            // 探测需要文件内容（\documentclass 声明 / \input 引用）：一次读入后闭包只查表，
-            // core 的 find_candidates 保持纯函数（读盘一律经 FileSystem trait）。
-            let mut contents: HashMap<PathBuf, String> = HashMap::with_capacity(files.len());
-            for f in &files {
-                if let Ok(text) = state.fs.read_to_string(f).await {
-                    contents.insert(f.clone(), text);
-                }
-            }
-            let resolution = resolve(find_candidates(&files, &canonical, |p| contents.get(p).cloned()));
-            match resolution {
-                // 路径来自 FileSystem::read_dir / canonicalize——基础设施层已剥离 verbatim 前缀
-                RootResolution::Unique(p) => Some(p),
-                RootResolution::Multiple(_) | RootResolution::None => None, // 前端弹窗/手动指定
-            }
+            let resolution = detect_root(&state, &canonical).await?;
+            // 路径来自 FileSystem::read_dir / canonicalize——基础设施层已剥离 verbatim 前缀
+            (resolution.unique(), resolution.candidates())
         }
     };
 
@@ -151,12 +171,34 @@ pub async fn open_project(folder: String, state: State<'_, AppState>) -> Result<
     };
     *state.project.write().await = Some(project.clone());
     state.watch.set_project_root(Some(root.clone()));
-    info!("打开项目：{}", root.display());
+    info!(
+        "打开项目：{}（根文件 {:?}，候选 {} 个）",
+        root.display(),
+        project.root_file.as_ref().map(|p| p.display().to_string()),
+        root_candidates.len()
+    );
 
-    Ok(ProjectInfo {
-        root: project.root,
-        root_file: project.root_file,
-    })
+    Ok(project_info(&project, root_candidates))
+}
+
+/// 当前项目信息（只读）：前端在 root_file 变化后重新同步用（roadmap P0-②-1）。
+/// `root_candidates` 不在内存里保存，重新探测以获得与 `open_project` 一致的语义。
+#[tauri::command]
+#[specta::specta]
+pub async fn get_project(state: State<'_, AppState>) -> Result<ProjectInfo, CmdError> {
+    let project = state
+        .project
+        .read()
+        .await
+        .clone()
+        .ok_or_else(|| CmdError::Invalid("尚未打开项目".into()))?;
+    // 已手动指定根文件 → 候选为空（与 open_project 一致）；否则重探测
+    let root_candidates = if project.root_file.is_some() {
+        Vec::new()
+    } else {
+        detect_root(&state, &project.root).await?.candidates()
+    };
+    Ok(project_info(&project, root_candidates))
 }
 
 #[tauri::command]
@@ -385,15 +427,53 @@ pub async fn update_settings(
     let project = state.project.read().await.clone();
 
     // 1. root_file 走项目覆盖
-    if let Some(root_file) = &patch.root_file {
+    if let Some(new_override) = &patch.root_file {
         let mut overrides = state.overrides.write().await.clone();
-        overrides.root_file = root_file.clone();
+        overrides.root_file = new_override.clone();
         validate_overrides(&overrides)
             .map_err(|errs| CmdError::Invalid(errs.join("；")))?;
+
+        // 解析为项目内绝对路径（D8）：失败即拒绝、**不落盘**——否则会存下一个下次打开
+        // 必然失败的覆盖值，而用户当场看不到任何反馈（roadmap P0-②-1 顺手修）。
+        // 清除覆盖（`null`）→ 回到「自动探测」，与重新打开项目同语义（复用 detect_root）。
+        let resolved: Option<PathBuf> = match (new_override, &project) {
+            (Some(rel), Some(project)) => {
+                let joined = project.root.join(rel);
+                let path = resolve_in_project(state.fs.as_ref(), &project.root, &joined)
+                    .await
+                    .map_err(|e| path_error(e, rel, "root_file 指向的文件"))?;
+                if !is_tex_file(&path) {
+                    return Err(CmdError::Invalid(format!(
+                        "root_file 不是 .tex 文件：{}",
+                        rel.display()
+                    )));
+                }
+                Some(path)
+            }
+            // 无项目打开：只校验形式，覆盖值留待下次 open_project 解析
+            (Some(_), None) => None,
+            (None, Some(project)) => detect_root(&state, &project.root).await?.unique(),
+            (None, None) => None,
+        };
+
         if let Some(project) = &project {
             state.storage.save_overrides(&project.root, &overrides).await;
         }
         *state.overrides.write().await = overrides;
+
+        // 同步**内存**项目状态：此前只更新覆盖与有效设置，`ProjectState.root_file` 保持旧值，
+        // 症状是「在设置里指定了根文件 → 编译仍报『未确定根文件，无法编译』」，必须重开项目才生效
+        // （roadmap P0-②-1 的阻断项：选择候选后必须当场可用）。
+        if project.is_some() {
+            let mut guard = state.project.write().await;
+            if let Some(current) = guard.as_mut() {
+                current.root_file = resolved.clone();
+                debug!(
+                    "root_file 已同步（内存）：{:?}",
+                    current.root_file.as_ref().map(|p| p.display().to_string())
+                );
+            }
+        }
     }
 
     // 2. 其余字段走全局设置

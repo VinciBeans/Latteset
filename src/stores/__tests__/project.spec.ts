@@ -2,7 +2,7 @@
 // 覆盖 2026-08-25 修复：反向定位返回正斜杠+`./` 的绝对路径 → 须归一为已开标签路径。
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { setActivePinia, createPinia } from "pinia";
-import { normalizePath, useProjectStore } from "../project";
+import { normalizePath, relativizePath, useProjectStore } from "../project";
 import { ipc } from "../../services/ipc";
 
 vi.mock("../../services/ipc", () => ({
@@ -61,6 +61,48 @@ describe("resolvePath", () => {
   it("`\\\\?\\` verbatim 防御直通", () => {
     const store = withProject();
     expect(store.resolvePath("\\\\?\\C:\\x\\y.tex")).toBe("\\\\?\\C:\\x\\y.tex");
+  });
+});
+
+describe("relativizePath（roadmap P0-②-1：候选绝对路径 → 项目覆盖用的相对路径）", () => {
+  const root = "E:/Works/tex-presso/test_file/projects/multifile";
+
+  it("项目内子路径 → 相对路径", () => {
+    expect(relativizePath(`${root}/chapters/intro.tex`, root)).toBe("chapters/intro.tex");
+  });
+
+  it("根目录直接子文件 → 文件名", () => {
+    expect(relativizePath(`${root}/main.tex`, root)).toBe("main.tex");
+  });
+
+  it("后端的反斜杠绝对路径同样可转（Windows canonicalize 形态）", () => {
+    expect(relativizePath("E:\\Works\\tex-presso\\test_file\\projects\\multifile\\main.tex", root)).toBe(
+      "main.tex"
+    );
+  });
+
+  it("含 `./` 的路径先归一化", () => {
+    expect(relativizePath(`${root}/./main.tex`, root)).toBe("main.tex");
+  });
+
+  it("中文路径正确转换（不按字节截断）", () => {
+    const cn = "E:/项目/中文测试工程";
+    expect(relativizePath(`${cn}/章节/第一章.tex`, cn)).toBe("章节/第一章.tex");
+    expect(relativizePath(`${cn}/中文主文件.tex`, cn)).toBe("中文主文件.tex");
+  });
+
+  it("项目外路径 → 空串（调用方据此拒绝发起更新）", () => {
+    expect(relativizePath("E:/Works/other/main.tex", root)).toBe("");
+  });
+
+  it("根自身 / 空前缀 → 空串", () => {
+    expect(relativizePath(root, root)).toBe("");
+    expect(relativizePath("", root)).toBe("");
+    expect(relativizePath(`${root}/main.tex`, "")).toBe("");
+  });
+
+  it("同名前缀但不构成路径边界的项目外路径 → 空串（防 `multifile2` 误判）", () => {
+    expect(relativizePath("E:/Works/tex-presso/test_file/projects/multifile2/main.tex", root)).toBe("");
   });
 });
 

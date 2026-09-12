@@ -14,6 +14,7 @@ async function unwrap<T>(r: Result<T>): Promise<T> {
 
 export const ipc = {
   openProject: (folder: string) => unwrap(commands.openProject(folder)),
+  getProject: () => unwrap(commands.getProject()),
   listDir: (path: string) => unwrap(commands.listDir(path)),
   readFile: (path: string) => unwrap(commands.readFile(path)),
   saveAll: (files: { path: string; content: string }[]) => unwrap(commands.saveAll(files)),

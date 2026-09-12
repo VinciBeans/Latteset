@@ -1,16 +1,23 @@
-<!-- StatusBar（modules.md §9.4）：编译状态 / 行列号 / 编译模式 / 冲突提示。只读投影，无状态。 -->
+<!-- StatusBar（modules.md §9.4）：编译状态 / 行列号 / 编译模式 / 冲突提示。
+     另含「未确定根文件」入口（roadmap P0-②-1）：弹窗被关掉后仍可从这里重新打开选择器。 -->
 <script setup lang="ts">
 import { computed } from "vue";
 import { useCompileStore } from "../stores/compile";
 import { useEditorStore } from "../stores/editor";
 import { useSettingsStore } from "../stores/settings";
+import { useProjectStore } from "../stores/project";
 import type { CompilePhase } from "../bindings";
 
 defineProps<{ cursorLine: number; cursorCol: number }>();
+defineEmits<{ (e: "pick-root"): void }>();
 
 const compile = useCompileStore();
 const editor = useEditorStore();
 const settings = useSettingsStore();
+const project = useProjectStore();
+
+/** 项目已打开但未确定根文件 → 显示可点击提示（否则不会触发任何编译）。 */
+const needsRootFile = computed(() => !!project.project && !project.project.root_file);
 
 const phaseText = computed(() => {
   const map: Record<CompilePhase, string> = {
@@ -43,6 +50,14 @@ async function toggleMode() {
     <span class="phase" :class="compile.phase">
       <span class="phase-dot" />
       {{ phaseText }}{{ kindText }}
+    </span>
+    <span
+      v-if="needsRootFile"
+      class="needs-root"
+      title="尚未确定根文件，点击选择要编译的主文件"
+      @click="$emit('pick-root')"
+    >
+      未确定根文件 · 点击选择
     </span>
     <span
       v-for="p in editor.externalConflict"
@@ -95,6 +110,16 @@ async function toggleMode() {
   padding: 2px 9px;
   border-radius: 5px;
 }
+/* 未确定根文件：可点击入口（点击打开根文件选择器） */
+.needs-root {
+  cursor: pointer;
+  background: rgba(255, 181, 74, 0.18);
+  color: #b8791a;
+  padding: 2px 9px;
+  border-radius: 5px;
+  font-weight: 600;
+}
+.needs-root:hover { background: rgba(255, 181, 74, 0.3); }
 .spacer { flex: 1; }
 .cursor { display: inline-flex; align-items: center; gap: 9px; }
 .cursor-file { color: var(--ink); font-family: var(--mono); max-width: 320px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

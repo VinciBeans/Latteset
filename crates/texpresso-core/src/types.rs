@@ -108,11 +108,22 @@ pub struct FileContent {
     pub content: String,
 }
 
-/// 打开项目后的项目信息（open_project 命令输出）。
+/// 打开项目后的项目信息（open_project / get_project 命令输出）。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
 pub struct ProjectInfo {
     pub root: PathBuf,
     pub root_file: Option<PathBuf>,
+    /// 根文件探测得到的候选（升序，项目内绝对路径）。
+    ///
+    /// 语义（roadmap P0-②-1）：**仅当未使用手动覆盖时**计算——
+    /// - `Unique(p)` → `[p]`（探测到唯一根文件，`root_file` 即它）；
+    /// - `Multiple(list)` → 全部候选（`root_file` 为 None，**由前端让用户选**）；
+    /// - `None` → 空（`root_file` 为 None，前端退回"列出全部 .tex"）；
+    /// - 手动覆盖生效 → 空（用户已指定，不再探测）。
+    ///
+    /// 此前 `Multiple` 的候选列表在命令层被直接丢弃，前端只拿到 `root_file: null`
+    /// 且仅有 `console.warn`——表现为「打开项目没反应」。
+    pub root_candidates: Vec<PathBuf>,
 }
 
 /// 文件树条目（list_dir 命令输出）。
