@@ -17,22 +17,31 @@
 └──────────────┬────────────────────────────────────┘
                │ IPC 契约（tauri-specta 生成 TS 类型）
 ┌──────────────▼────────────────────────────────────┐
-│  Rust commands 薄层（DTO 转换、发事件，无业务逻辑）│
-│  Rust 应用服务（调度器、项目服务，编排）            │
-│  Rust 领域（队列语义、探测规则、解析 — 纯逻辑）     │
-│  Rust 基础设施（进程、文件、监视、CLI）             │
+│  src-tauri：commands（DTO 转换、发事件、无业务逻辑）│
+│            + 装配注入（AppState / watch 接线）      │
+└──────────────┬────────────────────────────────────┘
+               │ 经 core trait 调用：FileSystem / CompileRunner / SyncTexProvider
+               │ 监视结果经 WatchSink 回调（事件形态在 src-tauri 定型）
+┌──────────────▼────────────────────────────────────┐
+│  texpresso-infra：进程、文件、监视、设置存储        │
+│            （外部依赖与文件系统唯一落点，无 Tauri） │
+└──────────────┬────────────────────────────────────┘
+               │ core 定义接口与策略（core 不依赖 infra）
+┌──────────────▼────────────────────────────────────┐
+│  texpresso-core：队列语义、探测规则、解析 — 纯逻辑  │
 └───────────────────────────────────────────────────┘
 ```
 
 原则：
 
-- 依赖单向：`前端 → IPC 契约 → commands → 服务 → 领域 ← 基础设施`
+- 依赖单向：`前端 → IPC 契约 → src-tauri → texpresso-infra → texpresso-core`（接口在 core、实现在 infra、注入在 src-tauri；ADR-0010）
+- 上层（src-tauri）不直接调用 OS API：文件与进程一律经 core trait，路径安全策略（D8）在 core `project::paths`
 - 领域层不依赖 Tauri、不做 IO；IO 经基础设施，测试经 trait 注入
 - 不做 ports & adapters 式 trait 泛滥；只有真正需要替换/注入的边界才抽象（CompileRunner、SyncTexProvider）
 
 ## 2. Rust 侧：workspace 与模块
 
-Cargo workspace 两 crate（见 ADR-0006）：
+Cargo workspace 三 crate：ADR-0006 拆出 core，ADR-0010 再拆出 infra（基础设施层与 core 同级）。
 
 **texpresso-core**（无 Tauri 依赖、无 IO，全量可单测）
 
@@ -41,20 +50,29 @@ Cargo workspace 两 crate（见 ADR-0006）：
 | `scheduler` | 合并队列 + 超时/重试/终止语义状态机。**只有事件输入与指令输出，不 spawn 进程**；经 `CompileRunner` trait 执行编译（单测用 fake runner） |
 | `project` | 项目模型、根文件探测规则（见 §5.4）、文件集合过滤 |
 | `log_parser` | .log 解析 → ErrorEntry（快照测试） |
-| `synctex` | `SyncTexProvider` 接口 + 输出解析（进程调用在 src-tauri） |
+| `synctex` | `SyncTexProvider` 接口 + 输出解析（进程调用在 texpresso-infra） |
 | `settings` | 设置模型、默认值、全局/项目合并、校验 |
-| `compose` | 组合层翻译：文件事件/手动编译 → `CompileRequest`（D3，src-tauri watch 调用） |
+| `compose` | 组合层翻译：文件事件/手动编译 → `CompileRequest`（D3，infra watch 调用） |
+| `paths` | 项目内路径解析（D8）：canonicalize + 根内校验 + `PathError`（IO 经 FileSystem） |
 | `types` | 跨边界 DTO（CompileStatus / ErrorEntry / ProjectInfo / Settings…，specta 导出） |
 
-**src-tauri**（接线薄壳）
+**texpresso-infra**（基础设施层：外部依赖与文件系统的唯一落点，ADR-0010）
 
 | 模块 | 职责 |
 |---|---|
-| `commands` | invoke 处理器：DTO 转换 + 事件发射，无业务逻辑 |
-| `watch` | notify 8.2 直连（不用 tauri-plugin-fs 的 JS watch），事件 → 调度器输入；旁路广播 files-changed |
-| `runner` | latexmk 执行（tokio::process、超时、Windows `taskkill /T /F` 树杀、PDF 拷贝） |
-| `sync_cli` | synctex CLI 调用（实现 SyncTexProvider，见 ADR-0008） |
-| state | 持有调度器、设置、项目状态 |
+| `fs` | `tokio::fs` 实现 `FileSystem`（含 canonicalize / is_dir / write）；Windows `\\?\` verbatim 前缀剥离 |
+| `runner` | latexmk 执行（tokio::process、超时、Windows `taskkill /T /F` 树杀、PDF 原子拷贝、.log 容错解码） |
+| `synctex` | synctex CLI 调用（实现 SyncTexProvider，见 ADR-0008） |
+| `storage` | 设置存储：全局/项目文件原子写 + 自写盘 hash 过滤 |
+| `watch` | notify 8.2 直连（不用 tauri-plugin-fs 的 JS watch）：事件分类 → 调度器输入 / 设置热更新；结果经 `WatchSink` 回调（本层不认识 Tauri） |
+
+**src-tauri**（接线与契约薄壳）
+
+| 模块 | 职责 |
+|---|---|
+| `commands` | invoke 处理器：DTO 转换、路径策略调用、错误契约 `{ code, message }`；无业务逻辑 |
+| `events` | 事件契约（specta 生成）+ `TauriSink`（监视结果 → tauri 事件）+ 调度器 Emitter 适配 |
+| `lib` | 装配：构造 infra 实现注入 core trait 位；持有 AppState（调度器、设置、项目状态） |
 
 ## 3. 前端侧：模块划分
 
@@ -146,8 +164,8 @@ Ctrl+点击 → `synctex_forward` → { page, x, y } → PDF 高亮；PDF 点击
 |---|---|---|
 | tauri 2 | — | 应用框架 |
 | tauri-specta | 锁定 RC（如 rc.25） | 类型化 IPC |
-| notify | 8.2.x（9.x 是 RC 不碰） | 文件监视 |
-| tokio | — | 进程/超时 |
+| notify | 8.2.x（9.x 是 RC 不碰） | 文件监视（texpresso-infra） |
+| tokio | — | 进程/超时（infra）、异步锁与通道（core / src-tauri） |
 | thiserror | — | 领域错误枚举 |
 | serde | — | 序列化 |
 | tracing + tracing-subscriber | — | 结构化日志 |
@@ -176,7 +194,7 @@ Ctrl+点击 → `synctex_forward` → { page, x, y } → PDF 高亮；PDF 点击
 
 ## 8. 工程基建
 
-- **Rust 测试**：cargo test——scheduler 用 fake CompileRunner 单测（队列合并/超时/重试/终止语义）；insta 快照——log_parser 用真实 latexmk 日志固化为用例
+- **Rust 测试**：cargo test——scheduler 用 fake CompileRunner 单测（队列合并/超时/重试/终止语义）；insta 快照——log_parser 用真实 latexmk 日志固化为用例；texpresso-infra 另有 `#[ignore]` 集成用例（真实 latexmk/synctex：成功、内容错误、超时树杀、取消、中文路径），跑法 `cargo test -p texpresso-infra -- --ignored`
 - **前端**：vitest（+ @vue/test-utils）——stores（project 路径归一化、editor 自保存过滤/冲突、useAutoSave 防抖）单测，`npm run test`；JSON 组件测后续补
 - **CI（GitHub Actions，MVP 前即搭）**：cargo test + `vue-tsc --noEmit` + `npm run test`（前端单测）+ Windows runner `tauri build` 冒烟（顺带验证 NSIS 打包链路，覆盖 ADR-3）
 

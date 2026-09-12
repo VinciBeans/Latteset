@@ -1,4 +1,4 @@
-//! Latexmk 执行器（modules.md §2.6 / 设计决策 D2）。
+//! Latexmk 执行器（modules.md §2.6 / 设计决策 D2；位于基础设施层，ADR-0010）。
 //!
 //! 超时检测、进程树杀、PDF 拷贝全在这里；调度器无时钟、无进程概念。
 
@@ -171,7 +171,7 @@ fn kill_tree(pid: u32) {
 mod tests {
     //! 真实环境集成测试（`#[ignore]`：需要系统安装 latexmk + synctex）。
     //!
-    //! 在有 TeX Live/MiKTeX 的机器上运行：`cargo test -p texpresso -- --ignored`
+    //! 在有 TeX Live/MiKTeX 的机器上运行：`cargo test -p texpresso-infra -- --ignored`
     //! 这是 Windows 验收清单的自动化抓手（modules.md §8），验证：
     //! - latexmk 真实编译全链路（命令构造/产物位置/PDF 拷贝）；
     //! - 内容错误 → .log 解析链路；
@@ -179,7 +179,7 @@ mod tests {
     //! - SyncTeX CLI 输出契约（ADR-0008 最大风险点）。
 
     use super::*;
-    use crate::sync_cli::SyncTexCli;
+    use crate::synctex::SyncTexCli;
     use std::time::Duration;
     use texpresso_core::synctex::{SourcePosition, SyncTexProvider, SyncTexPosition};
 
@@ -241,7 +241,7 @@ mod tests {
         );
 
         let runner = LatexmkRunner {
-            fs: std::sync::Arc::new(crate::fs_impl::TokioFs),
+            fs: std::sync::Arc::new(crate::fs::TokioFs),
         };
         let outcome = runner
             .compile(req(&project), tokio_util::sync::CancellationToken::new())
@@ -304,7 +304,7 @@ mod tests {
         );
 
         let runner = LatexmkRunner {
-            fs: std::sync::Arc::new(crate::fs_impl::TokioFs),
+            fs: std::sync::Arc::new(crate::fs::TokioFs),
         };
         let outcome = runner
             .compile(req(&project), tokio_util::sync::CancellationToken::new())
@@ -334,7 +334,7 @@ mod tests {
         );
 
         let runner = LatexmkRunner {
-            fs: std::sync::Arc::new(crate::fs_impl::TokioFs),
+            fs: std::sync::Arc::new(crate::fs::TokioFs),
         };
         let mut request = req(&project);
         request.timeout = Duration::from_millis(1); // 必超时
@@ -359,7 +359,7 @@ mod tests {
         );
 
         let runner = LatexmkRunner {
-            fs: std::sync::Arc::new(crate::fs_impl::TokioFs),
+            fs: std::sync::Arc::new(crate::fs::TokioFs),
         };
         let cancel = tokio_util::sync::CancellationToken::new();
         cancel.cancel(); // 立即取消
@@ -431,7 +431,7 @@ mod tests {
         project.put("章节/第一章.tex", "\\section{子文件章节}\n中文正文。\n");
 
         let runner = LatexmkRunner {
-            fs: std::sync::Arc::new(crate::fs_impl::TokioFs),
+            fs: std::sync::Arc::new(crate::fs::TokioFs),
         };
         let request = CompileRequest {
             root_file: project.dir.join("中文主文件.tex"),
@@ -516,10 +516,18 @@ mod tests {
         );
 
         let runner = LatexmkRunner {
-            fs: std::sync::Arc::new(crate::fs_impl::TokioFs),
+            fs: std::sync::Arc::new(crate::fs::TokioFs),
+        };
+        // 必须编译中文根文件本身：req() 造的是 main.tex，项目里并不存在，
+        // latexmk 会因缺少输入而无 .log 可解析（原用例恒失败，2026-09 修正）。
+        let request = CompileRequest {
+            root_file: project.dir.join("中文主文件.tex"),
+            project_root: project.dir.clone(),
+            engine: texpresso_core::types::Engine::XeLaTeX,
+            timeout: Duration::from_secs(60),
         };
         let outcome = runner
-            .compile(req(&project), tokio_util::sync::CancellationToken::new())
+            .compile(request, tokio_util::sync::CancellationToken::new())
             .await;
 
         match outcome {

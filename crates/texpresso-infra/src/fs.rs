@@ -1,4 +1,7 @@
-//! tokio::fs 实现 core 的 FileSystem trait（modules.md §3.2 / D4）。
+//! tokio::fs 实现 core 的 FileSystem trait（modules.md §3.2 / D4、ADR-0010）。
+//!
+//! 基础设施层是**文件系统唯一落点**：上层（src-tauri 命令面）只知道
+//! [texpresso_core::project::FileSystem] 这组方法，不出现 tokio::fs / std::fs。
 
 use async_trait::async_trait;
 use std::io;
@@ -20,7 +23,7 @@ pub fn strip_verbatim(p: &Path) -> PathBuf {
     p.to_path_buf()
 }
 
-/// 真实文件系统实现（src-tauri 注入 core）。
+/// 真实文件系统实现（由基础设施层注入 core 的 trait 位）。
 pub struct TokioFs;
 
 #[async_trait]
@@ -48,6 +51,20 @@ impl FileSystem for TokioFs {
     async fn read_to_string_lossy(&self, path: &Path) -> io::Result<String> {
         let bytes = tokio::fs::read(path).await?;
         Ok(texpresso_core::log_parser::decode_log(&bytes))
+    }
+
+    /// canonicalize 后剥掉 Windows verbatim 前缀：core 的路径策略（D8）与前端
+    /// resolvePath 都要求「对外可用形态」，两种形态混用会让 starts_with 判定永远失败。
+    async fn canonicalize(&self, path: &Path) -> io::Result<PathBuf> {
+        Ok(strip_verbatim(&tokio::fs::canonicalize(path).await?))
+    }
+
+    async fn is_dir(&self, path: &Path) -> io::Result<bool> {
+        Ok(tokio::fs::metadata(path).await?.is_dir())
+    }
+
+    async fn write(&self, path: &Path, contents: &str) -> io::Result<()> {
+        tokio::fs::write(path, contents).await
     }
 }
 

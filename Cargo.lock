@@ -4369,10 +4369,7 @@ dependencies = [
 name = "texpresso"
 version = "0.1.0"
 dependencies = [
- "async-trait",
- "notify",
  "serde",
- "serde_json",
  "specta",
  "specta-typescript",
  "tauri",
@@ -4384,9 +4381,9 @@ dependencies = [
  "tauri-plugin-window-state",
  "tauri-specta",
  "texpresso-core",
+ "texpresso-infra",
  "thiserror 2.0.20",
  "tokio",
- "tokio-util",
  "tracing",
  "tracing-subscriber",
 ]
@@ -4404,6 +4401,20 @@ dependencies = [
  "thiserror 2.0.20",
  "tokio",
  "tokio-util",
+]
+
+[[package]]
+name = "texpresso-infra"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "notify",
+ "serde",
+ "serde_json",
+ "texpresso-core",
+ "tokio",
+ "tokio-util",
+ "tracing",
 ]
 
 [[package]]

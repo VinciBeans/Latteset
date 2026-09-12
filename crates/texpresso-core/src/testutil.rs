@@ -97,6 +97,27 @@ impl FileSystem for FakeFS {
             .cloned()
             .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "文件不存在"))
     }
+
+    /// 内存路径已归一：原样返回，但目标必须存在（与真实 canonicalize 的"不存在即报错"一致）。
+    async fn canonicalize(&self, path: &Path) -> io::Result<PathBuf> {
+        if self.files.contains_key(path) || self.dirs.contains(path) {
+            Ok(path.to_path_buf())
+        } else {
+            Err(io::Error::new(io::ErrorKind::NotFound, "路径不存在"))
+        }
+    }
+
+    async fn is_dir(&self, path: &Path) -> io::Result<bool> {
+        Ok(self.dirs.contains(path))
+    }
+
+    async fn write(&self, path: &Path, contents: &str) -> io::Result<()> {
+        let _ = (path, contents);
+        Err(io::Error::new(
+            io::ErrorKind::Unsupported,
+            "FakeFS 只读：写入用例请用真实文件系统（infra 的 TokioFs）",
+        ))
+    }
 }
 
 /// 可注入的编译结果队列（按调用顺序出队）。

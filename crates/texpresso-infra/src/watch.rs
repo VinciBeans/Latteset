@@ -2,10 +2,10 @@
 //!
 //! - notify 事件 → 规范化 → 分类（.tex / settings.json / 其余）；
 //! - .tex 变化 → 组合层翻译成 CompileRequest → 调度器（设计决策 D3）；
-//! - 旁路广播 files-changed（前端文件树防抖重建）。
+//! - 旁路广播 files-changed（前端文件树防抖重建）；
+//! - **不依赖 Tauri**：结果经 [`WatchSink`] 回调，由 src-tauri 决定发什么事件（ADR-0010）。
 
-use crate::events::{FilesChangedEvent, SettingsChangedEvent};
-use crate::fs_impl::strip_verbatim;
+use crate::fs::strip_verbatim;
 use crate::storage::SettingsStorage;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -13,8 +13,7 @@ use texpresso_core::compose::{compile_request_for_change, ComposeContext};
 use texpresso_core::project::{is_ignored, is_tree_excluded, ProjectState};
 use texpresso_core::scheduler::SchedulerHandle;
 use texpresso_core::settings::Settings;
-use texpresso_core::types::FilesChanged; // 保留：broadcast_files_changed 用
-use tauri_specta::Event;
+use texpresso_core::types::FilesChanged;
 use tokio::sync::{mpsc, RwLock};
 use tracing::{debug, error, warn};
 
@@ -36,6 +35,14 @@ impl WatchHandle {
     }
 }
 
+/// 监视结果出口：基础设施层不知道 Tauri 事件的存在，由上层实现本 trait 转译。
+pub trait WatchSink: Send + Sync + 'static {
+    /// 文件变化旁路（文件树刷新 / 外部修改判定；structural = 增/删/重命名）。
+    fn files_changed(&self, payload: FilesChanged);
+    /// 设置热更新（外部编辑 settings.json 后重算的有效设置）。
+    fn settings_changed(&self, settings: Settings);
+}
+
 pub struct WatchState {
     pub project: Arc<RwLock<Option<ProjectState>>>,
     pub settings: Arc<RwLock<Settings>>,
@@ -43,7 +50,10 @@ pub struct WatchState {
     pub storage: Arc<SettingsStorage>,
     /// 项目覆盖（update_settings 的 root_file 写这里）。
     pub overrides: Arc<RwLock<texpresso_core::settings::ProjectOverrides>>,
-    pub app: tauri::AppHandle,
+    /// 结果出口（由上层注入）。
+    pub sink: Arc<dyn WatchSink>,
+    /// 事件处理用的异步运行时句柄：watch 线程是普通 std 线程，没有 runtime 上下文。
+    pub rt: tokio::runtime::Handle,
 }
 
 /// 启动监视任务：维护 notify watcher，把事件路由到分类处理。
@@ -70,7 +80,12 @@ pub fn spawn_watcher(
             };
         debug!("notify watcher 初始化成功");
 
-        // 固定监视全局设置目录（热更新，modules.md §6）
+        // 固定监视全局设置目录（热更新，modules.md §6）。
+        // 目录不存在时 notify 会直接失败（首次启动还没写过设置），由本层确保其存在——
+        // 这是基础设施的职责，上层不必碰文件系统（ADR-0010）。
+        if let Err(e) = std::fs::create_dir_all(&global_settings_dir) {
+            warn!("创建设置目录失败（{}）：{e}", global_settings_dir.display());
+        }
         if let Err(e) = watcher.watch(&global_settings_dir, RecursiveMode::NonRecursive) {
             warn!("监视全局设置目录失败：{e}");
         }
@@ -205,7 +220,8 @@ fn is_settings_path(path: &Path, state: &WatchState, project_root: Option<&Path>
 /// 设置热更新（D6）：自写盘 hash 过滤 → 重载 → 广播 settings-changed。
 fn handle_settings_change(path: &Path, state: Arc<WatchState>) {
     let path = path.to_path_buf();
-    let rt = tauri::async_runtime::handle();
+    // 先取出句柄：async move 会整体接管 state，直接 state.rt.spawn(...) 会同时借用又移动
+    let rt = state.rt.clone();
     rt.spawn(async move {
         let is_global = path == state.storage.global_path();
         let content = match tokio::fs::read_to_string(&path).await {
@@ -235,14 +251,14 @@ fn handle_settings_change(path: &Path, state: Arc<WatchState>) {
             }
         }
         let s = state.settings.read().await.clone();
-        let _ = SettingsChangedEvent(s).emit(&state.app);
+        state.sink.settings_changed(s);
     });
 }
 
 /// 组合层翻译（D3）：.tex 变化 → CompileRequest → 调度器。
 fn trigger_compile(path: &Path, state: Arc<WatchState>) {
     let path = path.to_path_buf();
-    let rt = tauri::async_runtime::handle();
+    let rt = state.rt.clone();
     rt.spawn(async move {
         let project = state.project.read().await.clone();
         let Some(project) = project else { return };
@@ -263,7 +279,7 @@ fn trigger_compile(path: &Path, state: Arc<WatchState>) {
 
 fn broadcast_files_changed(paths: &[PathBuf], state: &WatchState, structural: bool) {
     let paths: Vec<String> = paths.iter().map(|p| p.to_string_lossy().into_owned()).collect();
-    let _ = FilesChangedEvent(FilesChanged { paths, structural }).emit(&state.app);
+    state.sink.files_changed(FilesChanged { paths, structural });
 }
 
 #[cfg(test)]

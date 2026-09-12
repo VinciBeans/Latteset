@@ -9,6 +9,7 @@ use texpresso_core::settings::Settings;
 use texpresso_core::types::{
     CompileStatusDto, ErrorEntry, FilesChanged, PdfUpdated,
 };
+use texpresso_infra::watch::WatchSink;
 use std::sync::Arc;
 
 #[derive(Serialize, Deserialize, Clone, Type, tauri_specta::Event)]
@@ -30,6 +31,21 @@ pub struct FilesChangedEvent(pub FilesChanged);
 #[derive(Serialize, Deserialize, Clone, Type, tauri_specta::Event)]
 #[tauri_specta(event_name = "settings-changed")]
 pub struct SettingsChangedEvent(pub Settings);
+
+/// 监视结果出口 → tauri 事件（ADR-0010：基础设施层不认识事件，形态在这里定型）。
+pub struct TauriSink {
+    pub app: AppHandle,
+}
+
+impl WatchSink for TauriSink {
+    fn files_changed(&self, payload: FilesChanged) {
+        let _ = FilesChangedEvent(payload).emit(&self.app);
+    }
+
+    fn settings_changed(&self, settings: Settings) {
+        let _ = SettingsChangedEvent(settings).emit(&self.app);
+    }
+}
 
 /// 把调度器输出接到 tauri 事件（scheduler 不知道 tauri 存在——依赖注入）。
 pub fn build_emitter(app: &AppHandle) -> Emitter {

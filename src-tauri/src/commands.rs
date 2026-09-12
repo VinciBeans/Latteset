@@ -4,15 +4,17 @@
 //! （自建命令没有 Tauri 权限模型兜底，必须自守）。
 
 use crate::events::SettingsChangedEvent;
-use crate::fs_impl::strip_verbatim;
 use tauri_specta::Event;
-use crate::storage::SettingsStorage;
+use texpresso_infra::storage::SettingsStorage;
 use serde::Serialize;
 use specta::Type;
 use std::path::{Path, PathBuf};
 use tauri::State;
 use texpresso_core::compose::compile_request_manual;
-use texpresso_core::project::{collect_tex_files, find_candidates, resolve, ProjectState, RootResolution};
+use texpresso_core::project::{
+    collect_tex_files, find_candidates, is_tex_file, resolve, resolve_creatable_in_project,
+    resolve_in_project, resolve_project_root, PathError, ProjectState, RootResolution,
+};
 use texpresso_core::settings::{apply_patch, validate_overrides, ProjectOverrides, Settings, SettingsPatch};
 use texpresso_core::synctex::SourcePosition;
 use texpresso_core::types::{
@@ -53,11 +55,23 @@ pub struct AppState {
     pub settings: Arc<RwLock<Settings>>,
     pub overrides: Arc<RwLock<ProjectOverrides>>,
     pub storage: Arc<SettingsStorage>,
-    pub watch: crate::watch::WatchHandle,
+    pub watch: texpresso_infra::watch::WatchHandle,
     pub app: tauri::AppHandle,
 }
 
-/// 路径校验（D8）：canonicalize 后必须落在项目根内。
+/// 路径策略（D8）在 core `project::paths`：命令面只负责把失败原因翻译成对外错误契约。
+fn path_error(e: PathError, path: &Path, what: &str) -> CmdError {
+    match e {
+        PathError::NotFound => CmdError::NotFound(format!("{what}不存在：{}", path.display())),
+        PathError::RootUnavailable => {
+            CmdError::Internal(format!("项目根不可访问：{}", path.display()))
+        }
+        PathError::Outside => CmdError::Invalid(format!("{what}在项目外：{}", path.display())),
+        PathError::NotADirectory => CmdError::Invalid(format!("不是目录：{}", path.display())),
+    }
+}
+
+/// 路径校验（D8）：canonicalize 后必须落在项目根内（IO 走 FileSystem trait，不碰 OS API）。
 async fn validate_in_project(state: &AppState, path: &Path) -> Result<PathBuf, CmdError> {
     let project = state
         .project
@@ -65,20 +79,9 @@ async fn validate_in_project(state: &AppState, path: &Path) -> Result<PathBuf, C
         .await
         .clone()
         .ok_or_else(|| CmdError::Invalid("尚未打开项目".into()))?;
-    let canonical = tokio::fs::canonicalize(path)
+    resolve_in_project(state.fs.as_ref(), &project.root, path)
         .await
-        .map_err(|_| CmdError::NotFound(format!("路径不存在：{}", path.display())))?;
-    let root = tokio::fs::canonicalize(&project.root)
-        .await
-        .map_err(|e| CmdError::Internal(format!("项目根不可访问：{e}")))?;
-    if canonical.starts_with(&root) {
-        Ok(canonical)
-    } else {
-        Err(CmdError::Invalid(format!(
-            "路径在项目外：{}",
-            path.display()
-        )))
-    }
+        .map_err(|e| path_error(e, path, "路径"))
 }
 
 // ---------------------------------------------------------------- 项目
@@ -87,13 +90,10 @@ async fn validate_in_project(state: &AppState, path: &Path) -> Result<PathBuf, C
 #[specta::specta]
 pub async fn open_project(folder: String, state: State<'_, AppState>) -> Result<ProjectInfo, CmdError> {
     let folder = PathBuf::from(&folder);
-    // 校验目录存在且可读
-    let canonical = tokio::fs::canonicalize(&folder)
+    // 校验目录存在且可读（canonicalize + is_dir 均经 FileSystem trait）
+    let canonical = resolve_project_root(state.fs.as_ref(), &folder)
         .await
-        .map_err(|_| CmdError::NotFound(format!("目录不存在：{}", folder.display())))?;
-    if !canonical.is_dir() {
-        return Err(CmdError::Invalid(format!("不是目录：{}", folder.display())));
-    }
+        .map_err(|e| path_error(e, &folder, "目录"))?;
 
     // 项目设置：覆盖 + 合并（modules.md §6）
     // global 必须读**纯全局**（磁盘 settings.json），不能读 state.settings——后者可能已是
@@ -111,44 +111,40 @@ pub async fn open_project(folder: String, state: State<'_, AppState>) -> Result<
             // 路径安全（D8）：root_file 覆盖解析后必须落在项目根内且为 .tex。
             // 仅 `starts_with` 对含 `..` 的路径不够（词法匹配），须 canonicalize 解析后再判。
             let joined = canonical.join(&override_path);
-            let resolved = tokio::fs::canonicalize(&joined).await.map_err(|_| {
-                CmdError::Invalid(format!("root_file 不存在或不可访问：{}", override_path.display()))
-            })?;
-            if !resolved.starts_with(&canonical) {
-                return Err(CmdError::Invalid(format!(
-                    "root_file 在项目外：{}",
-                    override_path.display()
-                )));
-            }
-            let is_tex = resolved
-                .extension()
-                .and_then(|e| e.to_str())
-                .map(|e| e.eq_ignore_ascii_case("tex"))
-                .unwrap_or(false);
-            if !is_tex {
+            let resolved = resolve_in_project(state.fs.as_ref(), &canonical, &joined)
+                .await
+                .map_err(|e| path_error(e, &override_path, "root_file 指向的文件"))?;
+            if !is_tex_file(&resolved) {
                 return Err(CmdError::Invalid(format!(
                     "root_file 不是 .tex 文件：{}",
                     override_path.display()
                 )));
             }
-            Some(strip_verbatim(&resolved))
+            Some(resolved)
         }
         None => {
             let files = collect_tex_files(state.fs.as_ref(), &canonical)
                 .await
                 .map_err(|e| CmdError::Internal(format!("扫描项目失败：{e}")))?;
-            let resolution = resolve(find_candidates(&files, &canonical, |p| {
-                // 同步读内容：探测是小文件、低频操作
-                std::fs::read_to_string(p).ok()
-            }));
+            // 探测需要文件内容（\documentclass 声明 / \input 引用）：一次读入后闭包只查表，
+            // core 的 find_candidates 保持纯函数（读盘一律经 FileSystem trait）。
+            let mut contents: HashMap<PathBuf, String> = HashMap::with_capacity(files.len());
+            for f in &files {
+                if let Ok(text) = state.fs.read_to_string(f).await {
+                    contents.insert(f.clone(), text);
+                }
+            }
+            let resolution = resolve(find_candidates(&files, &canonical, |p| contents.get(p).cloned()));
             match resolution {
-                RootResolution::Unique(p) => Some(strip_verbatim(&p)),
+                // 路径来自 FileSystem::read_dir / canonicalize——基础设施层已剥离 verbatim 前缀
+                RootResolution::Unique(p) => Some(p),
                 RootResolution::Multiple(_) | RootResolution::None => None, // 前端弹窗/手动指定
             }
         }
     };
 
-    let root = strip_verbatim(&canonical);
+    // canonicalize 已在基础设施层剥掉 Windows verbatim 前缀（infra::fs）
+    let root = canonical.clone();
     let project = ProjectState {
         root: root.clone(),
         root_file,
@@ -225,21 +221,10 @@ async fn save_content(state: &AppState, path: &Path, content: &str) -> Result<()
         .await
         .clone()
         .ok_or_else(|| CmdError::Invalid("尚未打开项目".into()))?;
-    let parent = path
-        .parent()
-        .ok_or_else(|| CmdError::Invalid("非法路径".into()))?;
-    let canonical_parent = tokio::fs::canonicalize(parent)
+    let target = resolve_creatable_in_project(state.fs.as_ref(), &project.root, path)
         .await
-        .map_err(|_| CmdError::NotFound(format!("目录不存在：{}", parent.display())))?;
-    let root = tokio::fs::canonicalize(&project.root).await?;
-    let target = canonical_parent.join(
-        path.file_name()
-            .ok_or_else(|| CmdError::Invalid("非法路径".into()))?,
-    );
-    if !target.starts_with(&root) {
-        return Err(CmdError::Invalid(format!("路径在项目外：{}", path.display())));
-    }
-    tokio::fs::write(&target, content).await?;
+        .map_err(|e| path_error(e, path, "路径"))?;
+    state.fs.write(&target, content).await?;
     Ok(())
 }
 

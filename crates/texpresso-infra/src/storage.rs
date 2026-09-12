@@ -145,7 +145,8 @@ pub fn project_overrides_path(project_root: &Path) -> PathBuf {
 }
 
 /// 原子写：临时文件 + rename（防崩溃截断；modules.md §6）。
-/// 写入属于 src-tauri 基础设施（FileSystem trait 只有读接口，core 纯度不受影响）。
+/// 原子写是基础设施层的专属原语（create_dir_all + rename 组合）：core 的 FileSystem::write
+/// 是给上层命令面用的通用写路径，不含"临时文件 + rename"语义，故在此独立实现。
 async fn atomic_write(path: &Path, content: &str) -> std::io::Result<()> {
     // 父目录可能不存在（如项目覆盖 .texpresso/）：先创建，否则 write 直接失败，
     // 覆盖只留在内存（重启即丢），表现为“设置/清除不持久”。
@@ -161,7 +162,7 @@ async fn atomic_write(path: &Path, content: &str) -> std::io::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::fs_impl::TokioFs;
+    use crate::fs::TokioFs;
     use texpresso_core::settings::model::CompileOverrides;
 
     #[test]
@@ -262,8 +263,11 @@ mod tests {
         let s = SettingsStorage::new(path.clone());
         let loaded = s.load_global(&TokioFs).await;
         assert_eq!(loaded, Settings::default(), "越界应回退默认");
+        // 读回断言而不是子串匹配：默认 timeout_secs=120，pretty JSON 里的
+        // "timeout_secs": 120 会误命中子串 "timeout_secs": 1（原断言恒假，2026-09 修正）。
         let text = std::fs::read_to_string(&path).unwrap();
-        assert!(!text.contains("\"timeout_secs\": 1"), "回退后应落盘默认值");
+        let rewritten: Settings = serde_json::from_str(&text).expect("回退后落盘内容应可解析");
+        assert_eq!(rewritten, Settings::default(), "回退后应落盘默认值");
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

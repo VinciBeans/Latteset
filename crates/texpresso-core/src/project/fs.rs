@@ -29,4 +29,16 @@ pub trait FileSystem: Send + Sync {
     async fn read_to_string_lossy(&self, path: &std::path::Path) -> io::Result<String> {
         self.read_to_string(path).await
     }
+
+    /// 规范化绝对路径（解析 `.`/`..`/软链接）。
+    ///
+    /// 契约：返回**对外可用形态**——Windows 上必须剥掉 `\\?\` verbatim 前缀
+    /// （前端 resolvePath 只认盘符/斜杠开头，见 infra::fs::strip_verbatim）。
+    async fn canonicalize(&self, path: &std::path::Path) -> io::Result<PathBuf>;
+
+    /// 目标是否为目录（打开项目时校验用；避免调用方自己 stat）。
+    async fn is_dir(&self, path: &std::path::Path) -> io::Result<bool>;
+
+    /// 写入（覆盖）文本文件。父目录必须已存在——建目录属于上层策略。
+    async fn write(&self, path: &std::path::Path, contents: &str) -> io::Result<()>;
 }

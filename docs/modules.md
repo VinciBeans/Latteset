@@ -43,7 +43,7 @@ scheduler（core）
 ├── runner.rs       —— CompileRunner trait + CompileRequest/CompileOutcome（core 定义）
 └── scheduler.rs    —— actor 主循环（唯一写者，状态全在 task 内）
 
-src-tauri
+texpresso-infra
 └── runner.rs       —— LatexmkRunner：CompileRunner 实现（tokio 进程、超时、树杀、PDF 拷贝）
 ```
 
@@ -186,7 +186,7 @@ pub enum FailureKind { Timeout, ContentError, Aborted }
 // 重试不重发 Queued，只重发 Running（attempt 对外不可见，前端不感知）
 ```
 
-### 2.6 LatexmkRunner 实现（src-tauri）
+### 2.6 LatexmkRunner 实现（texpresso-infra）
 
 ```rust
 pub struct LatexmkRunner { fs: Arc<dyn FileSystem> }
@@ -237,18 +237,26 @@ project（core）
 └── root_detect.rs —— 根文件探测（纯逻辑）
 ```
 
-### 3.2 FileSystem trait（core 定义，src-tauri 实现）
+### 3.2 FileSystem trait（core 定义，texpresso-infra 实现）
 
 ```rust
-/// core 唯一的 IO 抽象。面最小：只两个方法。
+/// core 唯一的 IO 抽象（"文件与进程的唯一入口"）。
 #[async_trait]
 pub trait FileSystem: Send + Sync {
-    async fn read_dir(&self, path: &Path) -> io::Result<Vec<PathBuf>>;   // 非递归，返回子项路径
+    async fn read_dir(&self, path: &Path) -> io::Result<Vec<DirEntry>>;   // 非递归，带 is_dir
     async fn read_to_string(&self, path: &Path) -> io::Result<String>;
+    async fn read_to_string_lossy(&self, path: &Path) -> io::Result<String>; // 默认退化为严格读取
+    async fn canonicalize(&self, path: &Path) -> io::Result<PathBuf>;     // 对外形态（剥 Windows \\?\ 前缀）
+    async fn is_dir(&self, path: &Path) -> io::Result<bool>;
+    async fn write(&self, path: &Path, contents: &str) -> io::Result<()>;
 }
 ```
 
-**设计决策 D4**：探测、日志解析、设置读取全部经此 trait，core 因此无任何文件依赖。否决"宽松回调注入"（每个函数手写闭包签名，接口面发散）。
+**设计决策 D4**：探测、日志解析、设置存储、命令面的文件读写全部经此 trait，core 因此无任何文件依赖；实现集中在 texpresso-infra（tokio::fs，ADR-0010）。
+
+**### 3.2.1 paths.rs — 路径策略（D8）**：core 提供 `resolve_project_root` / `resolve_in_project`（已存在目标）/ `resolve_creatable_in_project`（新建目标：解析父目录后拼接）与 `PathError{NotFound, RootUnavailable, Outside, NotADirectory}`；命令面只把失败原因翻译成 `{ code, message }`，不再自己 canonicalize + 前缀比对。
+
+否决"宽松回调注入"（每个函数手写闭包签名，接口面发散）。
 
 ### 3.3 scan.rs — 文件收集
 
@@ -342,8 +350,8 @@ pub fn parse_log(text: &str) -> Vec<LogMessage>;
 ## 5. SyncTeX（synctex 大模块）
 
 ```
-synctex（core）         synctex_cli（src-tauri）
-├── model.rs            └── cli.rs —— SyncTexProvider 实现
+synctex（core）              synctex（texpresso-infra）
+├── model.rs                 └── synctex.rs —— SyncTexProvider 实现
 └── provider.rs
 ```
 
@@ -360,7 +368,7 @@ pub trait SyncTexProvider: Send + Sync {
     async fn inverse(&self, pos: &SyncTexPosition, pdf: &Path) -> Result<SourcePosition>;
 }
 
-// src-tauri cli.rs：spawn synctex 二进制（tokio::process），解析 stdout
+// texpresso-infra synctex.rs：spawn synctex 二进制（tokio::process），解析 stdout
 pub fn parse_forward_output(text: &str) -> Result<SyncTexPosition>;  // 纯函数，可单测
 pub fn parse_inverse_output(text: &str) -> Result<SourcePosition>;   // 纯函数，可单测
 ```
@@ -372,7 +380,7 @@ pub fn parse_inverse_output(text: &str) -> Result<SourcePosition>;   // 纯函�
 ## 6. 设置（settings 大模块）
 
 ```
-settings（core）              src-tauri
+settings（core）              texpresso-infra
 ├── model.rs                  ├── storage.rs —— 读写盘、原子写、自写盘 hash 过滤（is_self_write）
 ├── merge.rs                  └── (watch.rs handle_settings_change —— 监视 → 重载 → 广播)
 └── validate.rs
@@ -409,7 +417,7 @@ pub fn is_self_write(&self, path: &Path, content: &str) -> bool;  // 自写盘 h
 
 **信息局部性**：core 的合并/校验是纯函数；全局设置快照是 §1 清单里唯一的 `RwLock` 共享态——写者只有 storage 模块，读方（组合层构造 CompileRequest 时）只取一次性快照拷贝，不持有引用。
 
-## 7. 监视与触发组合（src-tauri）
+## 7. 监视与触发组合（texpresso-infra）
 
 ```
 watch.rs          —— notify 8.2 接线：事件规范化 + 过滤
@@ -444,13 +452,13 @@ pub fn on_tex_changed(&self, path: PathBuf) {
 
 ## 8. 命令面实现（src-tauri commands.rs）
 
-全部命令：DTO 进出、无业务逻辑；路径类参数一律**项目根内校验**（canonicalize + 前缀检查，防任意路径读写——自建命令没有 Tauri 权限模型兜底，这是安全底线）。
+全部命令：DTO 进出、无业务逻辑；路径类参数一律**项目根内校验**（core `project::paths`：canonicalize + 根内前缀检查，防任意路径读写——自建命令没有 Tauri 权限模型兜底，这是安全底线）。文件与进程调用一律经 core trait，命令面不出现 `tokio::fs` / `std::fs` / `std::process`（ADR-0010）。
 
 | 命令 | 实现要点（算法） |
 |---|---|
 | open_project(folder) | 校验目录 → 加载项目设置 → 探测根文件（有 root_file 覆盖则跳过探测）→ 更新项目状态 → 返回 ProjectInfo；探测为 Multiple → 前端弹窗后 update_settings 补 root_file |
 | list_dir(path) | 递归 `collect_tex_files` 变体（返回全树 DirEntryInfo，含目录；前端防抖重建用） |
-| read_file | tokio::fs 读 + 路径校验 |
+| read_file | `FileSystem::read_to_string` + 路径校验（core `project::paths`） |
 | save_all | 写盘（`save_content`）——不触发编译逻辑，watch 自然驱动；唯一保存路径 |
 | compile_now | compose.compile_request_manual：只看 root_file（忽略活动文件路径），构造请求入队 |
 | abort_compile | scheduler.send(Abort) |
@@ -592,3 +600,4 @@ settings-changed: Settings
   - **P3（可选项，已处理）**：① `\verb` 正则加 `line.includes("\\verb")` 短路（跳过多数无 `\verb` 行的正则，微优化）；② `shouldStripLeadBackslash` 的 `charCodeAt(2)===92` 改 `line[startColumn-2]==="\\"`（更直观）；③ 未闭合 `\verb` 不剥离（畸形 LaTeX 边界，接受）；④ 注释明确 `shouldStripLeadBackslash` 是**补全专用**启发式（放公用 texParse 仅为单测锁定，业务归 completion）。
 - **outline 下沉 Rust（2026-09-03）「大纲解析等价重构（cli-mcp-plan.md §4 P1-4）」**：解析逻辑从前端 `src/stores/outline.ts` + `src/texParse.ts` 移入 `crates/texpresso-core/src/outline.rs`（纯解析函数 + `load` 编排 + `OutlineContext`{root/root_file/实时缓冲/兜底文件列表}），DTO `OutlineNode`（title/level/file/line/fileBase/children，serde `fileBase` 重命名经 specta 生效）进 `types.rs`；新增命令 `get_outline(buffers, files)`（specta 注册，`npm run tauri dev` 启动时重新导出 bindings.ts）。**前端**：`stores/outline.ts` 只留触发/传参/呈现（`items/isEmpty/refresh/goTo` API 不变；`OutlineNode` 从 bindings 再导出，`OutlinePane.vue` / `events.ts` / `App.vue` **零改动**）；`texParse.ts` 保留（折叠/片段补全仍用，注释已更新）。**等效性保证**：① Rust `regex` 不支持反向引用 → `\verb` 剥离开手写扫描器复刻 JS 正则回溯语义（先 `\verb*` 贪婪吃 `*`、失败回退把 `*` 当定界符、无闭合则逐字符推进找下一个 `\verb`、匹配后从末尾继续）；② `normalize_path`/`dir_of`/`join_path`/`resolve_include` 逐行对齐前端 `project.ts`（含**不**转换反斜杠、`C:` 盘符段不被 `..` 弹出、绝对路径越界 `..` 丢弃、扩展名 `\.[A-Za-z0-9]+$` 判定）；③ 遍历语义逐条保留：缓冲优先（未落盘也反映）→ 读盘、读失败跳过、visited 防环、根文件走 include 图、无根文件用前端文件树兜底列表、`\begin{verbatim}` 内跳过、行级剥离后匹配。**差异点（边界已判定可接受）**：读集安全为**词法前缀校验**（D8 词法版，core 无 canonicalize）——与 `read_file` 的 canonicalize 语义差仅剩「符号链接目标解析」与 8.3 短名（Windows 大小写不敏感 FS 下实际行为一致）；`\s`/`trim` 的 Unicode 空白集合有微差（U+0085 等，.tex 无影响）；无根文件时文件兜底列表仍由前端树提供（保持 300ms 防抖的旧语义，后端不自行扫描）。**验证**：core 新增 12 例单测（剥离/归一化/解析/建树/load 全链路，含 texParse.spec 对拍、`..` 越界包含跳过、cycle、兜底顺序、缓冲优先、无兜底自动扫描排除 tmp/）；`cargo test -p texpresso-core` **109 通过**、`cargo check -p texpresso`、`vue-tsc --noEmit`、`vitest 35/35`、`npm run build` 通过；**真实目录对拍**（`test_file/projects/multifile`：旧前端逻辑 Node 忠实移植 vs Rust `load()`，临时探针已清理）：**15 项逐字段一致**（depth/title/level/file/line/fileBase；含 `main.tex` 的 `\part` 项「反斜杠路径」这一旧行为怪癖——目录段取自未经归一化的根文件路径）。真机窗口 UI 复测（tauri server MCP）待有该工具集的会话补做。
 - **中文文件名/路径兼容性实测 + 日志编码修复（2026-09，roadmap P0-①）**：完整实测记录见 [troubleshooting.md](./troubleshooting.md)「中文文件名/路径兼容性实测」。**结论**：路径层面的中文全链路可用（`latexmk` 编译、`tmp/` 中文名产物、App 真机打开/监视/编译并产出 `中文主文件.pdf`、`synctex view/edit` 中文绝对路径双向、`.log` 中文文件名解析、`\\?\` 剥离、中文配置目录读写）；**唯一真实缺陷在日志编码**。**修复**：新增 `texpresso_core::log_parser::decode_log(bytes)`（严格 UTF-8 优先、失败则 lossy）——GBK 源文件经 **`pdflatex`** 会把非法字节回显进 `.log`（实测 73 个，xelatex 则会自行替换），严格 `read_to_string` 读取失败会让「编译失败」退化为「拿不到任何错误信息」；`project::FileSystem` trait 增 `read_to_string_lossy`（**默认实现退化为严格读取**，`TokioFs` 覆盖为 lossy 解码），`runner` 读 `.log` 改走该方法。**验证**：core 新增 `unicode_path_tests`（7 例：归一化/`\include` 解析/根文件探测/大纲 include 图/中文前缀守卫/D8 越界拦截/`.log` 中文文件名带行号）与 `log_parser::decode_tests`（3 例，含「非法字节不破坏 ASCII 骨架 + `parse_log` 仍给行号」）——`cargo test -p texpresso-core` **119 通过**；**App 端到端**（`test_file/projects/中文GBK工程`，pdflatex + GBK 子文件）实测 dev stdout：`编译失败：已从 .log 解析出错误条目 count=9`（修复前该路径为 `编译失败且无法读取日志`，错误列表为空）；src-tauri 侧新增中文用例（`fs_impl`/`runner`/`storage`/`commands`，含 2 个需 latexmk 的 `#[ignore]` 集成用例）经 `cargo check -p texpresso --tests` 编译校验（本机 `cargo test -p texpresso` 因 WebView2 限制无法运行，见 troubleshooting）；`npm run build`（vue-tsc + vite build）通过。**未覆盖**：pdf.js 经 asset 协议渲染中文路径 PDF 的**目视确认**（需 MCP 会话）、编辑 GBK 源文件（`read_file` 仍严格 UTF-8，本次未改）。
+- **基础设施层拆出 texpresso-infra（2026-09，ADR-0010）**：把 `fs_impl` / `runner` / `sync_cli` / `storage` / `watch` 从 src-tauri 迁入新 crate `crates/texpresso-infra`（与 core 同级），成为**外部依赖与文件系统的唯一落点**。**边界收紧**：① `FileSystem` trait 增 `canonicalize` / `is_dir` / `write`，命令面不再出现 `tokio::fs` / `std::fs` / `std::process`（D8 路径策略下沉为 core `project::paths`：`resolve_project_root` / `resolve_in_project` / `resolve_creatable_in_project` + `PathError`）；② watch 去掉 tauri 依赖——监视结果经新增的 `WatchSink` trait 回调，事件形态在 src-tauri `events.rs` 定型（`TauriSink`），async 任务改用注入的 `tokio::runtime::Handle`；③ src-tauri 只剩 commands / events / lib 装配，依赖面收窄（notify / tokio-util / async-trait / serde_json 全部移出）。**验证**：`cargo test -p texpresso-core` 127 + `cargo test -p texpresso-infra` 17 通过；`cargo test -p texpresso-infra -- --ignored` **6 个真实 latexmk/synctex 集成用例全通过**（成功 / 内容错误 / 超时树杀 / 取消 / 中文路径正向+反向 / 中文路径内容错误）——这些用例此前困在 src-tauri 无法本机运行（见 troubleshooting.md）；`npm run build`（vue-tsc + vite）通过；真机 `npm run tauri dev`（`VITE_TEXPRESSO_PROJECT=test_file/projects/multifile`）实测 dev stdout：`watch 线程启动` → `打开项目` → `触发编译` → `构造编译请求 root=…main.tex engine=XeLaTeX`，且 `tmp/main.pdf` 与项目根 `main.pdf` 时间戳推进（latexmk 真实重跑 + PDF 原子拷贝），日志无 panic/ERROR。**顺带修正两处既有测试缺陷**：① `load_global_out_of_range_falls_back_to_default` 用子串 `"timeout_secs": 1` 断言，会被默认值 120 误命中（改读回解析断言）；② `compile_chinese_path_content_error_keeps_file_and_line` 编译的是不存在的 `main.tex`（改编译 `中文主文件.tex`）。

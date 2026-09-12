@@ -5,7 +5,8 @@
 
 ## 1. 分层与依赖总览
 
-依赖方向严格单向：`视图 → 状态 → 服务 → IPC 契约 → commands → 领域核心 ← 基础设施`；领域核心（texpresso-core）不依赖 Tauri、不做 IO。
+依赖方向严格单向：`视图 → 状态 → 服务 → IPC 契约 → src-tauri（接线） → texpresso-infra（基础设施） → texpresso-core（领域）`。
+接口在 core、实现在 infra、注入在 src-tauri：**core 不依赖 infra**（也不依赖 Tauri、不做 IO，ADR-0006）；**src-tauri 不碰 OS API**（文件与进程一律经 core trait，ADR-0010）。
 
 <!-- mermaid: 01-layers -->
 ```mermaid
@@ -23,29 +24,31 @@ flowchart TB
 
   CONTRACT["IPC 契约 · tauri-specta 生成 src/bindings.ts<br/>命令面 11 个（invoke）· 事件面 5 个（emit）<br/>DTO：CompileStatus / ErrorEntry / ProjectInfo / Settings …"]
 
-  subgraph SHELL["src-tauri · 接线薄壳（Rust，唯一做 IO 的一侧）"]
+  subgraph SHELL["src-tauri · 接线与契约薄壳（Rust，不碰 OS API）"]
     direction TB
-    CMDS["commands.rs<br/>invoke 处理器 · 项目内路径校验"]
-    WATCH["watch.rs<br/>notify 8.2 常驻监视线程"]
-    RUNNER["runner.rs<br/>latexmk 执行 · 超时 · 进程树杀 · PDF 原子拷贝"]
-    SYNCLI["sync_cli.rs<br/>SyncTexCli"]
-    STORAGE["storage.rs<br/>设置存储 · 原子写 · 自写盘过滤"]
-    FSIMPL["fs_impl.rs<br/>TokioFs"]
-    EVBRIDGE["events.rs<br/>Emitter → tauri 事件"]
-    STATE["AppState<br/>Arc / RwLock 状态装配"]
-    WATCH --> STORAGE
+    CMDS["commands.rs<br/>invoke 处理器 · 路径策略调用 · 错误契约 { code, message }"]
+    EVENTS["events.rs<br/>事件契约（specta）· TauriSink · Emitter 适配"]
+    STATE["lib.rs 装配<br/>AppState：构造实现并注入 core trait 位"]
     CMDS --- STATE
+  end
+
+  subgraph INFRA["crates/texpresso-infra · 基础设施（外部依赖与文件系统唯一落点，无 Tauri）"]
+    direction TB
+    IFS["fs<br/>TokioFs：FileSystem 实现<br/>canonicalize / is_dir / write · verbatim 前缀剥离"]
+    IRUN["runner<br/>LatexmkRunner：CompileRunner 实现<br/>超时树杀 · PDF 原子拷贝 · .log 容错解码"]
+    ISYN["synctex<br/>SyncTexCli：SyncTexProvider 实现"]
+    ISTO["storage<br/>SettingsStorage<br/>原子写 · 自写盘 hash 过滤"]
+    IWATCH["watch<br/>notify 8.2 · 事件分类<br/>结果经 WatchSink 回调"]
   end
 
   subgraph CORE["crates/texpresso-core · 纯领域核心（无 Tauri、无 IO、可单测）"]
     direction TB
     COMPOSE["compose<br/>文件事件 → CompileRequest 快照"]
     SCHED["scheduler<br/>actor + 合并队列 + 失败策略<br/>只有事件输入与指令输出，不 spawn 进程"]
-    PROJECT["project<br/>项目状态 · 根文件探测 · 忽略规则"]
+    PROJECT["project<br/>项目状态 · 根文件探测 · 忽略规则<br/>paths：D8 路径策略（canonicalize + 根内校验）"]
     LOGP["log_parser<br/>.log → ErrorEntry（insta 快照）"]
     SYNM["synctex<br/>Provider 接口 + 输出解析"]
-    SETTINGS["settings<br/>模型 · 全局/项目合并 · 校验"]
-    OUTLINE["outline<br/>源码结构树（缓冲优先）"]
+    SETTINGS["settings · outline · types<br/>合并校验 · 结构树 · 跨边界 DTO"]
   end
 
   subgraph EXT["外部依赖与文件系统（内容真相源）"]
@@ -60,40 +63,46 @@ flowchart TB
   SVC -->|"invoke 命令（结果 ok / CmdError）"| CONTRACT
   CONTRACT -.->|"emit 事件（单向：事件 → store 动作）"| SVC
   CONTRACT --> CMDS
-  WATCH -->|"变化的文件路径"| COMPOSE
-  CMDS -->|"调用领域逻辑"| PROJECT
+  EVENTS -.->|"实现 WatchSink（监视结果 → tauri 事件）"| IWATCH
+  CMDS -->|"领域策略：路径（D8）/ 设置 / 大纲"| PROJECT
   CMDS --> SETTINGS
-  CMDS --> OUTLINE
+  CMDS -->|"经 core trait 调用实现"| IFS
+  CMDS --> ISTO
+  CMDS --> IWATCH
+  CMDS --> ISYN
+  IWATCH -->|"变化的文件路径"| COMPOSE
   COMPOSE --> SCHED
-  RUNNER -.->|"实现 CompileRunner（core 反向调用）"| SCHED
-  EVBRIDGE -.->|"实现 Emitter 三通道"| SCHED
-  FSIMPL -.->|"实现 FileSystem"| PROJECT
-  SYNCLI -.->|"实现 SyncTexProvider"| SYNM
-  RUNNER --> LOGP
-  RUNNER --> TEXLIVE
-  SYNCLI --> SXCLI
-  FSIMPL --> PROJ
-  FSIMPL --> GSET
-  STORAGE --> GSET
-  RUNNER --> PDFOUT
+  IFS -.->|"实现 FileSystem"| PROJECT
+  IRUN -.->|"实现 CompileRunner（core 反向调用）"| SCHED
+  ISYN -.->|"实现 SyncTexProvider"| SYNM
+  ISTO -.->|"settings 合并 / 校验"| SETTINGS
+  IRUN -->|"失败时解析 .log"| LOGP
+  IRUN --> TEXLIVE
+  ISYN --> SXCLI
+  IFS --> PROJ
+  IFS --> GSET
+  ISTO --> GSET
+  IRUN --> PDFOUT
   TEXLIVE --> PROJ
 
   %% 仅排版用：不可见连线，把「外部依赖」层固定在「领域核心」之下
-  OUTLINE ~~~ TEXLIVE
+  SETTINGS ~~~ TEXLIVE
   PROJECT ~~~ PROJ
   SYNM ~~~ SXCLI
-  SETTINGS ~~~ GSET
-  SCHED ~~~ PDFOUT
+  SCHED ~~~ GSET
+  LOGP ~~~ PDFOUT
 
   classDef fe fill:#e9e8ff,stroke:#4a4cd8,color:#241f3a
   classDef ipc fill:#fff3d6,stroke:#c98a12,color:#3a2c05
   classDef shell fill:#e4f6ec,stroke:#2f8f6b,color:#123024
+  classDef infra fill:#ffe6e0,stroke:#c0563a,color:#3a1a12
   classDef core fill:#f3e8ff,stroke:#7c3aed,color:#2b1a45
   classDef ext fill:#f0f0f4,stroke:#8a8aa0,color:#2b2438
   class VIEW,STORE,SVC,WORKERS fe
   class CONTRACT ipc
-  class CMDS,WATCH,RUNNER,SYNCLI,STORAGE,FSIMPL,EVBRIDGE,STATE shell
-  class COMPOSE,SCHED,PROJECT,LOGP,SYNM,SETTINGS,OUTLINE core
+  class CMDS,EVENTS,STATE shell
+  class IFS,IRUN,ISYN,ISTO,IWATCH infra
+  class COMPOSE,SCHED,PROJECT,LOGP,SYNM,SETTINGS core
   class TEXLIVE,SXCLI,PROJ,PDFOUT,GSET ext
 ```
 
@@ -102,7 +111,9 @@ flowchart TB
 **读图要点**
 
 - **只有服务层碰 IPC**：视图与 store 不直接 invoke；命令与事件类型全部由 Rust 侧 specta 生成（`src/bindings.ts`，调试构建启动时刷新）。事件面与命令面共用一个边界：箭头向下为 invoke，虚线向上为 emit。
-- **core 零 IO**：进程、文件、监视、CLI 全在 src-tauri；core 经 trait（`FileSystem` / `CompileRunner` / `SyncTexProvider`）注入，单测用 fake 实现。虚线 `实现 Xxx` 表示「core 声明接口、src-tauri 提供实现、运行期由 core 反向调用」。
+- **三层 Rust，两个"唯一落点"**：core 是唯一的**策略与接口**落点（队列语义、探测规则、D8 路径策略、trait 定义）；texpresso-infra 是唯一的**外部依赖与文件系统**落点（tokio::fs、tokio::process、notify、设置落盘）。src-tauri 只做接线与契约（DTO、事件形态、装配注入）。
+- **core 零 IO**：进程、文件、监视、CLI 全在 infra；core 经 trait（`FileSystem` / `CompileRunner` / `SyncTexProvider`）被注入，单测用 fake 实现。虚线 `实现 Xxx` 表示「core 声明接口、infra 提供实现、运行期由 core 反向调用」。
+- **infra 不认识 Tauri**：监视结果经 `WatchSink` 回调，事件形态（compile-status / files-changed …）在 src-tauri 的 events.rs 定型。
 - 图中 `~~~` 是不可见连线，只用于固定分层顺序，不表示依赖。
 
 ## 2. 编译触发与调度链路
@@ -217,7 +228,7 @@ flowchart LR
     A1["EditorPane<br/>Ctrl+点击某行"] --> A2["useSyncTex.forward"]
     A2 --> A3["ipc.synctexForward"]
     A3 --> A4["commands.rs<br/>项目内路径校验"]
-    A4 --> A5["sync_cli.rs<br/>synctex view"]
+    A4 --> A5["infra synctex.rs<br/>synctex view"]
     A5 --> A6["tmp/&lt;stem&gt;.synctex.gz"]
     A6 --> A7["{ page, x, y }"]
     A7 --> A8["previewStore.setHighlight"]
@@ -229,7 +240,7 @@ flowchart LR
     B1["PreviewPane<br/>点击 PDF"] --> B2["useSyncTex.inverse"]
     B2 --> B3["ipc.synctexInverse"]
     B3 --> B4["commands.rs<br/>项目内路径校验"]
-    B4 --> B5["sync_cli.rs<br/>synctex edit"]
+    B4 --> B5["infra synctex.rs<br/>synctex edit"]
     B5 --> B6["{ file, line, column }"]
     B6 --> B7["editorStore.openFile<br/>打开并定位到行"]
   end
@@ -249,7 +260,7 @@ flowchart LR
 
 ![SyncTeX 双向定位与 PDF 刷新](./diagrams/04-synctex.png)
 
-**读图要点**：`SyncTexProvider` 是 core 中的接口，进程调用在 `sync_cli.rs`（ADR-0008）；CLI 指向 `tmp/<根名>.synctex.gz`。pdf.js 无增量渲染 API，故刷新用「重载 + 恢复位置」而非局部更新。
+**读图要点**：`SyncTexProvider` 是 core 中的接口，进程调用在 texpresso-infra 的 `synctex` 模块（ADR-0008/0010）；CLI 指向 `tmp/<根名>.synctex.gz`。pdf.js 无增量渲染 API，故刷新用「重载 + 恢复位置」而非局部更新。
 
 ## 5. 渲染与校验
 

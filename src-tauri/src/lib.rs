@@ -2,18 +2,20 @@
 
 mod commands;
 mod events;
-mod fs_impl;
-mod runner;
-mod storage;
-mod sync_cli;
-mod watch;
 
 use commands::AppState;
-use events::{build_emitter, CompileStatusEvent, ErrorsUpdatedEvent, FilesChangedEvent, PdfUpdatedEvent, SettingsChangedEvent};
+use events::{
+    build_emitter, CompileStatusEvent, ErrorsUpdatedEvent, FilesChangedEvent, PdfUpdatedEvent,
+    SettingsChangedEvent, TauriSink,
+};
 use std::sync::Arc;
 use tauri::Manager;
 use texpresso_core::scheduler::Scheduler;
 use texpresso_core::settings::Settings;
+use texpresso_infra::{
+    fs::TokioFs, runner::LatexmkRunner, storage::SettingsStorage, synctex::SyncTexCli,
+    watch::{spawn_watcher, WatchState},
+};
 use tokio::sync::RwLock;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -57,23 +59,23 @@ pub fn run() {
                 .with_target(false)
                 .init();
 
-            // ---- 基础设施装配（§1 全局状态清单）----
-            let fs: Arc<dyn texpresso_core::project::FileSystem> = Arc::new(fs_impl::TokioFs);
-            let sync: Arc<dyn texpresso_core::synctex::SyncTexProvider> = Arc::new(sync_cli::SyncTexCli);
+            // ---- 基础设施装配（ADR-0010：具体实现在 texpresso-infra，本层只注入 trait 位）----
+            let fs: Arc<dyn texpresso_core::project::FileSystem> = Arc::new(TokioFs);
+            let sync: Arc<dyn texpresso_core::synctex::SyncTexProvider> = Arc::new(SyncTexCli);
 
             // 全局设置目录（app_config_dir）
             let config_dir = app
                 .path()
                 .app_config_dir()
                 .expect("无法解析应用配置目录");
-            std::fs::create_dir_all(&config_dir).ok();
+            // 目录创建不在这里做：监视/写入都在基础设施层，谁用谁负责（ADR-0010）
             let global_settings_path = config_dir.join("settings.json");
-            let storage = Arc::new(storage::SettingsStorage::new(global_settings_path));
+            let storage = Arc::new(SettingsStorage::new(global_settings_path));
 
             // 调度器（D1：actor，状态收容 task 内；emitter 接 tauri 事件）
             let emitter = build_emitter(app.handle());
             let runner: Arc<dyn texpresso_core::scheduler::CompileRunner> =
-                Arc::new(runner::LatexmkRunner { fs: fs.clone() });
+                Arc::new(LatexmkRunner { fs: fs.clone() });
             // setup 闭包不是 tokio 上下文：用 tauri 的 runtime（任何线程可用）
             let (scheduler, scheduler_task) = Scheduler::create(runner, emitter);
             tauri::async_runtime::spawn(scheduler_task.run());
@@ -87,16 +89,19 @@ pub fn run() {
             let overrides: Arc<RwLock<texpresso_core::settings::ProjectOverrides>> =
                 Arc::new(RwLock::new(Default::default()));
 
-            // 监视任务
-            let watch_state = Arc::new(watch::WatchState {
+            // 监视任务（事件出口与运行时句柄由本层注入，infra 不认识 Tauri）
+            let watch_state = Arc::new(WatchState {
                 project: project.clone(),
                 settings: settings.clone(),
                 scheduler: scheduler.clone(),
                 storage: storage.clone(),
                 overrides: overrides.clone(),
-                app: app.handle().clone(),
+                sink: Arc::new(TauriSink {
+                    app: app.handle().clone(),
+                }),
+                rt: tauri::async_runtime::handle().inner().clone(),
             });
-            let watch_handle = watch::spawn_watcher(config_dir, watch_state);
+            let watch_handle = spawn_watcher(config_dir, watch_state);
 
             app.manage(AppState {
                 fs,

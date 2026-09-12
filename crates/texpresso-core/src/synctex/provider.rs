@@ -1,6 +1,6 @@
 //! SyncTeX 接口与 CLI 输出解析（modules.md §5）。
 //!
-//! core 只定义接口与**纯解析函数**；进程调用在 src-tauri 的 `sync_cli` 实现。
+//! core 只定义接口与**纯解析函数**；进程调用在 texpresso-infra 的 `synctex` 模块实现（ADR-0010）。
 //! 解析函数输出契约以 TeX Live synctex 1.5 输出为准（ADR-0008：需 Windows 实测）。
 
 use super::model::{SourcePosition, SyncTexError, SyncTexPosition};

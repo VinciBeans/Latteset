@@ -32,6 +32,31 @@ pub fn is_tree_excluded(path: &Path, root: &Path) -> bool {
     is_hidden_or_tmp(path, root)
 }
 
+/// 是否 .tex 文件（扩展名大小写不敏感）。
+///
+/// 与 [`is_ignored`] 的严格小写判定**故意不同**：忽略规则面向 latexmk 的实际输入，
+/// 本函数面向"用户指定的根文件覆盖"这类人机边界（`MAIN.TEX` 应被接受）。
+pub fn is_tex_file(path: &Path) -> bool {
+    matches!(
+        path.extension().and_then(|e| e.to_str()),
+        Some(ext) if ext.eq_ignore_ascii_case("tex")
+    )
+}
+
+#[cfg(test)]
+mod tex_file_tests {
+    use super::*;
+
+    #[test]
+    fn tex_extension_is_case_insensitive() {
+        assert!(is_tex_file(Path::new("proj/main.tex")));
+        assert!(is_tex_file(Path::new("proj/MAIN.TEX")));
+        assert!(!is_tex_file(Path::new("proj/main.tex.bak")));
+        assert!(!is_tex_file(Path::new("proj/notes.md")));
+        assert!(!is_tex_file(Path::new("proj/main")));
+    }
+}
+
 /// 递归收集项目内全部 .tex（排除 tmp/ 与隐藏目录），不跟随符号链接（防环）。
 ///
 /// 每次调用全量扫描、无缓存（modules.md §3.3：目录量大时再优化增量）。

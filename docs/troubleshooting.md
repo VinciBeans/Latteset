@@ -60,6 +60,7 @@
 - 核心 crate 单测走 `cargo test -p texpresso-core`（无 Tauri 依赖，运行正常，CI 用这个验证纯逻辑；本轮 97 pass）。
 - 前端单测走 `npm run test`（vitest，需提权 `danger-full-access` 跑 esbuild worker；本轮 28 pass）。
 - src-tauri 接线层的纯逻辑单测（`fs_impl::strip_verbatim`、`runner::root_stem/latexmk_input`、`watch::should_process/is_structural_event/normalize_event_paths`、`storage::effective/is_self_write/project_overrides_path`、`commands::pdf_path_for_root`）**可编译、逻辑已验证**，但本机无法直接 `cargo test` 执行；在能解析 WebView2 的 Windows 环境（真机宿主）再运行。
+- **2026-09 更新（ADR-0010，基础设施层拆出后）**：上面这些用例中的绝大多数已随实现迁到 `texpresso-infra`，**本机可正常运行**——`cargo test -p texpresso-infra`（17 单测）+ `cargo test -p texpresso-infra -- --ignored`（6 个真实 latexmk/synctex 集成用例：成功、内容错误、超时树杀、取消、中文路径双向），均已实测通过。仍留在 src-tauri 的只剩 `commands::pdf_path_for_root`（纯函数，仍受同一 WebView2 链接限制）。
 - **已穷尽尝试仍失败**：把 `webview2-com-sys-*/out/{arch}/WebView2Loader.dll` 拷到 `target/debug` **及 `target/debug/deps`（测试 exe 同目录）** 并加入 PATH；`dumpbin /imports` 显示静态导入均为系统 DLL、延迟导入仅 `VCRUNTIME140.dll`；`danger-full-access` 提权运行——均仍 `STATUS_ENTRYPOINT_NOT_FOUND`。**非沙箱权限、非 PATH、非运行时缺失**，是 Tauri v2 shell crate 测试二进制的已知 Windows 工具链限制。
 
 ## 中文文件名/路径兼容性实测（2026-09，roadmap P0-①）
@@ -122,4 +123,4 @@ DEBUG 编译失败：已从 .log 解析出错误条目 count=9 log=…\tmp\主�
 
 - **GUI 目视项（需 tauri server MCP 会话补做）**：pdf.js 经 asset 协议加载中文路径 PDF 的渲染、SyncTeX 高亮/跳转的可视确认。机制上 Tauri 的 `convertFileSrc` 会做 percent-encoding、asset scope 为 `**`，但**本次未目视确认**，不计入已验证。
 - **已知未修**：**编辑** GBK 源文件（`read_file` 严格 UTF-8）会失败并返回英文 IO 错误。本次范围是文件名/路径，未改该行为；若要支持"打开并转码显示 GBK 源文件"，需单独设计（含保存时的编码回写策略）。
-- 本机 `cargo test -p texpresso`（src-tauri）无法运行（见上一节），故 src-tauri 侧新增的中文用例（`fs_impl` / `runner` / `storage` / `commands`）**仅编译校验通过**（`cargo check -p texpresso --tests`），待真机宿主执行；core 侧 10 条中文用例已实际运行通过。
+- 本机 `cargo test -p texpresso`（src-tauri）无法运行（见上一节），故当时 src-tauri 侧新增的中文用例（`fs_impl` / `runner` / `storage` / `commands`）**仅编译校验通过**（`cargo check -p texpresso --tests`）。**2026-09 更新**：随 ADR-0010 迁移后，`fs` / `runner` / `storage` 的中文用例已在 `texpresso-infra` 下实际运行通过（含 2 个需 latexmk 的 `#[ignore]` 集成用例）。
