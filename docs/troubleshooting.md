@@ -119,9 +119,20 @@ DEBUG 编译失败：已从 .log 解析出错误条目 count=9 log=…\tmp\主�
 
 > 注：把"文件名编码"与"内容编码"两个变量隔离——根文件与子文件名均为 ASCII，GBK 只出现在子文件**内容**里；中文**文件名/路径**的验证由 `中文测试工程` 夹具覆盖。
 
-### 未覆盖 / 下一步
+### GUI 目视验证（2026-09 补做，tauri server MCP 驱动真实窗口）—— ✅ 已完成
 
-- **GUI 目视项（需 tauri server MCP 会话补做）**：pdf.js 经 asset 协议加载中文路径 PDF 的渲染、SyncTeX 高亮/跳转的可视确认。机制上 Tauri 的 `convertFileSrc` 会做 percent-encoding、asset scope 为 `**`，但**本次未目视确认**，不计入已验证。
+此前列为"未覆盖"的两项，已在 MCP 会话中用**截图 + DOM + 真实点击**补齐（夹具 `test_file/projects/中文测试工程`）：
+
+| 项 | 结果 | 证据 |
+|---|---|---|
+| **pdf.js 经 asset 协议加载中文路径 PDF 的渲染** | ✅ 通过 | `webview_screenshot`：标题「中文路径兼容性测试」、作者/日期、**目录三项中文条目**、章节正文与公式 `E = mc²` 全部正常渲染；3 页连续分页（`1 / 3`）；控制台实测 `[preview] reload#1 中文主文件.pdf pages=3 bytes=40648 fetch=9ms parse=32ms render=54ms total=94ms pagesRendered=3`——**fetch 走 asset 协议无 404/编码错误** |
+| **SyncTeX 反向跳转（PDF → 源码）** | ✅ 通过 | `webview_interact` 点 PDF 正文 → 编辑器切回 `中文主文件.tex` 且光标停在 **Ln 10**（`公式测试：$E = mc^2$。`），即点击的那句正文对应的源码行 |
+
+**顺带复现并确认一个已记录的特性**（非缺陷，modules.md §12 有记）：点击 PDF **目录区**会映射到生成文件 `中文主文件.toc`（新开标签），正文区才映射回 `.tex`。中文文件名在两种情况下都正确解析——这也反证反向 SyncTeX 的中文链路是通的。
+
+### 仍未覆盖 / 已知未修
+
+- **正向 SyncTeX 高亮**（源码 Ctrl+点击 → PDF 高亮）本次未目视：`webview_interact` 不支持带修饰键点击，Monaco 的 ctrl+click 需 OS 级按键（pc-control）或 MCP 会话补做。
 - **已知未修**：**编辑** GBK 源文件（`read_file` 严格 UTF-8）会失败并返回英文 IO 错误。本次范围是文件名/路径，未改该行为；若要支持"打开并转码显示 GBK 源文件"，需单独设计（含保存时的编码回写策略）。
 - 本机 `cargo test -p texpresso`（src-tauri）无法运行（见上一节），故当时 src-tauri 侧新增的中文用例（`fs_impl` / `runner` / `storage` / `commands`）**仅编译校验通过**（`cargo check -p texpresso --tests`）。**2026-09 更新**：随 ADR-0010 迁移后，`fs` / `runner` / `storage` 的中文用例已在 `texpresso-infra` 下实际运行通过（含 2 个需 latexmk 的 `#[ignore]` 集成用例）。
 
