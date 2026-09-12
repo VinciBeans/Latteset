@@ -204,6 +204,20 @@ pub struct SourcePositionDto {
     pub column: i32,
 }
 
+/// `synctex_inverse` 命令输出（roadmap ⑤/㉒）。
+///
+/// 为什么不是一个裸的 `SourcePositionDto`：反向定位**可能没有可跳转的源码**——
+/// 命中生成产物（`tmp/main.toc` 等）、系统宏包（`article.cls`），或尚未产生同步数据。
+/// 这些情况既不该静默失败（用户点了没反应），也不该把生成文件当源码打开。
+/// 故：`source = None` 时用 `note` 说明原因；`note` 也可在成功时补充"已回落到最近源码行"。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
+pub struct InverseResultDto {
+    /// 可跳转的源码位置；`None` = 该处没有可打开的源码。
+    pub source: Option<SourcePositionDto>,
+    /// 给用户看的一句话（失败原因 / 回落说明）；`None` = 正常直连，无需提示。
+    pub note: Option<String>,
+}
+
 // ---------------------------------------------------------------- 内部类型
 
 /// 编译请求：调度器唯一认识的输入（modules.md §2.4 / D3）。

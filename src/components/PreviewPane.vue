@@ -17,6 +17,16 @@ import { useSyncTex } from "../composables/useSyncTex";
 const preview = usePreviewStore();
 const { inverse } = useSyncTex();
 
+// SyncTeX 提示（roadmap ⑤）自动消失：长时间挂着会变成"常驻噪音"，5s 足够读到
+let syncNoteTimer: ReturnType<typeof setTimeout> | undefined;
+watch(
+  () => preview.syncNote,
+  (note) => {
+    clearTimeout(syncNoteTimer);
+    if (note) syncNoteTimer = setTimeout(() => preview.setSyncNote(null), 5000);
+  }
+);
+
 pdfjsLib.GlobalWorkerOptions.workerSrc = "/pdfjs/pdf.worker.min.js";
 
 const container = ref<HTMLElement | null>(null);
@@ -604,6 +614,7 @@ onMounted(() => {
 
 onBeforeUnmount(() => {
   unmounted = true;
+  clearTimeout(syncNoteTimer);
   resizeObs?.disconnect();
   resizeObs = null;
   // 取消在途渲染任务（避免卸载后仍向已卸载的 canvas 写像素），并显式销毁加载任务
@@ -645,6 +656,8 @@ onBeforeUnmount(() => {
         />
         <span class="page-total">/ {{ numPages }}</span>
       </span>
+      <!-- SyncTeX 提示（roadmap ⑤）：落到生成文件/同步不可用时的可见反馈，几秒后自动消失 -->
+      <span class="sync-note" v-if="preview.syncNote" :title="preview.syncNote">{{ preview.syncNote }}</span>
     </div>
     <div ref="container" class="preview-pane" @scroll.passive="onScroll" @wheel="onWheel">
       <div v-if="!preview.pdfPath" class="empty">
@@ -705,6 +718,18 @@ onBeforeUnmount(() => {
   color: var(--ink-dim);
 }
 .toolbar-sep { width: 1.5px; height: 14px; background: var(--line-soft); margin: 0 2px; }
+/* SyncTeX 提示：靠右、单行省略，避免顶掉分页指示器 */
+.sync-note {
+  margin-left: 10px;
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: 2px 9px;
+  border-radius: 5px;
+  background: rgba(255, 181, 74, 0.16);
+  color: #b8791a;
+  font-size: 11.5px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
 .page-indicator {
   margin-left: auto;
   display: inline-flex; align-items: center; gap: 4px;

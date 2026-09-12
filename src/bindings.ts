@@ -23,7 +23,18 @@ export const commands = {
 	compileNow: () => typedError<null, CmdError>(__TAURI_INVOKE("compile_now")),
 	abortCompile: () => typedError<null, CmdError>(__TAURI_INVOKE("abort_compile")),
 	synctexForward: (file: string, line: number, column: number) => typedError<SyncTexTarget, CmdError>(__TAURI_INVOKE("synctex_forward", { file, line, column })),
-	synctexInverse: (page: number, x: number | null, y: number | null) => typedError<SourcePositionDto, CmdError>(__TAURI_INVOKE("synctex_inverse", { page, x, y })),
+	/**
+	 *  PDF 点击 → 源码（roadmap ⑤/㉒）：**只回落到项目内真实源码**。
+	 * 
+	 *  为什么要这一层（2026-09 实测）：`synctex edit` 在生成内容上会返回生成它的中间文件——
+	 *  点 `multifile` 第 3 页目录区得到 `tmp/main.toc:15`，同一屏往上 50pt 却是 `main.tex:37`。
+	 *  直接把 `tmp/main.toc` 当跳转目标会打开一屏用户没写过的内容。
+	 * 
+	 *  策略：先按点击点定位；命中"非源码"时在**附近小范围探测**（y 上下 40/80pt），
+	 *  取第一个项目内源码（首个命中的偏移最小，故就是"最近"的那个）；仍无则忽略并给出提示。
+	 *  探测只在"没拿到源码"时发生，正常点击的延迟不变。
+	 */
+	synctexInverse: (page: number, x: number | null, y: number | null) => typedError<InverseResultDto, CmdError>(__TAURI_INVOKE("synctex_inverse", { page, x, y })),
 	getSettings: () => typedError<Settings, CmdError>(__TAURI_INVOKE("get_settings")),
 	/**
 	 *  局部更新（modules.md §6）：mode/debounce/timeout/engine → 全局文件；
@@ -183,6 +194,21 @@ export type FilesChanged = {
 };
 
 export type FilesChangedEvent = FilesChanged;
+
+/**
+ *  `synctex_inverse` 命令输出（roadmap ⑤/㉒）。
+ * 
+ *  为什么不是一个裸的 `SourcePositionDto`：反向定位**可能没有可跳转的源码**——
+ *  命中生成产物（`tmp/main.toc` 等）、系统宏包（`article.cls`），或尚未产生同步数据。
+ *  这些情况既不该静默失败（用户点了没反应），也不该把生成文件当源码打开。
+ *  故：`source = None` 时用 `note` 说明原因；`note` 也可在成功时补充"已回落到最近源码行"。
+ */
+export type InverseResultDto = {
+	/**  可跳转的源码位置；`None` = 该处没有可打开的源码。 */
+	source: SourcePositionDto | null,
+	/**  给用户看的一句话（失败原因 / 回落说明）；`None` = 正常直连，无需提示。 */
+	note: string | null,
+};
 
 /**
  *  文档大纲节点（get_outline 命令输出；解析逻辑见 [`crate::outline`]，2026-09-03 从

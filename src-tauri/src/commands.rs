@@ -16,9 +16,10 @@ use texpresso_core::project::{
     resolve_in_project, resolve_project_root, PathError, ProjectState, RootResolution,
 };
 use texpresso_core::settings::{apply_patch, validate_overrides, ProjectOverrides, Settings, SettingsPatch};
-use texpresso_core::synctex::SourcePosition;
+use texpresso_core::synctex::{classify_inverse_target, InverseTarget, SourcePosition};
 use texpresso_core::types::{
-    DirEntryInfo, FileContent, OutlineNode, ProjectInfo, SourcePositionDto, SyncTexTarget,
+    DirEntryInfo, FileContent, InverseResultDto, OutlineNode, ProjectInfo, SourcePositionDto,
+    SyncTexTarget,
 };
 use texpresso_core::project::FileSystem;
 use texpresso_core::scheduler::SchedulerHandle;
@@ -381,6 +382,15 @@ pub async fn synctex_forward(
         .map_err(|e| CmdError::Internal(e.to_string()))
 }
 
+/// PDF 点击 → 源码（roadmap ⑤/㉒）：**只回落到项目内真实源码**。
+///
+/// 为什么要这一层（2026-09 实测）：`synctex edit` 在生成内容上会返回生成它的中间文件——
+/// 点 `multifile` 第 3 页目录区得到 `tmp/main.toc:15`，同一屏往上 50pt 却是 `main.tex:37`。
+/// 直接把 `tmp/main.toc` 当跳转目标会打开一屏用户没写过的内容。
+///
+/// 策略：先按点击点定位；命中"非源码"时在**附近小范围探测**（y 上下 40/80pt），
+/// 取第一个项目内源码（首个命中的偏移最小，故就是"最近"的那个）；仍无则忽略并给出提示。
+/// 探测只在"没拿到源码"时发生，正常点击的延迟不变。
 #[tauri::command]
 #[specta::specta]
 pub async fn synctex_inverse(
@@ -388,24 +398,104 @@ pub async fn synctex_inverse(
     x: f32,
     y: f32,
     state: State<'_, AppState>,
-) -> Result<SourcePositionDto, CmdError> {
+) -> Result<InverseResultDto, CmdError> {
     let project = state
         .project
         .read()
         .await
         .clone()
         .ok_or_else(|| CmdError::Invalid("尚未打开项目".into()))?;
-    let pos = texpresso_core::synctex::SyncTexPosition { page, x, y };
-    state
-        .sync
-        .inverse(&pos, &pdf_path_for_root(&project))
-        .await
-        .map(|p| SourcePositionDto {
-            file: p.file.to_string_lossy().into_owned(),
-            line: p.line,
-            column: p.column,
-        })
-        .map_err(|e| CmdError::Internal(e.to_string()))
+    let pdf = pdf_path_for_root(&project);
+
+    // 候选点：原点优先，其后按偏移量从小到大（"最近"即第一个命中源码的点）
+    const Y_OFFSETS: [f32; 5] = [0.0, -40.0, 40.0, -80.0, 80.0];
+    let mut last_err: Option<String> = None;
+    let mut first_target: Option<InverseTarget> = None;
+
+    for (i, dy) in Y_OFFSETS.iter().enumerate() {
+        let pos = texpresso_core::synctex::SyncTexPosition {
+            page,
+            x,
+            y: y + dy,
+        };
+        match state.sync.inverse(&pos, &pdf).await {
+            Ok(hit) => match classify_inverse_target(&project.root, &hit.file) {
+                InverseTarget::Source(file) => {
+                    let note = if i == 0 {
+                        None
+                    } else {
+                        Some(format!(
+                            "此处是自动生成的内容，已回落到最近的源码（{}:{}{}）",
+                            file.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default(),
+                            hit.line,
+                            if *dy < 0.0 { "，向上探测" } else { "，向下探测" }
+                        ))
+                    };
+                    return Ok(InverseResultDto {
+                        source: Some(SourcePositionDto {
+                            file: file.to_string_lossy().into_owned(),
+                            line: hit.line,
+                            column: hit.column,
+                        }),
+                        note,
+                    });
+                }
+                other => {
+                    // 记录**第一次**命中的非源码目标（原点那次最有信息量，用于提示文案）
+                    if first_target.is_none() {
+                        first_target = Some(other);
+                    }
+                }
+            },
+            Err(e) => {
+                if last_err.is_none() {
+                    last_err = Some(e.to_string());
+                }
+            }
+        }
+    }
+
+    // 全失败（多半是"还没编译过"或同步数据被占用）
+    if first_target.is_none() {
+        if let Some(err) = last_err {
+            return Ok(InverseResultDto {
+                source: None,
+                note: Some(sync_unavailable_note(&state, &project, &pdf, &err).await),
+            });
+        }
+    }
+
+    // 拿到了非源码目标但附近没有源码：忽略跳转，只给提示
+    let note = match first_target {
+        Some(InverseTarget::Generated(f)) => Some(format!(
+            "此处来自自动生成的文件 {}（目录/参考文献/索引等由 LaTeX 生成），没有对应的源码行",
+            f.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default()
+        )),
+        Some(InverseTarget::OutsideProject(f)) => Some(format!(
+            "此处来自项目外的文件 {}（系统宏包/文档类），无法在编辑器里打开",
+            f.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default()
+        )),
+        _ => Some("此处没有对应的源码位置".to_string()),
+    };
+    Ok(InverseResultDto { source: None, note })
+}
+
+/// 同步不可用时的提示：结合文件系统状态说清"是没编译过还是别的原因"（不猜）。
+async fn sync_unavailable_note(
+    state: &AppState,
+    project: &ProjectState,
+    pdf: &Path,
+    err: &str,
+) -> String {
+    let stem = pdf.file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default();
+    let synctex = project.root.join("tmp").join(format!("{stem}.synctex.gz"));
+    if !state.fs.exists(pdf).await.unwrap_or(false) {
+        return "同步失败：还没有编译产物，先点「编译」".to_string();
+    }
+    if !state.fs.exists(&synctex).await.unwrap_or(false) {
+        return "同步失败：没有找到 .synctex.gz（编译时未生成同步数据），重新编译一次即可".to_string();
+    }
+    format!("同步失败：{err}")
 }
 
 // ---------------------------------------------------------------- 设置

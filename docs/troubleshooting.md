@@ -67,10 +67,12 @@
 | 4 | 根文件选择器（P0-②-1） | 打开多候选工程 → `webview_dom_snapshot` scoped `.picker-panel` → 点 `.file-row` | 弹窗列出候选（title 为绝对路径）；点选后弹窗关闭、`.needs-root` 匹配数归 0 |
 | 5 | 编译出 PDF | 点 `.btn.primary` → `webview_wait_for .page-wrap canvas` → `webview_screenshot` | 预览渲染出页面；页计数 `n / N` 正常 |
 | 6 | **预览耗时（基准）** | `webview_execute_js` 读 `window.__previewLastReload` | 得到 `{fetch,parse,render,total,pagesRendered}`；与 `scripts/bench.mjs` 的输出拼成端到端 |
-| 7 | 反向 SyncTeX | `webview_find_element .page-wrap canvas` 取页几何 → 点击正文区 → 读状态栏 | 编辑器切到对应 `.tex` 且行号≈点击句所在行（**注意**：点**目录区**会映射到生成的 `.toc`，属已知特性，非缺陷） |
+| 7 | 反向 SyncTeX | `webview_find_element .page-wrap canvas` 取页几何 → 点击正文区 → 读状态栏 | 编辑器切到对应 `.tex` 且行号≈点击句所在行（`multifile` 实测点第 5 页正文 → `chapters/intro.tex` **Ln 3**，跨文件）。**点目录区**不再打开生成的 `.toc`（roadmap ㉒ 已修）：工具条出现「此处来自自动生成的文件 main.toc…」或「已回落到最近的源码（main.tex:37）」提示 |
 | 8 | 中文路径渲染（P0-①） | 用 `中文测试工程` 夹具重复 1/5 | 中文标题/目录/正文/公式正常渲染，`fetch` 无 404 |
 | 9 | 编辑期草稿 + 空闲收敛（㉘） | 点「编译」建产物 → **在编辑器里敲一行**（见下「如何在应用内输入」）→ 记录状态栏时间线 | `排版中…` → `就绪` + **「引用待更新」** → 约 2s 后再次 `排版中…`（空闲收敛的 Full）→ 提示消失；dev stdout 同 cycle 有 `Quick 编译（单趟直调引擎）` 与 `Full 编译（完整 latexmk 收敛）` |
 | 10 | 超时诊断 + 一键提超时重试（㉕） | 设置面板把超时改 **5s** → 清掉 `tmp/` 制造首编 → 点「编译」→ 读 `.error-list .entry` | 状态栏「失败·超时」；列表一条：原因含「已排版到第 N 页…在推进」（或「还没出现任何页面输出」）+ 建议 + 按钮**「提高到 900s 并重试」**（首编跳档）；点按钮后 `get_settings` 超时变为 900、编译启动并转「就绪」、条目消失。**注意**：这一项会把全局 `settings.json` 的超时改掉，验完记得改回 120 |
+| 11 | SyncTeX 生成产物回落（㉒） | 点 PDF **目录区**（`multifile` 第 3 页中部，x≈20% 页宽 / y≈65–85% 页高）→ 读 `.sync-note` 与标签页 | 工具条提示「此处来自自动生成的文件 main.toc（…）」或「已回落到最近的源码（main.tex:37，向下探测）」；**标签页不得出现 `main.toc`**；提示约 5s 后自动消失 |
+| 12 | 正向 SyncTeX 高亮（⑳，`webview_interact` 无修饰键） | 用 Vite 预打包 URL 动态 import Monaco → `ed.setPosition(...)` → 对编辑器 DOM 派发 `mousedown/mouseup/click`（带 `ctrlKey: true`）→ 读 `.highlight` 的 `display/left/top` | 恰好一个 `.highlight` 为 `display: block` 且落在目标页；编辑器 `onMouseDown(ctrlKey)` 是真实入口，派发等价于用户 Ctrl+点击 |
 
 **取预览耗时的一行命令**（第 6 步的具体形态）：
 
@@ -116,6 +118,20 @@ new MutationObserver(() => { const s = snap(); const l = log[log.length-1];
 ```
 
 **编译产物的时间戳也能当证据**：`tmp/main.fdb_latexmk` 的 mtime 只在 **latexmk** 跑过时才推进（Quick 单趟直调引擎不碰它），故「Quick 确实没走 latexmk」与「空闲收敛确实跑了 latexmk」都能用它与 `tmp/main.xdv` 的 mtime 对比来核实。
+
+### SyncTeX 精度怎么量（roadmap ⑤，一条命令）
+
+```bash
+node scripts/synctex-report.mjs                    # 默认三组样本（multifile / beamer工程 / bench/large）
+node scripts/synctex-report.mjs --tolerance=5      # 换个"跳到位"容差
+node scripts/synctex-report.mjs --projects=<dir> --recompile
+```
+
+它按 `\section`/`\chapter`/`\frametitle`/`\begin{frame}`/`\label`/`\part` 取样本，逐点做「正向 → 反向」往返，报告成功率与行号差。**2026-09 基线**：正向/反向/同文件 34/34，跳到位 ≤3 行 31/34（≤5 行 34/34）；`large` 差恒 0、`multifile` 0–1 行、`beamer` 2–4 行。
+
+**beamer 的 2–4 行偏移不是解析 bug**：把取块规则从「第一个 `Output` 块」换成「最小 H」「首个 H≤40」，**往返结果完全一致**（三组样本逐一相同）——偏移来自 beamer/主题的 synctex 记录粒度。同理，`\only<n>` 覆盖层的内容在非本层页面上没有对应记录，反向映射天然不可确定。
+
+**沙箱注意**：脚本用「stdout 重定向到文件」而不是管道（Node 的 `pipe` 在受限沙箱会 EPERM），因此**无需提权**即可运行。
 
 **失败面排查顺序**：① dev stdout 有无 `打开项目` / `触发编译` / `构造编译请求`（后端链路）；
 ② `read_logs(console)` 有无前端异常；③ `ipc_get_backend_state` 确认连接的是本应用。
@@ -199,7 +215,7 @@ DEBUG 编译失败：已从 .log 解析出错误条目 count=9 log=…\tmp\主�
 | **pdf.js 经 asset 协议加载中文路径 PDF 的渲染** | ✅ 通过 | `webview_screenshot`：标题「中文路径兼容性测试」、作者/日期、**目录三项中文条目**、章节正文与公式 `E = mc²` 全部正常渲染；3 页连续分页（`1 / 3`）；控制台实测 `[preview] reload#1 中文主文件.pdf pages=3 bytes=40648 fetch=9ms parse=32ms render=54ms total=94ms pagesRendered=3`——**fetch 走 asset 协议无 404/编码错误** |
 | **SyncTeX 反向跳转（PDF → 源码）** | ✅ 通过 | `webview_interact` 点 PDF 正文 → 编辑器切回 `中文主文件.tex` 且光标停在 **Ln 10**（`公式测试：$E = mc^2$。`），即点击的那句正文对应的源码行 |
 
-**顺带复现并确认一个已记录的特性**（非缺陷，modules.md §12 有记）：点击 PDF **目录区**会映射到生成文件 `中文主文件.toc`（新开标签），正文区才映射回 `.tex`。中文文件名在两种情况下都正确解析——这也反证反向 SyncTeX 的中文链路是通的。
+**顺带复现并确认一个已记录的特性**（~~非缺陷~~ → **2026-09 已修，roadmap ㉒**）：点击 PDF **目录区**会映射到生成文件 `中文主文件.toc`（当时表现为新开标签）。现在产品行为是：生成产物/项目外文件**一律不打开**，先就近回落真实源码（`y ±40/80pt` 探测），回落到就跳并提示「已回落到最近的源码」，落空则只给提示「此处来自自动生成的文件 …，没有对应的源码行」。中文文件名在两种情况下都正确解析——这也反证反向 SyncTeX 的中文链路是通的。。
 
 ### MCP Bridge 插件升级 0.12 → 0.13（2026-09 实测，真机复验通过）
 
