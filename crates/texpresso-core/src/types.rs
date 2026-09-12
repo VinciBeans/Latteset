@@ -4,6 +4,7 @@
 //! - **DTO**（`specta::Type` + `Serialize`）：跨 IPC 边界进出前端（modules.md §10 契约）；
 //! - **内部类型**（`CompileRequest` / `CompileOutcome`）：只在 core 内流转，不跨 IPC。
 
+use crate::log_parser::Diagnosis;
 use serde::{Deserialize, Serialize};
 use specta::Type;
 use std::path::PathBuf;
@@ -58,6 +59,9 @@ pub struct ErrorEntry {
     pub file: Option<String>,
     pub line: Option<u32>,
     pub kind: ErrorKind,
+    /// 诊断（roadmap ④）：把 `.log` 原始报错翻译成「原因 + 怎么改」。
+    /// `None` = 匹配不到已知模式，前端降级为原文 + 行号（宁可不说，也不瞎说）。
+    pub diagnosis: Option<Diagnosis>,
 }
 
 /// 编译阶段（modules.md §2.5 事件契约）。

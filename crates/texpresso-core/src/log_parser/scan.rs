@@ -41,10 +41,15 @@ pub fn parse_log(text: &str) -> Vec<LogMessage> {
                 raw,
             });
         } else if let Some(cap) = RE_LINE.captures(trimmed) {
-            // 位置标记：只补 Error 的 line
+            // 位置标记：补 Error 的 line，并把**出错的源码行**并入消息。
+            // 并入是为了诊断（roadmap ④）：`l.5 \usepackage{nope}` 里的命令名只有这一行有，
+            // 丢掉它就无法给出"命令 X 未定义"。原始需求见 modules.md §4（只补行号），
+            // 此处扩展为"行号 + 该行原文"，前端仍只展示首行，无观感变化。
             if let Some(m) = current.as_mut() {
                 if m.kind == MessageKind::Error {
                     m.line = cap[1].parse().ok();
+                    m.message.push('\n');
+                    m.message.push_str(trimmed);
                 }
             }
         } else if let Some(cap) = RE_OPEN.captures(line) {

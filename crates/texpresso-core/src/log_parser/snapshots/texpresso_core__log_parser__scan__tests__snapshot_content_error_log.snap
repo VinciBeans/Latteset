@@ -14,7 +14,7 @@ expression: parse_log(log)
     },
     LogMessage {
         kind: Error,
-        message: "! LaTeX Error: File `nope.sty' not found.\n\n",
+        message: "! LaTeX Error: File `nope.sty' not found.\n\nl.5 \\usepackage{nope}\n",
         file: Some(
             "./main.tex",
         ),

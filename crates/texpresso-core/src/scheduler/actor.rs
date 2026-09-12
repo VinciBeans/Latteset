@@ -210,6 +210,8 @@ impl Scheduler {
                 file: None,
                 line: None,
                 kind: ErrorKind::Io,
+                // IO 类错误不是 `.log` 解析出来的，无诊断（roadmap ④ 只覆盖内容错误）
+                diagnosis: None,
             }]),
             _ => {}
         }
@@ -266,6 +268,7 @@ mod tests {
             file: None,
             line: None,
             kind: ErrorKind::ContentError,
+            diagnosis: None,
         }
     }
 

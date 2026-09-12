@@ -18,6 +18,13 @@
 | 5 | **新增 ㉗ `.ins`/`.dtx` 源码版模板**（快速通道） | GitHub 源码版需先 `*.ins` 生成 cls；实测中 `bithesis-doc.tex` 是 DTX 文档、无法直接编译，佐证这类"看起来是主文件其实不是"的坑 |
 | 6 | **④ 扩充 + ③ 扩充** | ④ 增「缺宏包/缺字体提示」（有 `slashbox.sty`/`atbegshi`/`SourceHanSerifSC-Regular` 实测样本）；③ 的基准须含**完整学位论文**档 |
 
+### 0.3 ④ 错误诊断升级完成（2026-09）
+
+| # | 变更 | 依据 |
+|---|---|---|
+| 1 | **④ 完成**，移入 §1 基线 | `.log` → 「原因 + 怎么改」19 类；23 例真实语料 + 手写期望表；真机 MCP 验证（两行式展示 + 点条目跳 `Ln 4` + 缺宏包点名并给 `tlmgr install` 建议）。见 [modules.md](../modules.md) §12 |
+| 2 | ④ 的完成方式印证了 ⑲ 的结论 | 砍掉"引擎自动推断"后，改做「**选错时明确告诉用户怎么改**」（`EngineMismatch` / `UnsupportedEngine` 两类），把 ⑲ 的 4 个实测模板纳入回归语料 |
+
 ### 0.2 相对第 1 版的重整理
 
 | # | 变更 | 原因 |
@@ -37,6 +44,7 @@
 | ① | 中文文件名/路径与编码实测复核 | 2026-09 | 路径层面全链路可用；**修掉真实缺陷**：GBK 源 + pdflatex 的 `.log` 含非法 UTF-8 → 严格读取失败会让「编译失败」退化成「拿不到任何错误信息」（`decode_log` + `read_to_string_lossy`）。MCP 补验：中文路径 PDF 渲染正常、反向 SyncTeX 跳到 `中文主文件.tex` Ln 10。见 [troubleshooting.md](../troubleshooting.md) |
 | ②-1 | 根文件候选可见可交互 | 2026-09 | `ProjectInfo.root_candidates` + `get_project` + `RootFilePicker.vue` + 状态栏入口；**并修掉阻断缺陷**：`update_settings` 不同步内存 `ProjectState.root_file`（选完仍报「未确定根文件」）。MCP 全链路验证（弹窗 → 点选 → 编译出 PDF）。见 [modules.md](../modules.md) §12 |
 | ⑲ | 模板样本调研（默认 XeLaTeX 开箱即用率） | 2026-09 | **0/19** 案例因默认引擎选错；`\RequirePDFTeX` **0/7374**；文档调研 19/19 兼容 XeLaTeX。**结论：②-2 砍掉**。同时暴露 4 类真实障碍（缺包/缺字体、首编超时、latexmkrc 交互、`.ins`/`.dtx`）。见 [template-corpus-survey.md](./template-corpus-survey.md) |
+| ④ | 错误诊断升级（含 ②-3 缺包诊断 + 缺字体提示） | 2026-09 | `.log` → 「原因 + 怎么改」：19 类 `DiagnosisKind`（缺包/缺类/缺字体/字体集/引擎不匹配/未定义命令/组未闭合/数学模式/连锁 Emergency stop…），匹配不到返回 `None` 降级原文。**23 例真实语料**（14 例收割自 ⑲ 矩阵 + 9 例探针）+ 手写期望表 + DoD 覆盖率 ≥80%；真机验证：错误列表两行式展示、点条目跳到 `Ln 4`、缺宏包点名 `nosuchpackagexyz.sty` 并给 `tlmgr install` 建议。见 [modules.md](../modules.md) §12 |
 
 > 同期完成的**非 roadmap 工程项**（记录以免重复提议）：`texpresso-infra` 拆分（ADR-0010）、大纲解析下沉 Rust、架构图与离线渲染脚本、MCP Bridge 0.12→0.13 升级、MCP 驱动的真机验证方式。
 
@@ -58,7 +66,6 @@
 
 | ID | 事项 | W | D | C | V | P | 档 | 主要依据 |
 |---|---|---|---|---|---|---|---|---|
-| ④ | 错误诊断升级（**并入 ②-3 缺包诊断 + 缺字体提示**） | 5 | 4 | 3 | 2 | **1.80** | P0 | P3 全调研最高频；V 3→2（MCP「点条目 → 断言编辑器行号」）；⑲ 提供了真实样本可固化（`slashbox.sty`/`atbegshi`/`SourceHanSerifSC-Regular`） |
 | ③ | 性能基准与回归基建（**含完整学位论文档**） | 4 | 3 | 2 | 2 | **1.75** | P0 | P5 行业级痛点；⑦ 与 ㉕ 的前置 |
 | ㉕ | **学位论文首编超时**（复核默认 120s + 超时提示） | 4 | 3 | 2 | 2 | **1.75** | P0 | ⑲ 实测：hithesis/hitszthesis 90s 超时前已产出 PDF（596 KB / 5 变体）→ 真·大文档，非死循环 |
 | ⑤ | SyncTeX 可靠性加固 | 4 | 4 | 3 | 2 | **1.60** | P0 | P4：148 issue + 327 题；V 3→2（点 PDF 断言行号已跑通） |
@@ -100,12 +107,9 @@
 
 ⑲ 调研的结论：**19 个真实模板里 0 个因默认 XeLaTeX 选错**，`\RequirePDFTeX` 为 0/7374，文档口径 19/19 兼容 XeLaTeX。三种引擎推断覆盖不到真正需要别的引擎的场景（日文模板需 platex）。**该项不解决任何已观测到的问题**，故移入不做清单，其预算转向 ㉕/㉖ 与 ④ 扩充。
 
-### 5.2 ④ 错误诊断升级（含 ②-3 缺包诊断 + 缺字体提示）
+### 5.2 ④ 错误诊断升级 —— ✅ **已完成**（见 §1 基线）
 
-- **做什么**：在既有 log_parser（解析 + 同源去重 + 点击跳转）上叠加「归类 + 人话解释 + 修复建议」；第一批模式：**缺 `.sty`/`.cls`（建议 `tlmgr install`）**、**缺字体（指回字体安装/换 fontset）**、未定义控制序列、括号未闭合、`Emergency stop`、非 UTF-8 源（**已修的解码问题对应的提示语**）。
-- **⑲ 提供的真实样本（可直接固化为用例）**：`File 'slashbox.sty' not found`（已不在发行版）、`Undefined control sequence: \AtBeginShipout`（缺 atbegshi）、`fontspec Error: The font "SourceHanSerifSC-Regular" cannot be found`。
-- **DoD**：真实错误样本集（≥20 例）中 ≥80% 能给出「原因 + 改哪一行 + 怎么改」；不能解释的降级为原文 + 行号。
-- **验证**：样本集快照测试（core）+ MCP 点条目断言编辑器行号。
+19 类 `DiagnosisKind` + `ErrorEntry.diagnosis` 契约 + `ErrorList` 两行式展示；语料与期望表见 `crates/texpresso-core/src/log_parser/{real_error_corpus,diagnosis_tests}.rs`。**它同时是 ②-2 的正确替代**：不猜引擎，但猜错时明确说"该文档需要 XeLaTeX，到设置里切换"。
 
 ### 5.3 ③ 性能基准与回归基建（**须含完整学位论文档**）
 
@@ -158,7 +162,7 @@
 | 批次 | 内容 | 出口条件 |
 |---|---|---|
 | **Batch 1 收口与地基** | ③ 性能基准基建（含学位论文档）→ ㉕ 首编超时复核 → 快速通道 ㉑–㉔、㉗ | 一条命令出延迟/首编报告；学位论文默认超时行为有实测记录；小项闭环 |
-| **Batch 2 攻痛点** | ④ 错误诊断升级（缺包/缺字体/未定义控制序列…）→ ⑤ SyncTeX 加固 → ㉖ latexmkrc 交互 | 错误样本集 ≥80% 可解释（含缺包/缺字体）；SyncTeX 三组样本有记录；带 latexmkrc 的模板编译路径有结论 |
+| **Batch 2 攻痛点** | ⑤ SyncTeX 加固 → ㉖ latexmkrc 交互 → ㉕ 首编超时复核 | SyncTeX 三组样本有记录；带 latexmkrc 的模板编译路径有结论；学位论文默认超时行为有实测记录 |
 | **Batch 3 基建与硬骨头** | ⑥ CLI+MCP → ⑦ 大文档编辑器侧性能 → ⑧⑨ 语义层（合并） → ⑩ 深色主题 / ⑪ 预览状态保持 | Agent 能驱动「改→编→验」；大文档打字不掉帧；跨文件重命名可用；主题一致 |
 | **独立里程碑** | ⑫ TinyTeX 捆绑 | 干净 Windows 机器零预装可用 |
 | **验证债（可随时插）** | ⑳ 正向 SyncTeX 目视 | 补齐 P0-① 的"正向"确认 |
@@ -170,9 +174,9 @@
 | ① 中文路径 | troubleshooting.md「中文文件名/路径兼容性实测」 | ✅ 已完成 |
 | ②-1 根文件候选 | modules.md §8 命令表 / §9.4 组件表 / §10 契约 / §12 | ✅ 已完成 |
 | ⑲ 模板语料调研 | [template-corpus-survey.md](./template-corpus-survey.md) + [cn-thesis-template-engines.md](./cn-thesis-template-engines.md) + `scripts/tl-compile-matrix.ps1` | ✅ 已完成 |
+| ④ 错误诊断 | design.md §错误列表（已补诊断说明）+ modules.md §12 + `log_parser/diagnosis.rs` + `scripts/gen-log-error-corpus.ps1` | ✅ 已完成（19 类，23 例真实语料） |
 | ②-2 引擎推断 | design.md §后置清单「引擎语言自适应规则」 | ❌ **已砍掉**（⑲ 实测无反例）；design.md 该后置项应同步标注"经实测否决" |
 | ③ 性能基准 | design.md §延迟预算（benchmark 未提交，且 `test_file/projects/` 已 gitignore） | 部分存在，**改为脚本生成**，并加学位论文档 |
-| ④ 错误诊断 | design.md「错误列表去重/截断」（已实现） | 需升级 |
 | ⑤ SyncTeX | ADR-0008 + modules.md §5 | 已实现，需加固 |
 | ⑥ CLI+MCP | [cli-mcp-plan.md](../cli-mcp-plan.md) | 计划任务，未实现 |
 | ⑦ 大文档性能 | modules.md §12（大纲重扫优化点） | 优化方向已记录 |

@@ -86,6 +86,7 @@ mod tests {
                 file: None,
                 line: None,
                 kind: ErrorKind::ContentError,
+                diagnosis: None,
             }],
         }
     }

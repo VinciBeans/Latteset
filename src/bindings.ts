@@ -67,6 +67,56 @@ export type CompileStatusDto = {
 
 export type CompileStatusEvent = CompileStatusDto;
 
+/**  一条诊断：原因 + 可操作建议。 */
+export type Diagnosis = {
+	kind: DiagnosisKind,
+	/**  人话原因（一句话）。 */
+	cause: string,
+	/**  怎么改（可操作步骤）。无法给出时为空。 */
+	hint: string | null,
+};
+
+/**  诊断类别（前端据此选图标/分组；测试据此断言）。 */
+export type DiagnosisKind = 
+/**  缺宏包（`.sty`）。 */
+"missing_package" | 
+/**  缺文档类（`.cls`）。 */
+"missing_class" | 
+/**  缺其他文件（图片、`\input` 的子文件等，无 `.sty`/`.cls` 扩展名）。 */
+"missing_file" | 
+/**  系统缺字体（fontspec）。 */
+"missing_font" | 
+/**  ctex 字体集不存在（`fontset=` 取值错）。 */
+"missing_fontset" | 
+/**  引擎不匹配：文档需要 XeLaTeX/LuaLaTeX，当前跑的是 pdfLaTeX（或反之）。 */
+"engine_mismatch" | 
+/**  需要本产品不支持的引擎（如日文 pLaTeX/upLaTeX）。 */
+"unsupported_engine" | 
+/**  未定义控制序列。 */
+"undefined_control_sequence" | 
+/**  组未闭合（`File ended while scanning use of ...`）。 */
+"unclosed_group" | 
+/**  数学模式外的 `_`/`^`。 */
+"missing_math_mode" | 
+/**  多余的 `}`。 */
+"extra_brace" | 
+/**  缺少 `\begin{document}`。 */
+"missing_begin_document" | 
+/**  重复上下标。 */
+"double_script" | 
+/**  表格/对齐环境之外的 `&`。 */
+"misplaced_alignment" | 
+/**  `Emergency stop`（多为连锁反应）。 */
+"emergency_stop" | 
+/**  宏包选项冲突。 */
+"option_clash" | 
+/**  源文件含非法 UTF-8（常见于 GBK 旧文件）。 */
+"non_utf8_source" | 
+/**  其他宏包报错（兜底，至少点出宏包名）。 */
+"package_error" | 
+/**  其他 LaTeX 报错（兜底）。 */
+"latex_error";
+
 /**  文件树条目（list_dir 命令输出）。 */
 export type DirEntryInfo = {
 	name: string,
@@ -83,6 +133,11 @@ export type ErrorEntry = {
 	file: string | null,
 	line: number | null,
 	kind: ErrorKind,
+	/**
+	 *  诊断（roadmap ④）：把 `.log` 原始报错翻译成「原因 + 怎么改」。
+	 *  `None` = 匹配不到已知模式，前端降级为原文 + 行号（宁可不说，也不瞎说）。
+	 */
+	diagnosis: Diagnosis | null,
 };
 
 /**  错误分类（design.md 失败语义 + IO 兜底）。 */

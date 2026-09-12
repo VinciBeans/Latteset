@@ -4,7 +4,7 @@ import { setActivePinia, createPinia } from "pinia";
 import { useCompileStore } from "../compile";
 import type { ErrorEntry } from "../../bindings";
 
-const ERR: ErrorEntry = { message: "x", file: null, line: null, kind: "content_error" };
+const ERR: ErrorEntry = { message: "x", file: null, line: null, kind: "content_error", diagnosis: null };
 
 describe("compileStore", () => {
   beforeEach(() => setActivePinia(createPinia()));

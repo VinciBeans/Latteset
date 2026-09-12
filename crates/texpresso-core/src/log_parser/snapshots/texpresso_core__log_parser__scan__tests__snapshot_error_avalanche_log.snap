@@ -5,7 +5,7 @@ expression: parse_log(log)
 [
     LogMessage {
         kind: Error,
-        message: "! LaTeX Error: Can be used only in preamble.\n",
+        message: "! LaTeX Error: Can be used only in preamble.\nl.1 \\documentclass\n",
         file: Some(
             "./chapters/intro.tex",
         ),
@@ -16,7 +16,7 @@ expression: parse_log(log)
     },
     LogMessage {
         kind: Error,
-        message: "! LaTeX Error: Can be used only in preamble.\n",
+        message: "! LaTeX Error: Can be used only in preamble.\nl.5 \\usepackage{amsmath}\n",
         file: Some(
             "./chapters/intro.tex",
         ),
@@ -27,7 +27,7 @@ expression: parse_log(log)
     },
     LogMessage {
         kind: Error,
-        message: "! TeX capacity exceeded, sorry [text input levels=15].\n<argument> ...efore}\\@@input \"chapters/intro.tex\"",
+        message: "! TeX capacity exceeded, sorry [text input levels=15].\n<argument> ...efore}\\@@input \"chapters/intro.tex\"\nl.17 \\input{chapters/intro}",
         file: Some(
             "./chapters/intro.tex",
         ),

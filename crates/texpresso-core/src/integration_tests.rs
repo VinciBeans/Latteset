@@ -5,7 +5,7 @@
 //! 验证：模块只通过接口协作、事件序列正确、信息局部性成立。
 
 use crate::compose::{compile_request_for_change, ComposeContext};
-use crate::log_parser::parse_log;
+use crate::log_parser::{diagnose, parse_log};
 use crate::project::{collect_tex_files, find_candidates, resolve, ProjectState};
 use crate::scheduler::Scheduler;
 use crate::settings::Settings;
@@ -166,15 +166,22 @@ async fn error_then_fix_then_recover() {
     let bad_log = "! LaTeX Error: File `nope.sty' not found.\nl.5 \\usepackage{nope}\n";
     let errors: Vec<ErrorEntry> = parse_log(bad_log)
         .into_iter()
-        .map(|m| ErrorEntry {
-            message: m.message,
-            file: m.file,
-            line: m.line,
-            kind: ErrorKind::ContentError,
+        .map(|m| {
+            let diagnosis = diagnose(&m);
+            ErrorEntry {
+                message: m.message,
+                file: m.file,
+                line: m.line,
+                kind: ErrorKind::ContentError,
+                diagnosis,
+            }
         })
         .collect();
     assert_eq!(errors.len(), 1);
     assert_eq!(errors[0].line, Some(5));
+    // roadmap ④：真实缺包错误应带上「缺少宏包 nope.sty」的诊断
+    let diag = errors[0].diagnosis.as_ref().expect("缺包错误应有诊断");
+    assert!(diag.cause.contains("nope.sty"), "诊断原因：{}", diag.cause);
 
     let mut fs = FakeFS::new();
     fs.put_file("proj/main.tex", "\\documentclass{article}");

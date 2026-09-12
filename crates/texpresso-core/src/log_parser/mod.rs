@@ -1,8 +1,12 @@
 //! 日志解析（modules.md §4）。
 
+pub mod diagnosis;
 pub mod model;
 pub mod scan;
+#[cfg(test)]
+pub mod real_error_corpus;
 
+pub use diagnosis::{diagnose, Diagnosis, DiagnosisKind};
 pub use model::{LogMessage, MessageKind};
 pub use scan::parse_log;
 
@@ -60,4 +64,7 @@ mod decode_tests {
         assert_eq!(decode_log(b""), "");
     }
 }
+
+#[cfg(test)]
+mod diagnosis_tests;
 

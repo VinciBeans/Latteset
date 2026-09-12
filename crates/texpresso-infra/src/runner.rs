@@ -4,7 +4,7 @@
 
 use async_trait::async_trait;
 use std::path::Path;
-use texpresso_core::log_parser::parse_log;
+use texpresso_core::log_parser::{diagnose, parse_log};
 use texpresso_core::project::FileSystem;
 use texpresso_core::scheduler::CompileRunner;
 use texpresso_core::types::{CompileOutcome, CompileRequest, ErrorEntry, ErrorKind};
@@ -112,15 +112,22 @@ impl CompileRunner for LatexmkRunner {
                         Ok(text) => {
                             let errors: Vec<ErrorEntry> = parse_log(&text)
                                 .into_iter()
-                                .map(|m| ErrorEntry {
-                                    message: m.message,
-                                    file: m.file,
-                                    line: m.line,
-                                    kind: ErrorKind::ContentError,
+                                .map(|m| {
+                                    // 诊断在移动 message 之前算（roadmap ④）
+                                    let diagnosis = diagnose(&m);
+                                    ErrorEntry {
+                                        message: m.message,
+                                        file: m.file,
+                                        line: m.line,
+                                        kind: ErrorKind::ContentError,
+                                        diagnosis,
+                                    }
                                 })
                                 .collect();
+                            let diagnosed = errors.iter().filter(|e| e.diagnosis.is_some()).count();
                             debug!(
                                 count = errors.len(),
+                                diagnosed,
                                 log = %log_path.display(),
                                 "编译失败：已从 .log 解析出错误条目"
                             );
