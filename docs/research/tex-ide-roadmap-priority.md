@@ -135,6 +135,28 @@
 
 **明确不做（本次评估新增 4 条否决项，见 §7）**：fork 快照、seen 水位/trace、增量输出解析（DVI 字节偏移）、VFS 事务回滚。
 
+### 5.5 「那我们自己改造 XeLaTeX 行不行」——评估结论
+
+**法律上可以**：XeTeX 由 Jonathan Kew 开发、按 **X11（MIT 类）许可**分发（[Wikipedia](https://en.wikipedia.org/wiki/XeTeX)），fork 与修改没有许可障碍。按 TeX 系惯例，改过的引擎要**改名**（pdfTeX / XeTeX / LuaTeX 本身都是这么来的），不能继续叫 xelatex。
+
+**但改造拿不到最值钱的那一项**：
+
+| 目标机制 | 改造引擎后是否可达 | 说明 |
+|---|---|---|
+| 阶段 7 fork 快照 | ❌ **仍不可达** | Windows 无 `fork()`。该文档 §1.3 自己写：显式序列化状态"成本高一个数量级，通常不如放弃阶段 7" |
+| 阶段 6 seen 水位 | ✅ **可达**（改造的最大价值） | 需要拦截每一次读 + 字节偏移，正需 C 层改造 |
+| 阶段 3 增量 DVI 解析 | ⚠️ 可达但代价大 | 要 DVI 输出 + 自研解析/渲染——等于重建预览栈（现为 PDF + pdf.js） |
+| 阶段 5 VFS/overlay | ✅ **不需要改 C 也能做** | 见下 |
+
+**代价（三层）**：① 从源码构建并长期跟进 TeX Live（Windows MSVC 构建需 ICU/HarfBuzz/FreeType/Graphite2/poppler 整套，[tlbuild](https://www.tug.org/texlive/doc/tlbuild.html)）；② **分发性质改变**——不再"用你已有的 TeX Live"，而要分发自建引擎（与 ADR-0003 不签名分发叠加，放大体积与信任成本）；③ 包与字体更新要自己跟。
+
+**两条不改造引擎的替代路径（应先评估）**：
+
+1. **LuaLaTeX + Lua 回调**：`find_read_file` / `open_read_file` 是**官方支持的扩展点**，社区已有"用 Lua 伪造文件系统输入"的实现（[Alan Xiang: Mimicking File System Input](https://www.alanshawn.com/tech/2020/07/07/luatex-mimic-input.html)、[TeX SE](https://tex.stackexchange.com/questions/684792/with-luatexbase-add_to_callback-how-can-i-conditionally-get-default-behavior-f)）。→ **㉙ 未存盘 overlay 用纯 Lua 即可，不必碰 C**；LuaTeX 也能 `--output-format=dvi`，但走 DVI 就要自研预览栈，不划算。
+2. **Tectonic**：上游 TeXpresso 实际是**基于 fork 的 Tectonic**（[tectonic discussion #1029](https://github.com/tectonic-typesetting/tectonic/discussions/1029)："powered by a fork of Tectonic … snapshotting in XeTeX engine directly"）。Tectonic 是 Rust、可作为库嵌入——**若真要"引擎在自己手里"，从 Tectonic 入手远比改 TeX Live 的 C 版 xetex 现实**，且 Rust 与本项目后端同构。
+
+**建议顺序（与 §9 决策原则一致）**：先做 ㉘（测收益）+ ㉚㉛（便宜）→ 若证明瓶颈在"每趟重算"，再考虑 LuaLaTeX 回调做 overlay（不改 C）→ **"拥有引擎"只应作为一次显式战略决策（另立 ADR），而不是一个功能项**；真要走，走 Tectonic 而不是 texlive 的 xetex。
+
 ## 6. 分档详述（未完成项）
 
 ### 6.1 ㉕ 学位论文首编超时（**数据齐全，可直接动手**）
@@ -180,6 +202,7 @@
 | **seen 水位 / trace 回滚**（其阶段 6） | 需拦截引擎每一次 I/O 与字节偏移（前提 G1 不成立） |
 | **增量输出解析（DVI 字节偏移）**（其阶段 3） | 我们产物是 PDF 且不流式；pdf.js 也不支持增量更新文档（前提 G2 不成立） |
 | **VFS 三层 + 事务回滚**（其阶段 5） | 与 **ADR-0007「文件系统为内容真相源」**直接冲突；且需引擎侧配合 |
+| **自建/改造 TeX 引擎**（含 fork TeX Live 的 xetex） | 见 §5.5：许可允许（X11）但代价是三层（自建构建+分发自建引擎+自己跟包），**且最值钱的 fork 快照在 Windows 上仍不可达**；不改造也能拿到 overlay（LuaLaTeX 回调）。真要走应走 Tectonic 并另立 ADR |
 | **实时协作** | P=0.40；在线方案护城河，本地方案投入产出不成立。定位「个人 / 离线优先」，协作交给 Git |
 | **增量编译** | [ADR-0005](../adr/0005-latexmk-first-incremental-next.md) 已实测证伪：latexmk 增量＝整份单遍重排，属 xelatex 引擎上限 |
 | **②-2 引擎自动推断** | ⑲ 实测：**0/19** 模板因默认 XeLaTeX 选错、`\RequirePDFTeX` 0/7374。改用 ④ 的「选错时明确告诉用户怎么改」替代 |
@@ -198,7 +221,7 @@
 
 ## 9. 决策原则（从本例提炼，后续取舍按此）
 
-1. **不拥有目标程序内部**：我们驱动 stock TeX Live。任何要求"改造引擎 / 拦截其 I/O / fork 其进程"的方案，一律先按 §5.2 的 4 条前提过筛。
+1. **不拥有目标程序内部**：我们驱动 stock TeX Live。任何要求"改造引擎 / 拦截其 I/O / fork 其进程"的方案，一律先按 §5.2 的 4 条前提过筛。**若要推翻这条（例如自建引擎），必须是一次显式战略决策并另立 ADR**，不能作为功能项顺手带进来（§5.5 给了两条不必拥有引擎的替代路径）。
 2. **先量化收益再上机制**：③ 已让"量化"变成一条命令；新增优化若拿不出 ≥20% 的实测改善，不进 Batch。
 3. **证据不足就压后，不硬排**：②-2 因 ⑲ 出数被砍、㉙ 因与 ADR-0007 冲突且无痛点而降 P2——**"没有证据"本身就是不做的理由**。
 4. **文档=事实来源**：每项完成后回写 design/modules/troubleshooting，且只记实测结论（被证伪的也回写）。
