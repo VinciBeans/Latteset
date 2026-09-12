@@ -70,12 +70,13 @@ pub(crate) fn decide(attempt: u8, outcome: &CompileOutcome, has_pending: bool) -
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::types::{ErrorEntry, ErrorKind};
+    use crate::types::{CompileKind, ErrorEntry, ErrorKind};
     use std::path::PathBuf;
 
     fn success() -> CompileOutcome {
         CompileOutcome::Success {
             pdf_path: PathBuf::from("proj/main.pdf"),
+            kind: CompileKind::Full,
         }
     }
 

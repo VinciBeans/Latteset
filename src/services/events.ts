@@ -15,7 +15,7 @@ export function subscribeEvents(): () => void {
   unlisteners.push(
     events.compileStatus.listen((e) => {
       const dto = e.payload;
-      useCompileStore().setStatus(dto.phase, dto.kind);
+      useCompileStore().setStatus(dto.phase, dto.kind, dto.draft);
       // 编译成功 = 文档结构已确立 → 重建大纲（source 结构变化后保持同步）
       if (dto.phase === "success") useOutlineStore().refresh().catch(() => {});
     }),

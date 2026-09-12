@@ -11,8 +11,8 @@ use crate::scheduler::Scheduler;
 use crate::settings::Settings;
 use crate::testutil::{event_log_emitter, wait_until, EventLog, FakeFS, FakeRunner};
 use crate::types::{
-    CompileOutcome, CompilePhase, CompileRequest, CompileStatusDto, ErrorEntry, ErrorKind,
-    FailureKind,
+    CompileKind, CompileOutcome, CompilePhase, CompileRequest, CompileStatusDto, ErrorEntry,
+    ErrorKind, FailureKind,
 };
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -33,7 +33,12 @@ async fn open_project(fs: &FakeFS, root: &Path) -> ProjectState {
 }
 
 fn status(phase: CompilePhase, kind: Option<FailureKind>) -> CompileStatusDto {
-    CompileStatusDto { phase, kind }
+    CompileStatusDto { phase, kind, draft: false }
+}
+
+/// 草稿（Quick）状态：roadmap ㉘ 的编辑触发路径。
+fn draft_status(phase: CompilePhase, kind: Option<FailureKind>) -> CompileStatusDto {
+    CompileStatusDto { phase, kind, draft: true }
 }
 
 /// 场景 1：打开 → 探测 → 子文件变化 → 编译成功（design.md 验收链路主路径）。
@@ -64,6 +69,7 @@ async fn open_detect_compile_full_chain() {
     // 3. 调度器执行（FakeRunner 返回成功 + PDF）
     let runner = Arc::new(FakeRunner::with_results(vec![CompileOutcome::Success {
         pdf_path: PathBuf::from("proj/main.pdf"),
+        kind: CompileKind::Quick,
     }]));
     let log = Arc::new(EventLog::new());
     let (handle, scheduler) = Scheduler::create(runner.clone(), event_log_emitter(log.clone()));
@@ -72,7 +78,11 @@ async fn open_detect_compile_full_chain() {
     handle.compile(req);
     wait_until(|| log.statuses().len() >= 2).await;
 
-    assert_eq!(log.statuses(), vec![status(CompilePhase::Running, None), status(CompilePhase::Success, None)]);
+    // roadmap ㉘：change 触发是草稿（Quick），事件必须带 draft=true
+    assert_eq!(
+        log.statuses(),
+        vec![draft_status(CompilePhase::Running, None), draft_status(CompilePhase::Success, None)]
+    );
     assert_eq!(log.pdfs(), vec![PathBuf::from("proj/main.pdf")]);
     assert_eq!(runner.calls().len(), 1);
     assert_eq!(runner.calls()[0].root_file, PathBuf::from("proj/main.tex"));
@@ -122,8 +132,8 @@ async fn continuous_typing_merges_to_latest() {
     let settings = Settings::default();
 
     let runner = Arc::new(FakeRunner::with_hold_and_results(vec![
-        CompileOutcome::Success { pdf_path: PathBuf::from("p.pdf") },
-        CompileOutcome::Success { pdf_path: PathBuf::from("p.pdf") },
+        CompileOutcome::Success { pdf_path: PathBuf::from("p.pdf"), kind: CompileKind::Quick },
+        CompileOutcome::Success { pdf_path: PathBuf::from("p.pdf"), kind: CompileKind::Quick },
     ]));
     let log = Arc::new(EventLog::new());
     let (handle, scheduler) = Scheduler::create(runner.clone(), event_log_emitter(log.clone()));
@@ -148,13 +158,14 @@ async fn continuous_typing_merges_to_latest() {
 
     // 只执行了 2 次编译（第 2/3 次变化合并）
     assert_eq!(runner.calls().len(), 2);
+    // roadmap ㉘：三次都来自「文件变化」，故全程 draft=true
     assert_eq!(
         log.statuses(),
         vec![
-            status(CompilePhase::Running, None),
-            status(CompilePhase::Queued, None),
-            status(CompilePhase::Running, None),
-            status(CompilePhase::Success, None),
+            draft_status(CompilePhase::Running, None),
+            draft_status(CompilePhase::Queued, None),
+            draft_status(CompilePhase::Running, None),
+            draft_status(CompilePhase::Success, None),
         ]
     );
 }
@@ -190,7 +201,7 @@ async fn error_then_fix_then_recover() {
 
     let runner = Arc::new(FakeRunner::with_hold_and_results(vec![
         CompileOutcome::ContentError { errors: errors.clone() },
-        CompileOutcome::Success { pdf_path: PathBuf::from("proj/main.pdf") },
+        CompileOutcome::Success { pdf_path: PathBuf::from("proj/main.pdf"), kind: CompileKind::Quick },
     ]));
     let log = Arc::new(EventLog::new());
     let (handle, scheduler) = Scheduler::create(runner.clone(), event_log_emitter(log.clone()));
@@ -202,7 +213,7 @@ async fn error_then_fix_then_recover() {
     handle.compile(compile_request_for_change(ctx, Path::new("proj/main.tex")).unwrap());
     wait_until(|| runner.calls().len() == 1).await;
     runner.release();
-    wait_until(|| log.statuses().contains(&status(CompilePhase::Failed, Some(FailureKind::ContentError)))).await;
+    wait_until(|| log.statuses().contains(&draft_status(CompilePhase::Failed, Some(FailureKind::ContentError)))).await;
     assert_eq!(log.errors(), vec![errors.clone()]);
 
     // 用户修复（第二次变化）：成功恢复
@@ -212,13 +223,14 @@ async fn error_then_fix_then_recover() {
     wait_until(|| log.statuses().len() >= 4).await;
     wait_until(|| log.pdfs().len() == 1).await;
 
+    // roadmap ㉘：两次都由文件变化触发 → 全程 draft=true
     assert_eq!(
         log.statuses(),
         vec![
-            status(CompilePhase::Running, None),
-            status(CompilePhase::Failed, Some(FailureKind::ContentError)),
-            status(CompilePhase::Running, None),
-            status(CompilePhase::Success, None),
+            draft_status(CompilePhase::Running, None),
+            draft_status(CompilePhase::Failed, Some(FailureKind::ContentError)),
+            draft_status(CompilePhase::Running, None),
+            draft_status(CompilePhase::Success, None),
         ]
     );
     assert_eq!(log.pdfs(), vec![PathBuf::from("proj/main.pdf")]);
@@ -233,7 +245,7 @@ async fn abort_then_manual_compile() {
     let settings = Settings::default();
 
     let runner = Arc::new(FakeRunner::with_hold_and_results(vec![
-        CompileOutcome::Success { pdf_path: PathBuf::from("p.pdf") },
+        CompileOutcome::Success { pdf_path: PathBuf::from("p.pdf"), kind: CompileKind::Full },
     ]));
     let log = Arc::new(EventLog::new());
     let (handle, scheduler) = Scheduler::create(runner.clone(), event_log_emitter(log.clone()));

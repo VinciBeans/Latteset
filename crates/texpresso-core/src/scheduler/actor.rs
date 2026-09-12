@@ -8,7 +8,8 @@ use super::policy::{decide, Decide};
 use super::queue::Queue;
 use super::runner::CompileRunner;
 use crate::types::{
-    CompileOutcome, CompilePhase, CompileRequest, CompileStatusDto, ErrorEntry, ErrorKind,
+    CompileKind, CompileOutcome, CompilePhase, CompileRequest, CompileStatusDto, ErrorEntry,
+    ErrorKind,
 };
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -146,11 +147,13 @@ impl Scheduler {
                     // 合并：最多一个等待条目，总是最新
                     // 事件纪律：仅当队列从空变非空才广播 Queued（状态无变化不重复发）
                     let was_empty = self.queue.is_empty();
+                    let draft = req.kind == CompileKind::Quick;
                     self.queue.push(req);
                     if was_empty {
                         self.emitter.status(CompileStatusDto {
                             phase: CompilePhase::Queued,
                             kind: None,
+                            draft,
                         });
                     }
                 }
@@ -173,6 +176,8 @@ impl Scheduler {
         let runner = self.runner.clone();
         let cancel = CancellationToken::new();
         let token = cancel.clone();
+        // roadmap ㉘：把强度带进状态事件，前端据此提示"引用待更新"
+        let draft = req.kind == CompileKind::Quick;
         let req_for_task = req.clone();
         let handle = tokio::spawn(async move { runner.compile(req_for_task, token).await });
         self.running = Some(RunningJob {
@@ -185,6 +190,7 @@ impl Scheduler {
         self.emitter.status(CompileStatusDto {
             phase: CompilePhase::Running,
             kind: None,
+            draft,
         });
     }
 
@@ -216,11 +222,18 @@ impl Scheduler {
             _ => {}
         }
         // 成功：广播 PDF 就绪
-        if let CompileOutcome::Success { pdf_path } = &outcome {
+        if let CompileOutcome::Success { pdf_path, .. } = &outcome {
             self.emitter.pdf(pdf_path.clone());
         }
 
         let has_pending = !self.queue.is_empty();
+        // roadmap ㉘：终态同样携带 draft——收敛（Full）成功前前端不该清"引用待更新"提示。
+        // 成功用**实际执行**的强度（runner 可能把 Quick 升级为 Full，此时引用不回退，不该提示）；
+        // 其余终态无从得知实际强度，按请求强度报（保守：宁可多提示一次）。
+        let draft = match &outcome {
+            CompileOutcome::Success { kind, .. } => *kind == CompileKind::Quick,
+            _ => running.request.kind == CompileKind::Quick,
+        };
         match decide(running.attempt, &outcome, has_pending) {
             Decide::StartPending => {
                 let req = self.queue.take().expect("has_pending 与队列一致");
@@ -233,12 +246,14 @@ impl Scheduler {
                 self.emitter.status(CompileStatusDto {
                     phase: CompilePhase::Success,
                     kind: None,
+                    draft,
                 });
             }
             Decide::Fail(kind) => {
                 self.emitter.status(CompileStatusDto {
                     phase: CompilePhase::Failed,
                     kind: Some(kind),
+                    draft,
                 });
             }
         }
@@ -259,6 +274,16 @@ mod tests {
             project_root: PathBuf::from("proj"),
             engine: Engine::XeLaTeX,
             timeout: Duration::from_secs(120),
+            // 测试默认用 Full（既有断言期望 draft:false）；Quick 有专门用例
+            kind: CompileKind::Full,
+        }
+    }
+
+    /// 编辑触发的草稿请求（roadmap ㉘）。
+    fn quick_req(name: &str) -> CompileRequest {
+        CompileRequest {
+            kind: CompileKind::Quick,
+            ..req(name)
         }
     }
 
@@ -285,6 +310,7 @@ mod tests {
         CompileStatusDto {
             phase: CompilePhase::Running,
             kind: None,
+            draft: false,
         }
     }
 
@@ -292,6 +318,7 @@ mod tests {
         CompileStatusDto {
             phase: CompilePhase::Success,
             kind: None,
+            draft: false,
         }
     }
 
@@ -299,7 +326,54 @@ mod tests {
         CompileStatusDto {
             phase: CompilePhase::Failed,
             kind: Some(kind),
+            draft: false,
         }
+    }
+
+    // ---- roadmap ㉘：草稿强度必须贯穿事件 ----
+
+    #[tokio::test]
+    async fn quick_request_marks_draft_in_every_status() {
+        let (h, log, _) = setup(FakeRunner::with_results(vec![CompileOutcome::Success {
+            pdf_path: PathBuf::from("proj/main.pdf"),
+            kind: CompileKind::Quick,
+        }]));
+        h.compile(quick_req("main.tex"));
+        wait_until(|| log.statuses().len() >= 2).await;
+        let st = log.statuses();
+        assert_eq!(st.len(), 2);
+        // Running 与 Success 都必须带 draft=true，否则前端会在收敛前误清「引用待更新」
+        assert!(st.iter().all(|s| s.draft), "草稿强度必须贯穿事件：{st:?}");
+        assert_eq!(st[0].phase, CompilePhase::Running);
+        assert_eq!(st[1].phase, CompilePhase::Success);
+    }
+
+    #[tokio::test]
+    async fn full_request_reports_not_draft() {
+        let (h, log, _) = setup(FakeRunner::with_results(vec![CompileOutcome::Success {
+            pdf_path: PathBuf::from("proj/main.pdf"),
+            kind: CompileKind::Full,
+        }]));
+        h.compile(req("main.tex"));
+        wait_until(|| log.statuses().len() >= 2).await;
+        assert!(log.statuses().iter().all(|s| !s.draft), "Full 应报 draft=false");
+    }
+
+    #[tokio::test]
+    async fn quick_upgraded_to_full_reports_not_draft() {
+        // 请求是 Quick（编辑触发），但 runner 因「项目尚无构建产物」升级为 Full。
+        // 此时引用不回退，成功态必须报 draft=false——否则前端会提示"引用待更新"
+        // 并多跑一次无意义的收敛，而实际输出已收敛（roadmap ㉘）。
+        let (h, log, _) = setup(FakeRunner::with_results(vec![CompileOutcome::Success {
+            pdf_path: PathBuf::from("proj/main.pdf"),
+            kind: CompileKind::Full,
+        }]));
+        h.compile(quick_req("main.tex"));
+        wait_until(|| log.statuses().len() >= 2).await;
+        let st = log.statuses();
+        assert_eq!(st[0].phase, CompilePhase::Running);
+        assert!(st[0].draft, "运行中只能按请求强度报：{st:?}");
+        assert!(!st[1].draft, "实际跑了 Full，成功态不该报草稿：{st:?}");
     }
 
     // ---- 基础路径 ----
@@ -308,6 +382,7 @@ mod tests {
     async fn single_compile_success() {
         let (h, log, _) = setup(FakeRunner::with_results(vec![CompileOutcome::Success {
             pdf_path: PathBuf::from("proj/main.pdf"),
+            kind: CompileKind::Full,
         }]));
         h.compile(req("main.tex"));
         wait_until(|| log.statuses().len() >= 2).await;
@@ -333,6 +408,7 @@ mod tests {
             log.statuses().contains(&CompileStatusDto {
                 phase: CompilePhase::Queued,
                 kind: None,
+                draft: false,
             })
         })
         .await;
@@ -360,6 +436,7 @@ mod tests {
                 CompileStatusDto {
                     phase: CompilePhase::Queued,
                     kind: None,
+                    draft: false,
                 },
                 running_dto(),
                 success_dto(),
@@ -375,6 +452,7 @@ mod tests {
             CompileOutcome::Timeout,
             CompileOutcome::Success {
                 pdf_path: PathBuf::from("proj/main.pdf"),
+                kind: CompileKind::Full,
             },
         ]));
         h.compile(req("main.tex"));
@@ -427,6 +505,7 @@ mod tests {
             },
             CompileOutcome::Success {
                 pdf_path: PathBuf::from("proj/main.pdf"),
+                kind: CompileKind::Full,
             },
         ]));
         h.compile(req("a.tex"));
@@ -448,6 +527,7 @@ mod tests {
                 CompileStatusDto {
                     phase: CompilePhase::Queued,
                     kind: None,
+                    draft: false,
                 },
                 running_dto(),
                 success_dto(),
@@ -514,6 +594,7 @@ mod tests {
             self.hold.notified().await; // 挂起直到 release（期间忽略 cancel）
             CompileOutcome::Success {
                 pdf_path: PathBuf::from("out.pdf"),
+                kind: CompileKind::Full,
             }
         }
     }

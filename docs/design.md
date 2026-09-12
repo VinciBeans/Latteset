@@ -128,7 +128,15 @@ node scripts/bench.mjs --with-real         # 追加真实模板档（依赖本�
 
 **代价（已量化）**：单趟的目录/交叉引用页码**落后一趟**。实测 `multifile` 插 400 行后单趟运行，`.toc` 里「第四章」页码由 **29 → 41**，即该趟 PDF 显示的是旧值 29；再跑一趟 `.toc` 稳定（「单趟旧、两趟收敛」）。
 
-**约束**：空闲 500ms 后必须完整收敛；**UI 需显示"引用待更新"**（连续打字期间目录会长时间是旧的）；首编与手动「编译」仍走完整 latexmk。**未验证**：bib/biber 场景下单趟的可用性（现有 fixture 编辑期未触发 bibtex）。
+**已实现（2026-09，roadmap ㉘）**：编辑触发走 `CompileKind::Quick`（直调 `xelatex -interaction=nonstopmode -synctex=1 -output-directory=tmp`，不经 latexmk）；首编 / 手动「编译」/ 空闲收敛走 `CompileKind::Full`（完整 latexmk）。**实测落点**：
+- **无构建产物自动升级**：Quick 请求但 `tmp/<stem>.aux` 不存在 → runner 自动升级为 Full（否则单趟引用全是 `??`）。集成用例 `quick_upgrades_to_full_without_artifacts`（真实引擎）断言升级后 `.log` 无 `There were undefined references`。
+- **状态事件报"实际执行强度"**：`CompileStatusDto.draft` 由 `CompileOutcome::Success { kind }` 决定，故首编被升级为 Full 时**不会**误报草稿（否则前端会多提示一次"引用待更新"并多跑一次无意义收敛）。
+- **空闲收敛**：前端 `useIdleConvergence` 在「成功且是草稿」后 **2000ms** 无编辑（任何编辑/新编译都取消）时调 `compile_now` → Full。延时取 2s 而非沿用 500ms 防抖：调度器合并队列只留一个待办，正在跑的 Full 会把紧随其后的编辑态 Quick 堵在队列里（大项目 Full ≈4s），反而拖慢"编辑→出图"。
+- **真机时间线（tauri server MCP 驱动，`multifile`）**：就绪 → 排版中(t=1980) → 就绪+**引用待更新**(t=6780) → 排版中(t=8786，Δ=**2006ms**，即空闲收敛的 Full) → 就绪、提示消失(t=12169)。同一 cycle 内 `tmp/main.fdb_latexmk` 由收敛那一趟更新（晚于 Quick 趟），证明收敛**真的跑了 latexmk**、不是空转跳过。手动「编译」日志为 `手动编译` + `Full 编译（完整 latexmk 收敛）`。
+- **UI**：状态栏在草稿期间显示琥珀色「引用待更新」；`queued/running/failed` 不改该标记（屏幕上的 PDF 仍是旧的，失败不产出新 PDF）。
+- **Quick 真的不经 latexmk**（集成用例断言）：跑完 Quick 后 `tmp/main.fdb_latexmk` 的 mtime **不变**。
+
+**未验证**：bib/biber 场景下单趟的可用性（现有 fixture 编辑期未触发 bibtex；收敛兜底应能覆盖，但未见实测）。
 
 **端到端延迟**（编辑 → PDF 刷新 ≈ 防抖 500ms + latexmk + pdf.js 重载）：`multifile` 重载实测 `fetch≈7ms / parse≈103ms / render≈320ms / total≈400–450ms` → **render 占 ~75% 是瓶颈**（`canvasEpoch` 整页 canvas 重建 + 视口重绘 + 二次 `renderNearViewport`）。**A/B 优化已落地**（分页 DOM 虚拟化 + 同文件重载复用 canvas、仅缩放/换文档才重建）——见 [modules.md](./modules.md) §12。
 

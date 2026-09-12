@@ -32,6 +32,32 @@ impl Engine {
             Engine::LuaLaTeX => "-lualatex",
         }
     }
+
+    /// 引擎可执行文件名（roadmap ㉘ 的 Quick 路径直调它，不经 latexmk）。
+    pub fn binary_name(&self) -> &'static str {
+        match self {
+            Engine::XeLaTeX => "xelatex",
+            Engine::PdfLaTeX => "pdflatex",
+            Engine::LuaLaTeX => "lualatex",
+        }
+    }
+}
+
+/// 编译强度（roadmap ㉘）。
+///
+/// 实测依据（`scripts/bench-single-pass.mjs`）：直调引擎单趟比完整 latexmk 快 **40% 中位**
+/// （六档 27.8%–55.5% 全部达标），因为省掉 latexmk 的外层机制（perl 启动 + `.fdb_latexmk`
+/// 依赖库读写）与它判断出的收敛趟；两个路径的**实际工作量本质相同**（1 趟 LaTeX + 1 次转换）。
+///
+/// **代价**：单趟的目录/交叉引用页码落后一趟（实测：插 400 行后 `.toc` 中某章页码 29 → 41，
+/// 即该趟 PDF 显示的是旧值 29）。→ 因此 `Quick` 只用于**编辑期**，必须由 `Full` 收敛兜底，
+/// 且 UI 需提示"引用待更新"（见 design.md §延迟预算实测附节）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CompileKind {
+    /// 单趟直调引擎：快，但引用/目录可能落后一趟。编辑期使用。
+    Quick,
+    /// 完整 latexmk：多趟收敛 + bibtex/biber/索引。首编、手动编译、空闲收敛使用。
+    Full,
 }
 
 /// 编译模式（CONTEXT.md：连续编译 / 保存触发编译）。
@@ -88,6 +114,10 @@ pub enum FailureKind {
 pub struct CompileStatusDto {
     pub phase: CompilePhase,
     pub kind: Option<FailureKind>,
+    /// 本次编译是否为**草稿**（`CompileKind::Quick`）——roadmap ㉘。
+    /// 前端据此提示"引用待更新"，并在停手后触发一次完整收敛。
+    /// 失败/排队阶段同样携带，避免前端在收敛完成前误清提示。
+    pub draft: bool,
 }
 
 /// pdf-updated 事件载荷。
@@ -186,13 +216,23 @@ pub struct CompileRequest {
     pub project_root: PathBuf,
     pub engine: Engine,
     pub timeout: Duration,
+    /// 编译强度（roadmap ㉘）：编辑触发 = Quick；首编/手动/空闲收敛 = Full。
+    /// runner 在 Quick 但**尚无构建产物**时会自动升级为 Full（见 infra::runner）。
+    pub kind: CompileKind,
 }
 
 /// 编译结果：runner 的输出，调度器据此走决策表（modules.md §2.3）。
 #[derive(Debug, Clone, PartialEq)]
 pub enum CompileOutcome {
     /// 编译成功且 PDF 已拷贝到项目根。
-    Success { pdf_path: PathBuf },
+    ///
+    /// `kind` 是**实际执行**的强度（roadmap ㉘）：请求为 `Quick` 但项目尚无构建产物时，
+    /// runner 会自动升级为 `Full`（否则引用全是 `??`）。状态事件据此报 `draft`，
+    /// 只有真跑了单趟才提示"引用待更新"。
+    Success {
+        pdf_path: PathBuf,
+        kind: CompileKind,
+    },
     /// 超时强制终止（runner 已树杀进程）。
     Timeout,
     /// 内容错误：进程非零退出，.log 已解析为错误条目。
@@ -215,11 +255,11 @@ mod tests {
     }
 
     #[test]
-    fn engine_serde_snake_case() {
-        let json = serde_json::to_string(&Engine::XeLaTeX).unwrap();
-        assert_eq!(json, "\"xelatex\"");
-        let back: Engine = serde_json::from_str("\"lualatex\"").unwrap();
-        assert_eq!(back, Engine::LuaLaTeX);
+    fn engine_binary_names() {
+        // Quick 路径直调这些可执行文件（roadmap ㉘）
+        assert_eq!(Engine::XeLaTeX.binary_name(), "xelatex");
+        assert_eq!(Engine::PdfLaTeX.binary_name(), "pdflatex");
+        assert_eq!(Engine::LuaLaTeX.binary_name(), "lualatex");
     }
 
     #[test]
@@ -227,9 +267,19 @@ mod tests {
         let dto = CompileStatusDto {
             phase: CompilePhase::Failed,
             kind: Some(FailureKind::Timeout),
+            draft: true,
         };
         let json = serde_json::to_string(&dto).unwrap();
+        assert!(json.contains("\"draft\":true"), "draft 必须进 DTO：{json}");
         let back: CompileStatusDto = serde_json::from_str(&json).unwrap();
         assert_eq!(back, dto);
+    }
+
+    #[test]
+    fn engine_serde_snake_case() {
+        let json = serde_json::to_string(&Engine::XeLaTeX).unwrap();
+        assert_eq!(json, "\"xelatex\"");
+        let back: Engine = serde_json::from_str("\"lualatex\"").unwrap();
+        assert_eq!(back, Engine::LuaLaTeX);
     }
 }

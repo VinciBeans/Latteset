@@ -63,6 +63,11 @@ impl FileSystem for TokioFs {
         Ok(tokio::fs::metadata(path).await?.is_dir())
     }
 
+    async fn exists(&self, path: &Path) -> io::Result<bool> {
+        // 用 try_exists 而非 metadata：权限错误等应报错而不是伪装成"不存在"
+        tokio::fs::try_exists(path).await
+    }
+
     async fn write(&self, path: &Path, contents: &str) -> io::Result<()> {
         tokio::fs::write(path, contents).await
     }

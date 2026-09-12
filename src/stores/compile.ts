@@ -8,8 +8,17 @@ export const useCompileStore = defineStore("compile", () => {
   const kind = ref<FailureKind | null>(null);
   const errors = ref<ErrorEntry[]>([]);
   const hasError = ref(false);
+  /**
+   * **当前屏幕上的 PDF 是否为草稿**（roadmap ㉘）：编辑触发的 Quick 单趟会让目录/交叉引用
+   * 页码落后一趟，直到空闲收敛的 Full 成功才追上。
+   *
+   * 只在 success 时按事件里的 `draft` 更新：
+   * - queued/running：PDF 还是上一次的，状态未变，不清提示；
+   * - failed：PDF 同样是上一次的（失败不产出新 PDF），故保持原值。
+   */
+  const draft = ref(false);
 
-  function setStatus(p: CompilePhase, k: FailureKind | null) {
+  function setStatus(p: CompilePhase, k: FailureKind | null, isDraft: boolean) {
     phase.value = p;
     kind.value = k;
     if (p === "running") {
@@ -24,6 +33,7 @@ export const useCompileStore = defineStore("compile", () => {
       // 成功态清空错误：若无 running 前置（直接 success），上一次失败的错误会残留到「就绪」。
       errors.value = [];
       hasError.value = false;
+      draft.value = isDraft;
     }
   }
 
@@ -31,5 +41,5 @@ export const useCompileStore = defineStore("compile", () => {
     errors.value = list;
   }
 
-  return { phase, kind, errors, hasError, setStatus, setErrors };
+  return { phase, kind, errors, hasError, draft, setStatus, setErrors };
 });

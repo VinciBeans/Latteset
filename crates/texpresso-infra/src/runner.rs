@@ -7,13 +7,17 @@ use std::path::Path;
 use texpresso_core::log_parser::{diagnose, parse_log};
 use texpresso_core::project::FileSystem;
 use texpresso_core::scheduler::CompileRunner;
-use texpresso_core::types::{CompileOutcome, CompileRequest, ErrorEntry, ErrorKind};
+use texpresso_core::types::{CompileKind, CompileOutcome, CompileRequest, ErrorEntry, ErrorKind};
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, warn};
 
 /// 编译中间目录（design.md：统一收纳 tmp/，与 core 忽略规则一致）。
 const OUT_DIR: &str = "tmp";
 
+/// 编译器实现（`CompileRunner` 的唯一实现）。
+///
+/// 名字是历史遗留：㉘ 之后它按 [`CompileKind`] 驱动**两条**命令——`Full` 用 latexmk、
+/// `Quick` 直调引擎单趟。改名会牵动架构图 SVG 与三处文档，暂留此名。
 pub struct LatexmkRunner {
     pub fs: std::sync::Arc<dyn FileSystem>,
 }
@@ -44,17 +48,47 @@ impl CompileRunner for LatexmkRunner {
         let tmp_dir = req.project_root.join(OUT_DIR);
         let pdf_dst = req.project_root.join(format!("{stem}.pdf"));
 
+        // 强度决策（roadmap ㉘）：编辑触发的 Quick 走「直调引擎单趟」；其余走完整 latexmk。
+        // 但 **Quick 需要已有构建产物**才有意义（单趟依赖上一趟的 .aux/.toc）；首次编译无 aux 时
+        // 单趟会产出「引用全是 ??」的 PDF——故此处自动升级为 Full。
+        let mut kind = req.kind;
+        if kind == CompileKind::Quick {
+            let aux = tmp_dir.join(format!("{stem}.aux"));
+            // 探测失败（权限/竞态）按「无产物」保守处理：升级为 Full 只是更慢，不会出错。
+            if !self.fs.exists(&aux).await.unwrap_or(false) {
+                debug!(aux = %aux.display(), "无构建产物，Quick 升级为 Full（首编）");
+                kind = CompileKind::Full;
+            }
+        }
+
         // 命令构造（modules.md §2.6 算法）：cwd = 项目根，相对 input/include 才能解析
-        let mut cmd = tokio::process::Command::new("latexmk");
-        cmd.arg(req.engine.latexmk_flag())
-            .arg(format!("-outdir={OUT_DIR}"))
-            .arg("-synctex=1")
-            .arg("-interaction=nonstopmode")
-            .arg(latexmk_input(&req.root_file, &req.project_root))
-            .current_dir(&req.project_root)
+        let mut cmd = match kind {
+            // Quick：直调引擎一趟（实测比完整 latexmk 快 40% 中位，见 design.md §延迟预算实测附节）。
+            // 与 latexmk 的差异只在外层机制与收敛趟；产物路径与 Full 一致（都在 tmp/<stem>.pdf）。
+            CompileKind::Quick => {
+                let mut c = tokio::process::Command::new(req.engine.binary_name());
+                c.arg("-interaction=nonstopmode")
+                    .arg("-synctex=1")
+                    .arg(format!("-output-directory={OUT_DIR}"))
+                    .arg(latexmk_input(&req.root_file, &req.project_root));
+                debug!(engine = req.engine.binary_name(), "Quick 编译（单趟直调引擎）");
+                c
+            }
+            CompileKind::Full => {
+                let mut c = tokio::process::Command::new("latexmk");
+                c.arg(req.engine.latexmk_flag())
+                    .arg(format!("-outdir={OUT_DIR}"))
+                    .arg("-synctex=1")
+                    .arg("-interaction=nonstopmode")
+                    .arg(latexmk_input(&req.root_file, &req.project_root));
+                debug!(engine = req.engine.latexmk_flag(), "Full 编译（完整 latexmk 收敛）");
+                c
+            }
+        };
+        cmd.current_dir(&req.project_root)
             .stdout(std::process::Stdio::null())
             .stderr(std::process::Stdio::null())
-            // 进程孤儿防护：若编译 future 被丢弃（应用退出/任务取消），随 future 一并杀掉 latexmk。
+            // 进程孤儿防护：若编译 future 被丢弃（应用退出/任务取消），随 future 一并杀掉子进程。
             // 避免子进程残留、持续写 tmp/ 或占用 PDF 锁。（树杀仍由 kill_tree 负责，这里是兜底。）
             .kill_on_drop(true);
 
@@ -62,7 +96,11 @@ impl CompileRunner for LatexmkRunner {
             Ok(c) => c,
             Err(e) => {
                 return CompileOutcome::IoError {
-                    message: format!("无法启动 latexmk（TeX Live 未安装？）：{e}"),
+                    message: match kind {
+                        CompileKind::Quick =>
+                            format!("无法启动 {}（TeX Live 未安装？）：{e}", req.engine.binary_name()),
+                        CompileKind::Full => format!("无法启动 latexmk（TeX Live 未安装？）：{e}"),
+                    },
                 }
             }
         };
@@ -94,7 +132,10 @@ impl CompileRunner for LatexmkRunner {
                         tokio::fs::rename(&pdf_tmp, &pdf_dst).await
                     };
                     match copy.await {
-                        Ok(_) => CompileOutcome::Success { pdf_path: pdf_dst },
+                        Ok(_) => CompileOutcome::Success {
+                            pdf_path: pdf_dst,
+                            kind,
+                        },
                         Err(e) => {
                             let _ = tokio::fs::remove_file(&pdf_tmp).await;
                             CompileOutcome::IoError {
@@ -230,6 +271,7 @@ mod tests {
             project_root: project.dir.clone(),
             engine: texpresso_core::types::Engine::XeLaTeX,
             timeout: Duration::from_secs(60),
+            kind: CompileKind::Full,
         }
     }
 
@@ -255,7 +297,7 @@ mod tests {
             .await;
 
         match outcome {
-            CompileOutcome::Success { pdf_path } => {
+            CompileOutcome::Success { pdf_path, .. } => {
                 assert_eq!(pdf_path, project.dir.join("main.pdf"));
                 assert!(pdf_path.exists(), "PDF 应拷贝到项目根");
                 assert!(project.dir.join("tmp/main.log").exists(), "中间文件应收纳在 tmp/");
@@ -291,6 +333,99 @@ mod tests {
                     .await
                     .expect("反向定位应成功");
                 assert!(back.line >= 1);
+            }
+            other => panic!("预期成功，得到：{other:?}"),
+        }
+    }
+
+    /// Quick 路径（roadmap ㉘）：已有构建产物时直调引擎单趟，命令不经 latexmk。
+    ///
+    /// 断言「真的跑了引擎」而非「请求被接受」：先 Full 建产物（含 .aux/.toc），
+    /// 再改正文源码走 Quick → Success 必须报 `kind: Quick`，且 PDF/SyncTeX 齐全
+    /// （后续编辑期的双向定位依赖它）。
+    #[tokio::test]
+    #[ignore]
+    async fn quick_path_skips_latexmk_and_reports_quick() {
+        if !latexmk_available() {
+            eprintln!("跳过：系统未安装 latexmk（需要 TeX Live/MiKTeX）");
+            return;
+        }
+        let project = TempProject::new("quick");
+        project.put(
+            "main.tex",
+            "\\documentclass{article}\n\\begin{document}\n\\tableofcontents\n\\section{One}\\label{s:one}\nSee \\ref{s:one}.\n\\end{document}\n",
+        );
+        let runner = LatexmkRunner {
+            fs: std::sync::Arc::new(crate::fs::TokioFs),
+        };
+        let cancel = || tokio_util::sync::CancellationToken::new();
+
+        // 1) 首编 = Full（建 tmp/main.aux，Quick 的前置条件）
+        let first = runner.compile(req(&project), cancel()).await;
+        assert!(
+            matches!(first, CompileOutcome::Success { kind: CompileKind::Full, .. }),
+            "首编应为 Full，实得：{first:?}"
+        );
+        assert!(project.dir.join("tmp/main.aux").exists(), "Full 应产出 .aux");
+
+        // 2) 编辑正文 → Quick（单趟直调 xelatex）
+        // 记录 latexmk 依赖库 mtime：Quick 若误走 latexmk，这一趟必然刷新它。
+        let fdb = project.dir.join("tmp/main.fdb_latexmk");
+        let fdb_before = std::fs::metadata(&fdb).and_then(|m| m.modified()).ok();
+        project.put(
+            "main.tex",
+            "\\documentclass{article}\n\\begin{document}\n\\tableofcontents\n\\section{One}\\label{s:one}\nSee \\ref{s:one}.\nEdited.\n\\end{document}\n",
+        );
+        let mut quick = req(&project);
+        quick.kind = CompileKind::Quick;
+        let second = runner.compile(quick, cancel()).await;
+        assert!(
+            matches!(second, CompileOutcome::Success { kind: CompileKind::Quick, .. }),
+            "有产物时编辑触发应跑单趟并报 Quick，实得：{second:?}"
+        );
+        assert!(project.dir.join("main.pdf").exists(), "Quick 也应产出 PDF");
+        assert!(
+            project.dir.join("tmp/main.synctex.gz").exists(),
+            "Quick 也应产出 synctex（定位不能因强度降级而失效）"
+        );
+        assert_eq!(
+            std::fs::metadata(&fdb).and_then(|m| m.modified()).ok(),
+            fdb_before,
+            "Quick 不该动 latexmk 依赖库（.fdb_latexmk mtime 变化 = 误走 latexmk）"
+        );
+    }
+
+    /// Quick 前置条件缺失（无 tmp/<stem>.aux）→ runner 自动升级 Full，避免引用全是 `??`。
+    #[tokio::test]
+    #[ignore]
+    async fn quick_upgrades_to_full_without_artifacts() {
+        if !latexmk_available() {
+            eprintln!("跳过：系统未安装 latexmk（需要 TeX Live/MiKTeX）");
+            return;
+        }
+        let project = TempProject::new("quick-upgrade");
+        project.put(
+            "main.tex",
+            "\\documentclass{article}\n\\begin{document}\n\\tableofcontents\n\\section{One}\\label{s:one}\nSee \\ref{s:one}.\n\\end{document}\n",
+        );
+        let runner = LatexmkRunner {
+            fs: std::sync::Arc::new(crate::fs::TokioFs),
+        };
+        let mut quick = req(&project);
+        quick.kind = CompileKind::Quick;
+        let outcome = runner.compile(quick, tokio_util::sync::CancellationToken::new()).await;
+
+        match outcome {
+            CompileOutcome::Success { kind, .. } => {
+                assert_eq!(kind, CompileKind::Full, "无产物时必须升级为 Full");
+                // 交叉引用必须已解析（单趟会留下 ??）
+                let pdf = std::fs::read(project.dir.join("main.pdf")).expect("应产出 PDF");
+                let log = std::fs::read_to_string(project.dir.join("tmp/main.log")).unwrap();
+                assert!(
+                    !log.contains("There were undefined references"),
+                    "升级为 Full 后不应有未解析引用；PDF {} 字节",
+                    pdf.len()
+                );
             }
             other => panic!("预期成功，得到：{other:?}"),
         }
@@ -445,13 +580,14 @@ mod tests {
             project_root: project.dir.clone(),
             engine: texpresso_core::types::Engine::XeLaTeX,
             timeout: Duration::from_secs(60),
+            kind: CompileKind::Full,
         };
         let outcome = runner
             .compile(request, tokio_util::sync::CancellationToken::new())
             .await;
 
         let pdf_path = match outcome {
-            CompileOutcome::Success { pdf_path } => pdf_path,
+            CompileOutcome::Success { pdf_path, .. } => pdf_path,
             other => panic!("中文路径应编译成功，实得：{other:?}"),
         };
         assert_eq!(pdf_path, project.dir.join("中文主文件.pdf"));
@@ -532,6 +668,7 @@ mod tests {
             project_root: project.dir.clone(),
             engine: texpresso_core::types::Engine::XeLaTeX,
             timeout: Duration::from_secs(60),
+            kind: CompileKind::Full,
         };
         let outcome = runner
             .compile(request, tokio_util::sync::CancellationToken::new())

@@ -69,6 +69,7 @@
 | 6 | **预览耗时（基准）** | `webview_execute_js` 读 `window.__previewLastReload` | 得到 `{fetch,parse,render,total,pagesRendered}`；与 `scripts/bench.mjs` 的输出拼成端到端 |
 | 7 | 反向 SyncTeX | `webview_find_element .page-wrap canvas` 取页几何 → 点击正文区 → 读状态栏 | 编辑器切到对应 `.tex` 且行号≈点击句所在行（**注意**：点**目录区**会映射到生成的 `.toc`，属已知特性，非缺陷） |
 | 8 | 中文路径渲染（P0-①） | 用 `中文测试工程` 夹具重复 1/5 | 中文标题/目录/正文/公式正常渲染，`fetch` 无 404 |
+| 9 | 编辑期草稿 + 空闲收敛（㉘） | 点「编译」建产物 → **在编辑器里敲一行**（见下「如何在应用内输入」）→ 记录状态栏时间线 | `排版中…` → `就绪` + **「引用待更新」** → 约 2s 后再次 `排版中…`（空闲收敛的 Full）→ 提示消失；dev stdout 同 cycle 有 `Quick 编译（单趟直调引擎）` 与 `Full 编译（完整 latexmk 收敛）` |
 
 **取预览耗时的一行命令**（第 6 步的具体形态）：
 
@@ -76,6 +77,44 @@
 // webview_execute_js 的 script 参数
 (() => JSON.stringify(window.__previewLastReload))()
 ```
+
+### 如何在应用内输入文字（Monaco，2026-09 实测）
+
+**问题**：`webview_keyboard action=type/press` 敲不进 Monaco（返回 `Illegal invocation`，或按了 Ctrl+End/Enter 后光标纹丝不动）；Monaco 已启用 **EditContext API**（`typeof window.EditContext !== "undefined"`），`textarea` + `document.execCommand("insertText")` 也无效（返回 `false`、textarea 仍为空）。**Monaco 实例也没挂在 window 上**（无 `window.monaco`）。
+
+**可行做法**：Vite dev 把 `monaco-editor` 预打包成一个模块，**按同一 URL 再 import 一次会拿到同一个模块实例**（模块注册表按 URL 去重），于是 `monaco.editor.getEditors()` 能取到**页面里正在用的那个编辑器**：
+
+```js
+// webview_execute_js 的 script 参数（URL 从 performance 里取，?v= 哈希必须一致）
+(async () => {
+  const url = performance.getEntriesByType("resource").map(r => r.name)
+    .find(n => /deps\/monaco-editor\.js/.test(n));
+  const monaco = await import(/* @vite-ignore */ url);
+  const ed = monaco.editor.getEditors()[0];
+  const m = ed.getModel();
+  ed.setPosition({ lineNumber: m.getLineCount(), column: m.getLineMaxColumn(m.getLineCount()) });
+  ed.trigger("mcp", "type", { text: "\n% hello" });   // 走 Monaco 自己的输入路径
+  return m.getValue().slice(-40);
+})()
+```
+
+这会让 `onDidChangeModelContent` 真实触发 → 应用的 `@change` / 防抖自动保存 / watch / 编译链路全部按真机路径走（比"从外部改文件"多验了编辑器这一环；外部改文件还会额外触发状态栏「外部修改」提示，属干扰）。
+
+**另一个坑：`webview_execute_js` 的 JS 执行有 ~3s 上限**（`timeout` 参数不影响它）。要观测一段 5–15s 的 UI 时间线，别写成"轮询到超时再返回"，改为**装一个常驻探针再分段读**：
+
+```js
+// 第一次调用：装探针（立即返回）
+const bar = document.querySelector(".status-bar"); const log = []; const t0 = Date.now();
+const snap = () => ({ t: Date.now() - t0, phase: bar.querySelector(".phase")?.textContent?.trim(),
+                      draft: bar.querySelector(".draft") ? "引用待更新" : null });
+log.push({ ...snap(), note: "install" }); window.__dshProbe = log;
+new MutationObserver(() => { const s = snap(); const l = log[log.length-1];
+  if (l.phase !== s.phase || l.draft !== s.draft) log.push(s); })
+  .observe(bar, { childList: true, subtree: true, characterData: true });
+// 之后隔几秒用 () => window.__dshProbe 读一次即可
+```
+
+**编译产物的时间戳也能当证据**：`tmp/main.fdb_latexmk` 的 mtime 只在 **latexmk** 跑过时才推进（Quick 单趟直调引擎不碰它），故「Quick 确实没走 latexmk」与「空闲收敛确实跑了 latexmk」都能用它与 `tmp/main.xdv` 的 mtime 对比来核实。
 
 **失败面排查顺序**：① dev stdout 有无 `打开项目` / `触发编译` / `构造编译请求`（后端链路）；
 ② `read_logs(console)` 有无前端异常；③ `ipc_get_backend_state` 确认连接的是本应用。
@@ -91,7 +130,8 @@
 - 前端单测走 `npm run test`（vitest，需提权 `danger-full-access` 跑 esbuild worker；本轮 28 pass）。
 - src-tauri 接线层的纯逻辑单测（`fs_impl::strip_verbatim`、`runner::root_stem/latexmk_input`、`watch::should_process/is_structural_event/normalize_event_paths`、`storage::effective/is_self_write/project_overrides_path`、`commands::pdf_path_for_root`）**可编译、逻辑已验证**，但本机无法直接 `cargo test` 执行；在能解析 WebView2 的 Windows 环境（真机宿主）再运行。
 - **2026-09 更新（ADR-0010，基础设施层拆出后）**：上面这些用例中的绝大多数已随实现迁到 `texpresso-infra`，**本机可正常运行**——`cargo test -p texpresso-infra`（17 单测）+ `cargo test -p texpresso-infra -- --ignored`（6 个真实 latexmk/synctex 集成用例：成功、内容错误、超时树杀、取消、中文路径双向），均已实测通过。仍留在 src-tauri 的只剩 `commands::pdf_path_for_root`（纯函数，仍受同一 WebView2 链接限制）。
-- **已穷尽尝试仍失败**：把 `webview2-com-sys-*/out/{arch}/WebView2Loader.dll` 拷到 `target/debug` **及 `target/debug/deps`（测试 exe 同目录）** 并加入 PATH；`dumpbin /imports` 显示静态导入均为系统 DLL、延迟导入仅 `VCRUNTIME140.dll`；`danger-full-access` 提权运行——均仍 `STATUS_ENTRYPOINT_NOT_FOUND`。**非沙箱权限、非 PATH、非运行时缺失**，是 Tauri v2 shell crate 测试二进制的已知 Windows 工具链限制。
+- **已穷尽尝试仍失败**：把 `webview2-com-sys-*/out/{arch}/WebView2Loader.dll` 拷到 `target/debug` **及 `target/debug/deps`（测试 exe 同目录）** 并加入 PATH；`dumpbin /imports` 显示静态导入均为系统 DLL、延迟导入仅 `VCRUNTIME140.dll`；`danger-full-access` 提权运行——均仍 `STATUS_ENTRYPOINT_NOT_FOUND`。**非沙箱权限、非 PATH、非运行时缺失**，是 Tauri v2 shell crate 测试二进制的已知 Windows 工具链限制。（2026-09 复核一次：想把 `cargo test -p texpresso -- --ignored export_bindings` 当"无 GUI 生成 bindings"的捷径，同样是 `0xc0000139`。）
+- **推论（DTO 改动后怎么刷新 `src/bindings.ts`）**：既然 src-tauri 的测试二进制在本机跑不起来，`export_bindings` 这条捷径不可用 → **起一次 `npm run tauri dev`**：debug 构建启动时会自动重新导出 `src/bindings.ts`（`lib.rs` 里 `#[cfg(debug_assertions)]` 的 export）。本轮（㉘ 加 `draft` 字段）实测即如此，导出结果与手写预期一致。
 
 ## 中文文件名/路径兼容性实测（2026-09，roadmap P0-①）
 

@@ -39,6 +39,12 @@ pub trait FileSystem: Send + Sync {
     /// 目标是否为目录（打开项目时校验用；避免调用方自己 stat）。
     async fn is_dir(&self, path: &std::path::Path) -> io::Result<bool>;
 
+    /// 路径是否存在（文件或目录）。
+    ///
+    /// 用途（roadmap ㉘）：runner 判断"是否已有构建产物（`tmp/<stem>.aux`）"以决定
+    /// Quick 单趟能否成立——避免调用方绕过 trait 直接 `std::fs::metadata`。
+    async fn exists(&self, path: &std::path::Path) -> io::Result<bool>;
+
     /// 写入（覆盖）文本文件。父目录必须已存在——建目录属于上层策略。
     async fn write(&self, path: &std::path::Path, contents: &str) -> io::Result<()>;
 }

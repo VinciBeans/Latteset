@@ -16,6 +16,7 @@ import { useOutlineStore } from "./stores/outline";
 import { useSettingsStore } from "./stores/settings";
 import { useCompileStore } from "./stores/compile";
 import { useAutoSave } from "./composables/useAutoSave";
+import { useIdleConvergence } from "./composables/useIdleConvergence";
 import { ipc } from "./services/ipc";
 import { subscribeEvents } from "./services/events";
 import SettingsPanel from "./components/SettingsPanel.vue";
@@ -28,6 +29,8 @@ const settings = useSettingsStore();
 const compile = useCompileStore();
 const outline = useOutlineStore();
 const autoSave = useAutoSave();
+// 空闲收敛（roadmap ㉘）：草稿编译后停手 2s 补一次完整 latexmk，追上目录/引用页码
+const idleConvergence = useIdleConvergence();
 
 const cursorLine = ref(0);
 const cursorCol = ref(0);
@@ -145,6 +148,8 @@ async function chooseProject() {
 }
 
 function onEditorChange(_path: string) {
+  // 用户又动了键盘 → 取消待收敛的完整编译，把调度器让给编辑态的 Quick 单趟
+  idleConvergence.cancel();
   // 连续模式：编辑触发防抖自动保存；on_save 模式不自动写盘（由 Ctrl+S / 点「编译」/ 关标签触发）。
   if (settings.settings?.compile.mode === "continuous") autoSave.schedule();
 }

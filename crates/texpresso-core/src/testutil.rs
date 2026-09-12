@@ -5,7 +5,7 @@
 
 use crate::project::{DirEntry, FileSystem};
 use crate::scheduler::CompileRunner;
-use crate::types::{CompileOutcome, CompileRequest};
+use crate::types::{CompileKind, CompileOutcome, CompileRequest};
 use async_trait::async_trait;
 use std::collections::{HashMap, HashSet};
 use std::io;
@@ -111,6 +111,10 @@ impl FileSystem for FakeFS {
         Ok(self.dirs.contains(path))
     }
 
+    async fn exists(&self, path: &Path) -> io::Result<bool> {
+        Ok(self.files.contains_key(path) || self.dirs.contains(path))
+    }
+
     async fn write(&self, path: &Path, contents: &str) -> io::Result<()> {
         let _ = (path, contents);
         Err(io::Error::new(
@@ -173,13 +177,15 @@ impl FakeRunner {
         }
     }
 
-    fn next_result(&self) -> CompileOutcome {
+    fn next_result(&self, req_kind: CompileKind) -> CompileOutcome {
         self.results
             .lock()
             .unwrap()
             .pop_front()
+            // 默认结果按请求强度报（模拟"无升级"的正常执行）
             .unwrap_or(CompileOutcome::Success {
                 pdf_path: PathBuf::from("out.pdf"),
+                kind: req_kind,
             })
     }
 }
@@ -193,17 +199,18 @@ impl Default for FakeRunner {
 #[async_trait]
 impl CompileRunner for FakeRunner {
     async fn compile(&self, req: CompileRequest, cancel: tokio_util::sync::CancellationToken) -> CompileOutcome {
+        let kind = req.kind;
         self.calls.lock().unwrap().push(req);
         match &self.hold {
             Some(h) => tokio::select! {
                 _ = cancel.cancelled() => CompileOutcome::Aborted,
-                _ = h.notified() => self.next_result(),
+                _ = h.notified() => self.next_result(kind),
             },
             None => {
                 if cancel.is_cancelled() {
                     CompileOutcome::Aborted
                 } else {
-                    self.next_result()
+                    self.next_result(kind)
                 }
             }
         }

@@ -48,6 +48,7 @@ mod tests {
             project_root: PathBuf::from("proj"),
             engine: Engine::XeLaTeX,
             timeout: Duration::from_secs(120),
+            kind: crate::types::CompileKind::Full,
         }
     }
 

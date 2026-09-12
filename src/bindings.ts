@@ -63,6 +63,12 @@ export type CompileSettings = {
 export type CompileStatusDto = {
 	phase: CompilePhase,
 	kind: FailureKind | null,
+	/**
+	 *  本次编译是否为**草稿**（`CompileKind::Quick`）——roadmap ㉘。
+	 *  前端据此提示"引用待更新"，并在停手后触发一次完整收敛。
+	 *  失败/排队阶段同样携带，避免前端在收敛完成前误清提示。
+	 */
+	draft: boolean,
 };
 
 export type CompileStatusEvent = CompileStatusDto;

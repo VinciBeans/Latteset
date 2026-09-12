@@ -6,7 +6,7 @@
 
 use crate::project::{is_ignored, ProjectState};
 use crate::settings::Settings;
-use crate::types::CompileRequest;
+use crate::types::{CompileKind, CompileRequest};
 use std::path::Path;
 use std::time::Duration;
 
@@ -23,6 +23,10 @@ pub struct ComposeContext<'a> {
 /// - 已确定根文件；
 /// - 变化路径在项目根内；
 /// - 未被忽略（排除 tmp/、隐藏项、非 .tex）。
+///
+/// **强度 = Quick**（roadmap ㉘）：编辑期只要快速出图，引用/目录可能落后一趟；
+/// 由「空闲收敛」（前端在停手后调 `compile_request_manual`）与「首编」兜底正确性。
+/// 若项目尚无构建产物，runner 会把 Quick 自动升级为 Full（见 infra::runner）。
 pub fn compile_request_for_change(ctx: ComposeContext<'_>, changed: &Path) -> Option<CompileRequest> {
     let root_file = ctx.project.root_file.as_ref()?;
     if !changed.starts_with(&ctx.project.root) {
@@ -36,10 +40,14 @@ pub fn compile_request_for_change(ctx: ComposeContext<'_>, changed: &Path) -> Op
         project_root: ctx.project.root.clone(),
         engine: ctx.settings.compile.engine,
         timeout: Duration::from_secs(u64::from(ctx.settings.compile.timeout_secs)),
+        kind: CompileKind::Quick,
     })
 }
 
 /// 手动编译请求（compile_now 命令）：与文件变化同路径，只是不校验 changed。
+///
+/// **强度 = Full**：用户主动点「编译」要的是正确结果；前端「空闲收敛」也复用它
+/// （多趟 + bibtex/biber/索引），这是 ㉘ 正确性的兜底。
 pub fn compile_request_manual(ctx: ComposeContext<'_>) -> Option<CompileRequest> {
     let root_file = ctx.project.root_file.as_ref()?;
     Some(CompileRequest {
@@ -47,6 +55,7 @@ pub fn compile_request_manual(ctx: ComposeContext<'_>) -> Option<CompileRequest>
         project_root: ctx.project.root.clone(),
         engine: ctx.settings.compile.engine,
         timeout: Duration::from_secs(u64::from(ctx.settings.compile.timeout_secs)),
+        kind: CompileKind::Full,
     })
 }
 
@@ -139,6 +148,19 @@ mod tests {
         assert_eq!(req.project_root, PathBuf::from("proj"));
         assert_eq!(req.engine, Engine::LuaLaTeX);
         assert_eq!(req.timeout, Duration::from_secs(60));
+        // roadmap ㉘：编辑触发 = 草稿（快速出图，由空闲收敛兜底正确性）
+        assert_eq!(req.kind, CompileKind::Quick);
+    }
+
+    #[test]
+    fn manual_request_is_full_kind() {
+        // roadmap ㉘：手动「编译」与前端空闲收敛都走 Full（用户要正确结果 / 收敛兜底）
+        let project = ProjectState {
+            root: PathBuf::from("proj"),
+            root_file: Some(PathBuf::from("proj/main.tex")),
+        };
+        let req = compile_request_manual(ctx(&project, &settings())).unwrap();
+        assert_eq!(req.kind, CompileKind::Full);
     }
 
     #[test]

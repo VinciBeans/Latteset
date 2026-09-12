@@ -52,6 +52,13 @@ async function toggleMode() {
       {{ phaseText }}{{ kindText }}
     </span>
     <span
+      v-if="compile.draft"
+      class="draft"
+      title="当前 PDF 由编辑态单趟编译产出：目录/交叉引用页码可能落后一趟，停手后会自动收敛"
+    >
+      引用待更新
+    </span>
+    <span
       v-if="needsRootFile"
       class="needs-root"
       title="尚未确定根文件，点击选择要编译的主文件"
@@ -109,6 +116,14 @@ async function toggleMode() {
   color: #e85f52;
   padding: 2px 9px;
   border-radius: 5px;
+}
+/* 草稿编译提示（roadmap ㉘）：编辑期单趟出图，目录/引用页码可能落后一趟 */
+.draft {
+  background: rgba(255, 181, 74, 0.18);
+  color: #b8791a;
+  padding: 2px 9px;
+  border-radius: 5px;
+  font-weight: 600;
 }
 /* 未确定根文件：可点击入口（点击打开根文件选择器） */
 .needs-root {

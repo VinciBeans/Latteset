@@ -1,6 +1,6 @@
 # TeXPresso 文档索引
 
-> 项目状态：**已实现并迭代中**（Windows 首发 MVP 落地：项目/编辑/编译调度/错误去重/连续 PDF 预览+SyncTeX/设置页均可用）。2026-08 演进：GitHub 为 truth + Gitee 镜像同步、GitHub Actions CI（cargo test + `vue-tsc` + 前端 vitest）、tauri server MCP 验证基建、预览重载 A/B 优化（分页虚拟化 + 同文件 canvas 复用）、文件树增量刷新、SyncTeX 契约定稿、前端 vitest 单测、编辑器空文件占位修复、多文件测试工程（`test_file/projects/multifile/`）。增量编译结论（**暂不过 latexmk**）见 [ADR-0005](./adr/0005-latexmk-first-incremental-next.md)；e2e 以 **tauri server MCP 驱动真实窗口**为主（WebDriver 半配置、仅作备选），操作要点见 [troubleshooting.md](./troubleshooting.md)。**CLI + MCP 交互接口**为计划任务（仅记录，待实现，见 [cli-mcp-plan.md](./cli-mcp-plan.md)）。
+> 项目状态：**已实现并迭代中**（Windows 首发 MVP 落地：项目/编辑/编译调度/错误去重/连续 PDF 预览+SyncTeX/设置页均可用）。2026-08 演进：GitHub 为 truth + Gitee 镜像同步、GitHub Actions CI（cargo test + `vue-tsc` + 前端 vitest）、tauri server MCP 验证基建、预览重载 A/B 优化（分页虚拟化 + 同文件 canvas 复用）、文件树增量刷新、SyncTeX 契约定稿、前端 vitest 单测、编辑器空文件占位修复、多文件测试工程（`test_file/projects/multifile/`）。2026-09 演进：中文路径/编码实测复核（①）、根文件候选可见可交互（②-1）、错误诊断升级（④，19 类「原因 + 怎么改」）、性能基准与回归基建（③）、**编辑期单趟编译 + 空闲收敛（㉘：编辑走 Quick 直调引擎省 40% 中位，停手 2s 后 Full 收敛，状态栏提示「引用待更新」）**。增量编译结论（**暂不过 latexmk**，但 ㉘ 用「单趟草稿 + 收敛」绕开了它的外层开销）见 [ADR-0005](./adr/0005-latexmk-first-incremental-next.md) 与 [design.md](./design.md) §延迟预算实测附节；e2e 以 **tauri server MCP 驱动真实窗口**为主（WebDriver 半配置、仅作备选），操作要点见 [troubleshooting.md](./troubleshooting.md)。**CLI + MCP 交互接口**为计划任务（仅记录，待实现，见 [cli-mcp-plan.md](./cli-mcp-plan.md)）。
 > 产品入口与功能清单见 [根 README](../README.md)；设计权威仍是本目录。
 
 ## 文档结构
