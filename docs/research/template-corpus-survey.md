@@ -4,7 +4,7 @@
 > 目的：用**真实模板数据**回答「默认引擎 XeLaTeX 能不能开箱即用」，据此决定 roadmap **②-2 引擎推断**该不该做、做多大。
 > 配套：[cn-thesis-template-engines.md](./cn-thesis-template-engines.md)（19 个高校模板的官方引擎要求，逐条原文 URL）
 > 脚本：`scripts/tl-compile-matrix.ps1`（可复现）；临时产物在 `test_file/research/`（已 gitignore）
-> 标注：**实测** = 本轮本机跑出的可复现结果；**[推断]** = 分析判断；**未验证** = 明确没做
+> 标注：**实测** = 本文本机跑出的可复现结果；**[推断]** = 分析判断；**未验证** = 明确没做
 
 ## 0. 结论（三行）
 
@@ -100,11 +100,11 @@ $makeindex = 'internal splitindex';
 
 即：**模板自己把 `$pdflatex` 覆写成 xelatex、内建 `--shell-escape`、还自带 `cp` 把产物拷到源目录旁边**。而 TexPresso 固定传 `-outdir=tmp` 并**从 `tmp/<stem>.pdf` 拷贝**到项目根。
 
-→ **未验证**：命令行 `-xelatex`/`-outdir=tmp` 与 rc 内 `$pdf_mode`/`$pdflatex`/`cp` 的**优先级与实际叠加行为**（本轮两个样本都超时，没跑到终态）。这是"模板兼容"里最可能翻车的一处，值得单列验证。
+→ **未验证**：命令行 `-xelatex`/`-outdir=tmp` 与 rc 内 `$pdf_mode`/`$pdflatex`/`cp` 的**优先级与实际叠加行为**（本文两个样本都超时，没跑到终态）。这是"模板兼容"里最可能翻车的一处，值得单列验证。
 
 ### 4.4 GitHub 源码版模板需要 `.ins`/`.dtx` 处理
 
-配套报告指出：thuthesis 用 `xetex thuthesis.ins`、BUCTthesis/hithesis 用 `xelatex *.ins` 生成 `.cls`；学生若下的是仓库源码而非 Release zip，会先卡在"没有 cls"。**未验证**（本轮测的是 TeX Live 已安装版，cls 已就位）。
+配套报告指出：thuthesis 用 `xetex thuthesis.ins`、BUCTthesis/hithesis 用 `xelatex *.ins` 生成 `.cls`；学生若下的是仓库源码而非 Release zip，会先卡在"没有 cls"。**未验证**（本文测的是 TeX Live 已安装版，cls 已就位）。
 
 ## 5. 对 roadmap 的影响
 
@@ -123,4 +123,4 @@ $makeindex = 'internal splitindex';
 2. **§4.3 的命令行 vs latexmkrc 优先级**未实测（两个样本都超时）。
 3. **§4.4 的 `.ins` 流程**未实测（测的是已安装版）。
 4. **样本代表性**：19 个仍偏小，且取自 TeX Live `doc/`；若要把"开箱即用率"当指标，应改为**脚本自动生成/下载真实模板集**并纳入 ③ 的基准。
-5. **shell-escape**：配套报告称 5 个模板硬写需要，**本轮矩阵没有样本因它失败**（修正归类 bug 后无一例命中 `needs-shell-escape`）——两者不矛盾（模板可在 rc 里内建），但"我们是否需要主动加 `--shell-escape`"仍未验证。
+5. **shell-escape**：配套报告称 5 个模板硬写需要，**本文矩阵没有样本因它失败**（修正归类 bug 后无一例命中 `needs-shell-escape`）——两者不矛盾（模板可在 rc 里内建），但"我们是否需要主动加 `--shell-escape`"仍未验证。

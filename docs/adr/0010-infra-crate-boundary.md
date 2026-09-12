@@ -14,7 +14,7 @@ texpresso-core 只定义接口（FileSystem / CompileRunner / SyncTexProvider）
 
 - **状态**：已接受（2026-09）
 - **备选方案**：
-  - 保持 src-tauri 单 crate、只做模块划分——否决：外部依赖仍在上层，`use tokio::fs` 这类调用没有结构性约束，本次要解决的问题依旧存在；
+  - 保持 src-tauri 单 crate、只做模块划分——否决：外部依赖仍在上层，`use tokio::fs` 这类调用没有结构性约束，该决策要解决的问题依旧存在；
   - 把实现并入 texpresso-core 并加 feature 开关——否决：破坏 core "无 IO、无 Tauri、全量可单测" 的纪律（ADR-0006）。
 - **影响**：
   - 依赖搬迁：notify / tokio-util / async-trait / serde_json 从 src-tauri 移到 infra；src-tauri 的依赖面收窄到 tauri 系 + serde + tokio(sync) + tracing + 两个本地 crate；

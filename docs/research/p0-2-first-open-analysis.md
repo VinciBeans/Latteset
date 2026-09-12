@@ -1,8 +1,8 @@
 # P0-② 首次打开即用 —— 可行性分析
 
-> 状态：**分析（未实现）**，2026-09
-> 上游：[tex-ide-roadmap-priority.md](./tex-ide-roadmap-priority.md)（②-2 见 §5.2；②-1 已完成，见该文 §1 基线）、[tex-ide-pain-points.md](./tex-ide-pain-points.md) P9/P7
-> 证据约定：**实测** = 本次在本机跑出的可复现结果；**[推断]** = 分析判断；**待验证** = 尚未实测
+> 状态：**分析快照（2026-09）**——文中"现状"列描述的是分析当时的实现；后续落地与证据见 [roadmap](./tex-ide-roadmap-priority.md) §1 基线（②-1 已落地、②-2 经 ⑲ 实测砍掉、④ 诊断已落地）与 [modules.md](../modules.md) §8。
+> 上游：[tex-ide-roadmap-priority.md](./tex-ide-roadmap-priority.md)（②-2 见 §5.2；②-1 见该文 §1 基线）、[tex-ide-pain-points.md](./tex-ide-pain-points.md) P9/P7
+> 证据约定：**实测** = 本文在本机跑出的可复现结果；**[推断]** = 分析判断；**待验证** = 尚未实测
 > 结论一句话：**P0-② 目前只完成了一半的一半**——根文件探测有了，但「多候选/零候选」对用户不可见，且引擎/编译链/字体/缺包四类推断完全没有；其中**只有「引擎推断」是真正的刚需**（实测：引擎选错 = 首次打开直接失败且错误信息不可读）。
 
 ## 0. TL;DR
@@ -70,7 +70,7 @@
 
 **含义**：`bibtex`/`biber`/多次 pass 这些"编译链知识"，latexmk 自己就处理了，**TexPresso 不需要推断，也不需要让用户配**。原路线图里"编译链推断"的清单可以砍掉一大半。
 
-> 顺带记录一条**被证伪的假设**：第一轮 biber 探针 exit 12，我一度判断是 PowerShell `Set-Content -Encoding UTF8` 写了 UTF-8 BOM。**实测证伪**——本机为 pwsh 7.6.5，`-Encoding UTF8` 默认无 BOM（头字节 `5C 64`），与 `UTF8Encoding($false)` 写法一致，两者都 exit 0。真正原因是**第一轮探针含中文正文却用 pdflatex 编译**（与 §3.1 同一现象）。已回写 [troubleshooting.md](../troubleshooting.md)。
+> 记录一条**被证伪的假设**：biber 探针 exit 12，一度归因为 PowerShell `Set-Content -Encoding UTF8` 写了 UTF-8 BOM。**实测证伪**——本机为 pwsh 7.6.5，`-Encoding UTF8` 默认无 BOM（头字节 `5C 64`），与 `UTF8Encoding($false)` 写法一致，两者都 exit 0。真正原因是**探针含中文正文却用 pdflatex 编译**（与 §3.1 同一现象）。BOM 一条的完整账目见 [troubleshooting.md](../troubleshooting.md)。
 
 ### 3.3 仍未验证的部分
 
@@ -183,7 +183,7 @@
 | **②-2** | 引擎推断：core `infer_engine` + `ProjectState.detected` + 优先级 + UI 可见 | ②-1 的契约变更可复用 | 中 |
 | **②-3** | 缺包诊断（并入 P0-④ 的第一个错误模式） | P0-④ | 小（作为 ④ 的一部分） |
 
-**附带**：本次实测踩到并已回写 [troubleshooting.md](../troubleshooting.md) 的一条——探针文档**含中文时必须用 xelatex/lualatex**，用 pdflatex 会 exit 12 且错误不可读（§3.1 同一现象）；同时记录了一条**被证伪的 BOM 假设**，避免后续重走（见 §3.2 注）。
+**附带**：实测踩到并记入 [troubleshooting.md](../troubleshooting.md) 的一条——探针文档**含中文时必须用 xelatex/lualatex**，用 pdflatex 会 exit 12 且错误不可读（§3.1 同一现象）；§3.2 注另有**被证伪的 BOM 假设**，避免重走。
 
 ## 9. 未验证 / 待补（不要当成已知）
 

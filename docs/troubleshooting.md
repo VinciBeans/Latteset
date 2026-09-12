@@ -8,13 +8,13 @@
 - 纯前端改动（Vite HMR）不触发
 - Rust 改动触发的进程重启不触发
 - 仅**进程冷启动**时偶发（不是每次）
-- 与 `vite.svg` 的 404 无关（模板遗留文件，品牌化后已移除；当时属重启瞬间的瞬态请求）
+- 与 `vite.svg` 的 404 无关（模板遗留文件的瞬态请求）
 
 **已尝试无效**：`WEBKIT_DISABLE_DMABUF_RENDERER=1`、`LIBGL_ALWAYS_SOFTWARE=1`、`WEBKIT_DISABLE_COMPOSITING_MODE=1`。
 
 **处置**：白屏时右键 → Reload。开发环境怪癖，仅影响无 GPU 虚拟机；目标平台 Windows（WebView2/DirectX 硬件路径）预计不受影响，真机验证时复查。
 
-## 幽灵窗口：WSLg 下 WebKitGTK 完全不渲染（2026-08 实测，已修复）
+## 幽灵窗口：WSLg 下 WebKitGTK 完全不渲染（无 GPU 的 Linux/WSL 桌面）
 
 **现象**：`npm run tauri:dev` 进程正常启动（无 panic），窗口创建（window-state 插件有记录、任务栏有缩略图）但内容完全不渲染——静态 HTML 页面、前端代码全部排除后依旧。
 
@@ -32,13 +32,13 @@
 1. **升级 WSL**（Windows 侧 PowerShell/CMD）：`wsl --update`
 2. **重装 WebKitGTK**（WSL 内）：`sudo pacman -S webkit2gtk-4.1`（若版本未变可先 `sudo pacman -Rns webkit2gtk-4.1` 再装）
 
-**处置**：修复后 `npm run tauri:dev` 正常显示。若仍异常，再走 Windows 真机（WebView2）验证——目标平台不受此问题影响。
+**处置**：按上两步修复后 `npm run tauri:dev` 正常显示。若仍异常，改用 Windows 真机（WebView2）验证——目标平台不受此问题影响。
 
 **附：WSLg 多显示器窗口跑到外接屏**：window-state 插件会保存并恢复跨屏位置；窗口“消失”时先 `rm ~/.config/com.texpresso.app/.window-state.json`。真机多显示器拔出后同样可能出现，后续可加“位置越界则居中”保护。
 
 ## GUI/端到端测试链路（WebDriver + pc-control，2026-08）
 
-**方案**：`test_file/e2e/` 用 **WebdriverIO**（`browserName:'wry'` + `tauri:options.application`）驱动 `tauri-driver`（中介）+ `msedgedriver`（Windows，需 `msedgedriver-tool` 安装并匹配 Edge 版本，`--native-driver` 指路径）。`src/App.vue` 加了 `VITE_TEXPRESSO_PROJECT` 钩子自动打开项目（绕过原生目录弹窗，WebDriver 无法驱动）；`src/components/PreviewPane.vue` 加了重载耗时插桩。
+**方案**：`test_file/e2e/` 用 **WebdriverIO**（`browserName:'wry'` + `tauri:options.application`）驱动 `tauri-driver`（中介）+ `msedgedriver`（Windows，需 `msedgedriver-tool` 安装并匹配 Edge 版本，`--native-driver` 指路径）。`src/App.vue` 提供 `VITE_TEXPRESSO_PROJECT` 钩子自动打开项目（绕过原生目录弹窗，WebDriver 无法驱动）；`PreviewPane.vue` 带重载耗时插桩。
 
 **关键教训（均实测）**：
 - **手动拉起 debug 二进制 ≠ 可用**：`npm run dev`（只起 vite）+ 手动 `target/debug/texpresso.exe`，前端**不渲染**（`button.btn.primary` 找不到）。必须 **`npm run tauri dev`**（正确构建 Rust + 起 vite + 真正调起 Tauri 窗口），问题即消失。
@@ -50,7 +50,7 @@
 
 **注意**：`test_file/e2e/drivers/`（msedgedriver 二进制）与 `test_file/e2e/node_modules/` 已 gitignore。
 
-## 真机验收清单（tauri server MCP 驱动，2026-09）
+## 真机验收清单（tauri server MCP 驱动）
 
 > 用途：把"改完代码怎么确认真机没问题"固化成可重复的步骤。**性能基准的编译侧由 `scripts/bench.mjs` 自动测**，
 > 本清单负责**只有真实窗口才能验的部分**（预览耗时、点击链路、目视渲染）。前置：`npm run tauri dev`（需提权）
@@ -81,7 +81,7 @@
 (() => JSON.stringify(window.__previewLastReload))()
 ```
 
-### 如何在应用内输入文字（Monaco，2026-09 实测）
+### 如何在应用内输入文字（Monaco）
 
 **问题**：`webview_keyboard action=type/press` 敲不进 Monaco（返回 `Illegal invocation`，或按了 Ctrl+End/Enter 后光标纹丝不动）；Monaco 已启用 **EditContext API**（`typeof window.EditContext !== "undefined"`），`textarea` + `document.execCommand("insertText")` 也无效（返回 `false`、textarea 仍为空）。**Monaco 实例也没挂在 window 上**（无 `window.monaco`）。
 
@@ -119,7 +119,7 @@ new MutationObserver(() => { const s = snap(); const l = log[log.length-1];
 
 **编译产物的时间戳也能当证据**：`tmp/main.fdb_latexmk` 的 mtime 只在 **latexmk** 跑过时才推进（Quick 单趟直调引擎不碰它），故「Quick 确实没走 latexmk」与「空闲收敛确实跑了 latexmk」都能用它与 `tmp/main.xdv` 的 mtime 对比来核实。
 
-### SyncTeX 精度怎么量（roadmap ⑤，一条命令）
+### SyncTeX 精度怎么量（一条命令）
 
 ```bash
 node scripts/synctex-report.mjs                    # 默认三组样本（multifile / beamer工程 / bench/large）
@@ -127,7 +127,7 @@ node scripts/synctex-report.mjs --tolerance=5      # 换个"跳到位"容差
 node scripts/synctex-report.mjs --projects=<dir> --recompile
 ```
 
-它按 `\section`/`\chapter`/`\frametitle`/`\begin{frame}`/`\label`/`\part` 取样本，逐点做「正向 → 反向」往返，报告成功率与行号差。**2026-09 基线**：正向/反向/同文件 34/34，跳到位 ≤3 行 31/34（≤5 行 34/34）；`large` 差恒 0、`multifile` 0–1 行、`beamer` 2–4 行。
+它按 `\section`/`\chapter`/`\frametitle`/`\begin{frame}`/`\label`/`\part` 取样本，逐点做「正向 → 反向」往返，报告成功率与行号差。**当前基线**：正向/反向/同文件 34/34、跳到位 ≤3 行 31/34（≤5 行 34/34）；分档与解释见 [design.md](./design.md) §预览。
 
 **beamer 的 2–4 行偏移不是解析 bug**：把取块规则从「第一个 `Output` 块」换成「最小 H」「首个 H≤40」，**往返结果完全一致**（三组样本逐一相同）——偏移来自 beamer/主题的 synctex 记录粒度。同理，`\only<n>` 覆盖层的内容在非本层页面上没有对应记录，反向映射天然不可确定。
 
@@ -136,23 +136,23 @@ node scripts/synctex-report.mjs --projects=<dir> --recompile
 **失败面排查顺序**：① dev stdout 有无 `打开项目` / `触发编译` / `构造编译请求`（后端链路）；
 ② `read_logs(console)` 有无前端异常；③ `ipc_get_backend_state` 确认连接的是本应用。
 
-## Rust 单测：`cargo test -p texpresso`（src-tauri）在 Windows 启动即失败（2026-08）
+## Rust 单测：`cargo test -p texpresso`（src-tauri）在 Windows 启动即失败
 
 **现象**：`cargo test -p texpresso --lib` 编译成功，但测试二进制**加载即退出**——`STATUS_ENTRYPOINT_NOT_FOUND (0xc0000139)`，任何测试都未运行。
 
 **根因**：`texpresso_lib` 链接了 tauri/wry 的 `webview2-com`。`cargo test` 的测试二进制不做 GUI 初始化，加载阶段解析 WebView2/webview2-com 失败（`STATUS_ENTRYPOINT_NOT_FOUND`，发生在任何测试运行前）。**与业务代码无关**；`cargo check -p texpresso --tests` 能正常通过（测试代码编译无误）；本机 WebView2 Runtime 已安装（151.0.4129.107），排除运行时缺失。
 
 **处置**：
-- 核心 crate 单测走 `cargo test -p texpresso-core`（无 Tauri 依赖，运行正常，CI 用这个验证纯逻辑；本轮 97 pass）。
-- 前端单测走 `npm run test`（vitest，需提权 `danger-full-access` 跑 esbuild worker；本轮 28 pass）。
-- src-tauri 接线层的纯逻辑单测（`fs_impl::strip_verbatim`、`runner::root_stem/latexmk_input`、`watch::should_process/is_structural_event/normalize_event_paths`、`storage::effective/is_self_write/project_overrides_path`、`commands::pdf_path_for_root`）**可编译、逻辑已验证**，但本机无法直接 `cargo test` 执行；在能解析 WebView2 的 Windows 环境（真机宿主）再运行。
-- **2026-09 更新（ADR-0010，基础设施层拆出后）**：上面这些用例中的绝大多数已随实现迁到 `texpresso-infra`，**本机可正常运行**——`cargo test -p texpresso-infra`（17 单测）+ `cargo test -p texpresso-infra -- --ignored`（6 个真实 latexmk/synctex 集成用例：成功、内容错误、超时树杀、取消、中文路径双向），均已实测通过。仍留在 src-tauri 的只剩 `commands::pdf_path_for_root`（纯函数，仍受同一 WebView2 链接限制）。
-- **已穷尽尝试仍失败**：把 `webview2-com-sys-*/out/{arch}/WebView2Loader.dll` 拷到 `target/debug` **及 `target/debug/deps`（测试 exe 同目录）** 并加入 PATH；`dumpbin /imports` 显示静态导入均为系统 DLL、延迟导入仅 `VCRUNTIME140.dll`；`danger-full-access` 提权运行——均仍 `STATUS_ENTRYPOINT_NOT_FOUND`。**非沙箱权限、非 PATH、非运行时缺失**，是 Tauri v2 shell crate 测试二进制的已知 Windows 工具链限制。（2026-09 复核一次：想把 `cargo test -p texpresso -- --ignored export_bindings` 当"无 GUI 生成 bindings"的捷径，同样是 `0xc0000139`。）
-- **推论（DTO 改动后怎么刷新 `src/bindings.ts`）**：既然 src-tauri 的测试二进制在本机跑不起来，`export_bindings` 这条捷径不可用 → **起一次 `npm run tauri dev`**：debug 构建启动时会自动重新导出 `src/bindings.ts`（`lib.rs` 里 `#[cfg(debug_assertions)]` 的 export）。本轮（㉘ 加 `draft` 字段）实测即如此，导出结果与手写预期一致。
 
-## 中文文件名/路径兼容性实测（2026-09，roadmap P0-①）
+- 纯逻辑单测走 `cargo test -p texpresso-core`（无 Tauri 依赖，运行正常，CI 用这个验证纯逻辑）。
+- 前端单测走 `npm run test`（vitest，需提权 `danger-full-access` 跑 esbuild worker）。
+- 基础设施层的用例（`fs` / `runner` / `watch` / `storage`）随 ADR-0010 迁到 `texpresso-infra` 后**本机可正常运行**：`cargo test -p texpresso-infra`（单测）+ `cargo test -p texpresso-infra -- --ignored`（真实 latexmk/synctex 集成用例：成功、内容错误、超时树杀、取消、中文路径双向）。仍留在 src-tauri 的只剩 `commands::pdf_path_for_root`（纯函数，受同一 WebView2 链接限制）。
+- **已穷尽尝试仍失败**：把 `webview2-com-sys-*/out/{arch}/WebView2Loader.dll` 拷到 `target/debug` **及 `target/debug/deps`（测试 exe 同目录）** 并加入 PATH；`dumpbin /imports` 显示静态导入均为系统 DLL、延迟导入仅 `VCRUNTIME140.dll`；`danger-full-access` 提权运行——均仍 `STATUS_ENTRYPOINT_NOT_FOUND`。**非沙箱权限、非 PATH、非运行时缺失**，是 Tauri v2 shell crate 测试二进制的已知 Windows 工具链限制。把 `cargo test -p texpresso -- --ignored export_bindings` 当"无 GUI 生成 bindings"的捷径同样不可行（`0xc0000139`）。
+- **推论（DTO 改动后怎么刷新 `src/bindings.ts`）**：`export_bindings` 这条捷径在本机不可用 → **起一次 `npm run tauri dev`**：debug 构建启动时会自动重新导出 `src/bindings.ts`（`lib.rs` 里 `#[cfg(debug_assertions)]` 的 export）。新增 DTO 字段时实测即如此，导出结果与手写预期一致。
 
-**总结论**：**文件名/路径层面的中文全链路可用**（无阻塞缺陷，回归测试已固化）；唯一实测出的真实缺陷**不在路径，而在日志编码**（见下节，已修复）。
+## 中文文件名/路径兼容性实测
+
+**总结论**：**文件名/路径层面的中文全链路可用**（无阻塞缺陷，回归测试已固化）；唯一实测出的真实缺陷**不在路径，而在日志编码**（见下节）。
 
 ### 实测环境与样本
 
@@ -172,9 +172,9 @@ node scripts/synctex-report.mjs --projects=<dir> --recompile
 | `canonicalize` + `\\?\` 剥离 | ✅ | `\\?\E:\项目\…` → `E:\项目\…`（既有 `strip_verbatim` 对中文安全） |
 | 中文应用配置目录 | ✅ | 模拟 `C:\Users\中文用户\AppData\…`：全局设置与项目覆盖 `.texpresso/settings.json` 均原子读写通过 |
 
-**关键编码事实（字节级实测，值得记住）**：`synctex` 的 stdout **恒为 UTF-8**（`中` = `E4 B8 AD`），**与代码页无关**——CP65001 与 CP936 下抓到的字节完全一致。故现有 `String::from_utf8_lossy(&out.stdout)` 的用法**正确**（此前怀疑它会按代码页输出，已证伪）。
+**关键编码事实（字节级实测，值得记住）**：`synctex` 的 stdout **恒为 UTF-8**（`中` = `E4 B8 AD`），**与代码页无关**——CP65001 与 CP936 下抓到的字节完全一致。故 `String::from_utf8_lossy(&out.stdout)` 的用法**正确**（曾怀疑它会按代码页输出——已证伪）。
 
-### 真实缺陷（已修复）：GBK 源文件 + pdflatex → `.log` 含非法 UTF-8 → 错误列表拿不到任何信息
+### 真实缺陷：GBK 源文件 + pdflatex → `.log` 含非法 UTF-8 → 错误列表拿不到任何信息
 
 **现象**：源 `.tex` 是 GBK 编码（中文用户遗留文件很常见）时，`.log` 可能**不是合法 UTF-8**，而 `runner` 用严格 `read_to_string` 读日志 → 读取失败 → 前端只拿到「编译失败且无法读取日志（…）：stream did not contain valid UTF-8」，**真正的 TeX 错误一条都看不到**——恰好击中调研里最高频的痛点（错误诊断）。
 
@@ -189,7 +189,7 @@ node scripts/synctex-report.mjs --projects=<dir> --recompile
 
 **修复后判据（实测）**：同一个非法日志 lossy 解码后，`! LaTeX Error: Invalid UTF-8 byte sequence.` 与 `l.3 ` 等 **ASCII 骨架完好**，`parse_log` 仍能给出消息 + 行号——诊断信息"有损"远好于"没有"。回归测试 `log_parser::decode_tests::invalid_bytes_do_not_lose_error_skeleton` 锁定该行为。
 
-**App 端到端复现与验证（已完成）**：夹具 `test_file/projects/中文GBK工程/`（gitignore，需重建）——`主文件.tex`（纯 ASCII）+ `子目录/gbk.tex`（**GBK 编码**，含 `\undefinedcommandhere`）+ `.texpresso/settings.json` 覆盖 `{"compile":{"engine":"pdflatex"}}`。步骤：
+**App 端到端复现与验证**：夹具 `test_file/projects/中文GBK工程/`（gitignore，需重建）——`主文件.tex`（纯 ASCII）+ `子目录/gbk.tex`（**GBK 编码**，含 `\undefinedcommandhere`）+ `.texpresso/settings.json` 覆盖 `{"compile":{"engine":"pdflatex"}}`。步骤：
 
 1. `VITE_TEXPRESSO_PROJECT=…\中文GBK工程 npm run tauri dev`；
 2. 触碰 `主文件.tex`（改 mtime）经 watch 触发编译；
@@ -202,26 +202,26 @@ DEBUG 构造编译请求: root=…\中文GBK工程\主文件.tex engine=PdfLaTeX
 DEBUG 编译失败：已从 .log 解析出错误条目 count=9 log=…\tmp\主文件.log
 ```
 
-即：非法 UTF-8 日志被容错解码后**成功解析出 9 条错误送达前端**。修复前该路径会退化为 `编译失败且无法读取日志（…）：stream did not contain valid UTF-8`（`warn!` 分支），错误列表**一条都没有**。该日志行为本次一并补上（此前编译失败在 stdout 完全不可见）。
+即：非法 UTF-8 日志被容错解码后**成功解析出 9 条错误送达前端**。修复前该路径会退化为 `编译失败且无法读取日志（…）：stream did not contain valid UTF-8`（`warn!` 分支），错误列表**一条都没有**；现在编译失败在 stdout 可见，便于排查。
 
 > 注：把"文件名编码"与"内容编码"两个变量隔离——根文件与子文件名均为 ASCII，GBK 只出现在子文件**内容**里；中文**文件名/路径**的验证由 `中文测试工程` 夹具覆盖。
 
-### GUI 目视验证（2026-09 补做，tauri server MCP 驱动真实窗口）—— ✅ 已完成
+### GUI 目视验证（tauri server MCP 驱动真实窗口）
 
-此前列为"未覆盖"的两项，已在 MCP 会话中用**截图 + DOM + 真实点击**补齐（夹具 `test_file/projects/中文测试工程`）：
+两项 GUI 目视项用**截图 + DOM + 真实点击**验证（夹具 `test_file/projects/中文测试工程`）：
 
 | 项 | 结果 | 证据 |
 |---|---|---|
 | **pdf.js 经 asset 协议加载中文路径 PDF 的渲染** | ✅ 通过 | `webview_screenshot`：标题「中文路径兼容性测试」、作者/日期、**目录三项中文条目**、章节正文与公式 `E = mc²` 全部正常渲染；3 页连续分页（`1 / 3`）；控制台实测 `[preview] reload#1 中文主文件.pdf pages=3 bytes=40648 fetch=9ms parse=32ms render=54ms total=94ms pagesRendered=3`——**fetch 走 asset 协议无 404/编码错误** |
 | **SyncTeX 反向跳转（PDF → 源码）** | ✅ 通过 | `webview_interact` 点 PDF 正文 → 编辑器切回 `中文主文件.tex` 且光标停在 **Ln 10**（`公式测试：$E = mc^2$。`），即点击的那句正文对应的源码行 |
 
-**顺带复现并确认一个已记录的特性**（~~非缺陷~~ → **2026-09 已修，roadmap ㉒**）：点击 PDF **目录区**会映射到生成文件 `中文主文件.toc`（当时表现为新开标签）。现在产品行为是：生成产物/项目外文件**一律不打开**，先就近回落真实源码（`y ±40/80pt` 探测），回落到就跳并提示「已回落到最近的源码」，落空则只给提示「此处来自自动生成的文件 …，没有对应的源码行」。中文文件名在两种情况下都正确解析——这也反证反向 SyncTeX 的中文链路是通的。。
+**点 PDF 目录区会映射到生成文件**（`中文主文件.toc`）：产品行为是生成产物/项目外文件**一律不打开**——先就近回落真实源码（`y ±40/80pt` 探测），回落到就跳并提示「已回落到最近的源码」，落空则只给提示「此处来自自动生成的文件 …，没有对应的源码行」。中文文件名在两种情况下都正确解析——这也反证反向 SyncTeX 的中文链路是通的。
 
-### MCP Bridge 插件升级 0.12 → 0.13（2026-09 实测，真机复验通过）
+### MCP Bridge 插件 0.13（版本上报与窗口工具的真机复验）
 
-`@hypothesi/tauri-mcp-server@0.13.0` 会对插件版本做 skew 检查；本项目插件此前 pin 在 `0.12`，故 `driver_session` 每次都回
+`@hypothesi/tauri-mcp-server@0.13.0` 会对应用侧插件做 skew 检查；插件低于 0.13 时 `driver_session` 报
 `The connected app cannot report its plugin version.`（0.12 的 `get_backend_state` 还没有 `bridge.pluginVersion` 字段）。
-升级 `src-tauri/Cargo.toml` → `tauri-plugin-mcp-bridge = "0.13"` 后逐项复验：
+本项目 `src-tauri/Cargo.toml` 用 `tauri-plugin-mcp-bridge = "0.13"`，复验项如下：
 
 | 项 | 结果 | 证据 |
 |---|---|---|
@@ -243,11 +243,11 @@ DEBUG 编译失败：已从 .log 解析出错误条目 count=9 log=…\tmp\主�
 
 ### 仍未覆盖 / 已知未修
 
-- **正向 SyncTeX 高亮**（源码 Ctrl+点击 → PDF 高亮）本次未目视：`webview_interact` 不支持带修饰键点击，Monaco 的 ctrl+click 需 OS 级按键（pc-control）或 MCP 会话补做。
-- **已知未修**：**编辑** GBK 源文件（`read_file` 严格 UTF-8）会失败并返回英文 IO 错误。本次范围是文件名/路径，未改该行为；若要支持"打开并转码显示 GBK 源文件"，需单独设计（含保存时的编码回写策略）。
-- 本机 `cargo test -p texpresso`（src-tauri）无法运行（见上一节），故当时 src-tauri 侧新增的中文用例（`fs_impl` / `runner` / `storage` / `commands`）**仅编译校验通过**（`cargo check -p texpresso --tests`）。**2026-09 更新**：随 ADR-0010 迁移后，`fs` / `runner` / `storage` 的中文用例已在 `texpresso-infra` 下实际运行通过（含 2 个需 latexmk 的 `#[ignore]` 集成用例）。
+- **正向 SyncTeX 高亮**（源码 Ctrl+点击 → PDF 高亮）：`webview_interact` 不支持带修饰键点击，做法是动态 import Monaco 实例后派发 `ctrlKey` 鼠标事件——见「真机验收清单」第 12 项。
+- **已知未修**：**编辑** GBK 源文件（`read_file` 严格 UTF-8）会失败并返回英文 IO 错误。若要支持"打开并转码显示 GBK 源文件"，需单独设计（含保存时的编码回写策略）。
+- 本机 `cargo test -p texpresso`（src-tauri）无法运行（见上一节），故 src-tauri 侧的中文用例只能以 `cargo check -p texpresso --tests` 编译校验；随 ADR-0010 迁移后，`fs` / `runner` / `storage` 的中文用例已在 `texpresso-infra` 下实际运行通过（含 2 个需 latexmk 的 `#[ignore]` 集成用例）。
 
-## `\include{子目录/文件}` + `-output-directory`：中间目录里必须先有同名子目录（2026-09，㉕ 调查中实测）
+## `\include{子目录/文件}` + `-output-directory`：中间目录里必须先有同名子目录
 
 **现象**：真实学位论文模板 `thesis-real-hithesis`（TeX Live 自带样例，已复制进 bench fixture）用产品完全相同的命令冷编译，跑约 **4 分钟**后在主文件第 106 行报错：
 
@@ -274,7 +274,7 @@ xelatex -interaction=nonstopmode -synctex=1 -output-directory=tmp main.tex   # m
 
 **对产品的两个直接结论**：
 
-1. **超时诊断必须先看日志里的致命错误**（㉕ 已实现）：这种"报错后不退出"的运行，产品只会走到超时；若只按"慢/卡住"提示，用户永远修不好。现在超时诊断会优先报日志里的那条错误，且**不给"提高超时"按钮**（提高超时救不了它）。
+1. **超时诊断必须先看日志里的致命错误**：这种"报错后不退出"的运行，产品只会走到超时；若只按"慢/卡住"提示，用户永远修不好。超时诊断因此优先报日志里的那条错误，且**不给"提高超时"按钮**（提高超时救不了它）。
 2. **可用绕过（已实测）**：把主文件里的 `\include{子目录/文件}` 改成 `\input{子目录/文件}`——`\input` 不写子文件 `.aux`，因此不需要 `tmp/子目录/`：
 
 ```powershell
@@ -284,11 +284,11 @@ xelatex -interaction=nonstopmode -synctex=1 -output-directory=tmp main.tex   # m
 
 诊断文案里已经写上这条建议（`DiagnosisKind::aux_write_failed`）。
 
-## 探针文档含中文时不能用 pdflatex（2026-09 实测；附一条被证伪的假设）
+## 探针文档含中文时不能用 pdflatex（附一条被证伪的假设）
 
 **现象**：用 PowerShell 生成探针 `.tex` 后 `latexmk -pdf` **exit 12**，文档内容看起来完全正常。
 
-**真实根因（已复核）**：探针里含**中文正文**，而 `-pdf`（pdflatex）不支持 CJK → 编译失败。换 `-xelatex` 即 exit 0。这与 P0-② 分析 §3.1 是同一个现象（引擎选错 = 首屏一堆不可读错误）。
+**真实根因**：探针里含**中文正文**，而 `-pdf`（pdflatex）不支持 CJK → 编译失败。换 `-xelatex` 即 exit 0。这与 P0-② 分析 §3.1 是同一个现象（引擎选错 = 首屏一堆不可读错误）。
 
 **⚠️ 被证伪的假设（记录以免重走）**：一度判断是 `Set-Content -Encoding UTF8` 写入了 **UTF-8 BOM**。实测证伪——
 

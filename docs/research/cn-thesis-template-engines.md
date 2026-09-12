@@ -168,7 +168,7 @@
   > 「This file (`README.txt') is *NOT* intended as the documentation for this package; please see the file `pkuthss.pdf' instead.」
   > 「Homepage: <https://gitea.com/CasperVector/pkuthss>」
   https://raw.githubusercontent.com/CasperVector/pkuthss/master/README.txt
-- **[推断]** 官方引擎要求写在 `pkuthss.pdf` 手册里（本次未抓取 PDF）。PKU 生态的其他分支（如 `iofu728/pkuthss`、`doubleZ0108/pkuthss-mac`）均属**第三方衍生**，不能当官方依据。
+- **[推断]** 官方引擎要求写在 `pkuthss.pdf` 手册里（本文未抓取 PDF）。PKU 生态的其他分支（如 `iofu728/pkuthss`、`doubleZ0108/pkuthss-mac`）均属**第三方衍生**，不能当官方依据。
 
 ### 3.8 BUCTthesis（北化）★CTAN（ctan.org/pkg/buctthesis）
 
@@ -355,7 +355,7 @@
 
 - **默认 XeLaTeX 的覆盖率 = 19/19 = 100%（实测样本口径）**
   - 判定标准：模板的**官方编译路径或默认配置**是否以 XeLaTeX 为主引擎。命中 = 19/19。
-  - 其中 **17/19** 是「官方文档或代码里明确出现 xelatex/XeTeX/XeCJK」（A 10 + B 4 + D 2 + ucasthesis 1）；剩下 2 个（pkuthss、sysu-thesis）只是**官方说明的载体本次没抓到**（PDF 手册 / GitLab wiki），而非「不是 XeLaTeX」。
+  - 其中 **17/19** 是「官方文档或代码里明确出现 xelatex/XeTeX/XeCJK」（A 10 + B 4 + D 2 + ucasthesis 1）；剩下 2 个（pkuthss、sysu-thesis）只是**官方说明的载体本文没抓到**（PDF 手册 / GitLab wiki），而非「不是 XeLaTeX」。
   - 即使按最保守口径（把两个未取证的模板当作未知并排除），XeLaTeX 覆盖 **17/17 = 100%**。
 - **反例（只能用 pdfLaTeX 或只能用 LuaLaTeX 的模板）：0 个。**
   - 没有任何模板要求「只能 pdfLaTeX」。唯一声称支持 pdfLaTeX 的是 ucasthesis，但它的默认脚本与默认参数仍是 **xelatex**，属于「多引擎」而非「pdfLaTeX 专用」。**[推断]** 原因是 2018 年后 ctex/xeCJK/fontspec 已成中文排版事实标准，pdfLaTeX + CJK 老路线只剩历史兼容价值。
@@ -392,7 +392,7 @@
 
 ## 6. 方法论备注
 
-- 本次所有引用均来自 `raw.githubusercontent.com` 的仓库原文（README / .dtx / .cls / Makefile / latexmkrc / .github/workflows / main.tex），URL 均在正文给出，可逐条复核。
-- `pkuthss` 的引擎说明写在 `pkuthss.pdf` 用户手册内，本次未抓取 PDF 文本，故标为「未找到」，未做任何推测性断言。
-- `sysu-thesis` 的编译说明托管在 GitLab wiki（`gitlab.com/sysu-gitlab/latex-group/thesis/wikis/home`），本次未抓取。
+- 本文所有引用均来自 `raw.githubusercontent.com` 的仓库原文（README / .dtx / .cls / Makefile / latexmkrc / .github/workflows / main.tex），URL 均在正文给出，可逐条复核。
+- `pkuthss` 的引擎说明写在 `pkuthss.pdf` 用户手册内，本文未抓取 PDF 文本，故标为「未找到」，未做任何推测性断言。
+- `sysu-thesis` 的编译说明托管在 GitLab wiki（`gitlab.com/sysu-gitlab/latex-group/thesis/wikis/home`），本文未抓取。
 - 所有 `[推断]` 标记项均为由代码/配置反推，**不可当作模板作者的官方声明**引用。

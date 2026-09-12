@@ -1,6 +1,6 @@
 # TeXPresso 架构设计（分层、接口、模块、技术栈）
 
-> 项目状态：**已实现**（Windows 首发 MVP 落地，迭代中）。
+> 项目状态：**已实现并迭代中**（Windows 首发 MVP）。
 > 上层设计见 [design.md](./design.md)，术语见根目录 [CONTEXT.md](../CONTEXT.md)，决策记录见 [adr/](./adr/)。
 
 ## 1. 分层总览
@@ -125,7 +125,7 @@ Cargo workspace 三 crate：ADR-0006 拆出 core，ADR-0010 再拆出 infra（�
 
 ```
 连续模式：输入 → Monaco 变更 → 前端防抖 500ms → save_all（自动保存全部脏文件，仅 continuous 模式）
-       → 磁盘变化 → notify 事件 → 调度器入队（合并队列吸收风暴）→ 编译
+       → 磁盘变化 → notify 事件 → 调度器入队（合并队列吸收风暴）→ 编译（编辑触发 = Quick 单趟）
 保存模式：编辑不自动写盘；Ctrl+S / 点「编译」/ 关标签 → flush()（save_all 全部脏文件）→ 同上
 手动编译：compile_now → 直接入队（无论有无变化；on_save 下点「编译」会先 flush 落盘）
 外部修改：notify → 入队（不依赖前端）
@@ -195,10 +195,10 @@ Ctrl+点击 → `synctex_forward` → { page, x, y } → PDF 高亮；PDF 点击
 ## 8. 工程基建
 
 - **Rust 测试**：cargo test——scheduler 用 fake CompileRunner 单测（队列合并/超时/重试/终止语义）；insta 快照——log_parser 用真实 latexmk 日志固化为用例；texpresso-infra 另有 `#[ignore]` 集成用例（真实 latexmk/synctex：成功、内容错误、超时树杀、取消、中文路径），跑法 `cargo test -p texpresso-infra -- --ignored`
-- **前端**：vitest（+ @vue/test-utils）——stores（project 路径归一化、editor 自保存过滤/冲突、useAutoSave 防抖）单测，`npm run test`；JSON 组件测后续补
+- **前端**：vitest（+ @vue/test-utils）——stores 与 composables（project 路径归一化、editor 自保存过滤/冲突、useAutoSave 防抖、useIdleConvergence、useSyncTex）与 `RootFilePicker` 组件单测，`npm run test`；其余组件测后续补
 - **CI（GitHub Actions，MVP 前即搭）**：cargo test + `vue-tsc --noEmit` + `npm run test`（前端单测）+ Windows runner `tauri build` 冒烟（顺带验证 NSIS 打包链路，覆盖 ADR-3）
 
 ## 9. 与上层设计的关系
 
 - 本文件是 design.md 之下的第二层：design.md 定产品语义（延迟预算、失败语义、MVP 边界），本文件定实现结构（分层、模块、接口、技术栈）
-- 后置未决清单以 design.md 为准；本会话新增后置项：**LSP 具体集成**（monaco-languageclient 需专项研究，v1.1）、**冲突对话框**、**多面板布局**
+- 后置未决清单以 design.md 为准；函数级契约、已知债与验证入口见 [modules.md](./modules.md)（§12）。

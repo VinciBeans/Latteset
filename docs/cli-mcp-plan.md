@@ -1,6 +1,6 @@
 # CLI + MCP 交互接口 · 计划任务（仅记录）
 
-> 状态：**计划任务，仅记录，待实现**（2026-08 记录）。本文档是后续实现的唯一事实来源，对应 [design.md](./design.md) 后置/未决清单里的「CLI + MCP 交互接口」条目。
+> 状态：**计划任务，仅记录，待实现**。本文档是后续实现的唯一事实来源，对应 [design.md](./design.md) 后置/未决清单里的「CLI + MCP 交互接口」条目。
 > 目标：让 harness/Agent（如 DeepSeek Harness）**不经 GUI 直接调用** TexPresso 的编译/预览/SyncTeX 能力，形成「读 → 改 → 编译验证 → 修」闭环。
 > 标注约定：**已核实**=读过代码/文档确认；**分析结论**=设计推演，未实测；未标注规划项一律视为未实现。
 
@@ -33,9 +33,9 @@
 
 ### 1.3 可复用资产（核心资产已与 Tauri 解耦）
 
-- `texpresso-core`：scheduler（合并队列/失败语义/abort）、log_parser（`.log` → `ErrorEntry`）、project（文件收集/根文件探测/树排除）、settings（全局+覆盖合并）、synctex provider（CLI 封装）、**outline（2026-09-03：文档结构树解析 + `load` 编排，见 `crates/texpresso-core/src/outline.rs`；GUI 走 `get_outline` 命令且已改调）**。
-- `src-tauri/runner.rs`：`LatexmkRunner`（独立 `CompileRunner` trait 实现：tokio 进程、超时树杀、PDF 拷贝），headless 可直接实例化复用。
-- `src-tauri/storage.rs`：`SettingsStorage` 按路径构造（全局设置目录路径由调用方传入），headless 传相同路径即可；`is_self_write` 过滤当前**仅用于 settings.json**（watch.rs），`.tex` 无自写盘过滤。
+- `texpresso-core`：scheduler（合并队列/失败语义/abort）、log_parser（`.log` → `ErrorEntry` + 诊断）、project（文件收集/根文件探测/树排除）、settings（全局+覆盖合并）、synctex provider（CLI 封装）、**outline（文档结构树解析 + `load` 编排，见 `crates/texpresso-core/src/outline.rs`；GUI 走 `get_outline` 命令调它）**。
+- `crates/texpresso-infra/src/runner.rs`：`LatexmkRunner`（独立 `CompileRunner` trait 实现：tokio 进程、Quick 直调引擎 / Full latexmk、超时树杀、PDF 拷贝），headless 可直接实例化复用。
+- `crates/texpresso-infra/src/storage.rs`：`SettingsStorage` 按路径构造（全局设置目录路径由调用方传入），headless 传相同路径即可；`is_self_write` 过滤当前**仅用于 settings.json**（`watch.rs`），`.tex` 无自写盘过滤。
 
 ## 2. 工具清单（建议暴露，按 AI 价值排序）
 
@@ -53,7 +53,7 @@
 
 | CLI 子命令 | MCP tool | 说明 | 复用现状 |
 |---|---|---|---|
-| `outline` | `outline_get` | 文档结构树（章→节→行），AI 理解文档语义结构 | **已下沉 Rust**（2026-09-03：`texpresso-core::outline` + `get_outline` 命令，前端已改调——见 §4 P1-4；CLI 命令本体待实现） |
+| `outline` | `outline_get` | 文档结构树（章→节→行），AI 理解文档语义结构 | **已在 core**（`texpresso-core::outline` + `get_outline` 命令，前端已改调——见 §4 表后说明）；CLI 命令本体待实现 |
 | `list-files` | `project_tree` | 项目 `.tex` 文件树 | list_dir 已有 |
 | `read` / `write` | `file_read` / `file_write` | 读写文件 | read_file / save_all 已有 |
 | `synctex-forward` | `synctex_forward` | 源码位置 → PDF 页码 | 已有 |
@@ -75,7 +75,7 @@
 
 1. **命令式一次性语义**：AI 场景要 `compile --wait`（跑一次、拿结果），不需要合并队列/防抖/watch 那套 GUI 体验逻辑；直接复用 `LatexmkRunner` 跑一次完整编译（超时树杀仍在 runner 内），不走 scheduler 状态机——简单、结果确定。注：因此无「超时重试」语义（GUI scheduler 有），AI 场景可接受。
 2. **形态**：workspace 新增 `crates/texpresso-server`：服务层（无 tauri 依赖）+ `cli` 二进制 + `mcp` 二进制；MCP 用 **stdio 传输优先**（harness 本地拉起最简单）。headless setup 复用 fs/runner/synctex/storage 的构造（src-tauri `lib.rs` setup 参数化，不 spawn watch）。
-3. **outline 下沉**：~~把 `src/stores/outline.ts` 的 `parseFile/buildTree` 移植到 Rust（服务层）~~（**已完成** 2026-09-03：`texpresso-core::outline`，GUI 前端已改调 `get_outline` 命令，无双实现；`src/texParse.ts` 仍供折叠/补全使用）。
+3. **outline 下沉**：解析已在 Rust 服务层（`texpresso-core::outline`），GUI 前端改调 `get_outline` 命令、无双实现；`src/texParse.ts` 仍供折叠/补全使用。
 
 ## 4. 优化点：小改动换 CLI/MCP 强化，GUI 零/极小影响（分析结论）
 
@@ -93,8 +93,9 @@
 
 | # | 改动点 | GUI 影响 | CLI/MCP 收益 |
 |---|---|---|---|
-| 4 | outline 移植 Rust（core）+ 单测，前端改调 | **已完成**（2026-09-03）：core `outline` 模块 + `get_outline` 命令，前端 stores/outline.ts 改调；OutlinePane/events/App 零改动；core 单测 109 项含对拍用例 | `outline` 直接复用（CLI 命令本体仍待实现） |
 | 5 | Emitter 三回调改多订阅者 fanout（tauri 注册为第一路） | 零（第一路照发） | MCP notifications（编译/PDF/错误推送）；**建议后置**，一期用快照轮询 |
+
+> P1-4（outline 下沉 Rust）已落地：core `outline` 模块 + `get_outline` 命令，前端 `stores/outline.ts` 改调，`OutlinePane` / `events.ts` / `App.vue` 零改动，core 单测含与旧前端实现的对拍用例（见 [modules.md](./modules.md) §3.5）；CLI 侧 `outline` 子命令本体仍待实现。
 
 ### 注意事项（形态定案前不动代码）
 
@@ -105,4 +106,4 @@
 ### 落地顺序
 
 1. P0-1（elapsed + 快照）→ 2. P0-2（run_once + headless setup）→ 3. P0-3（路径逻辑下沉 core）——三步做完，`open`/`compile --wait`/`status`/`errors`/`synctex` 即低成本成立；
-4. P1-4（outline）与 P1-5（fanout）按实际需求跟进。
+2. P1-5（fanout）按实际需求跟进（P1-4 已完成，见 §4 表后说明）。

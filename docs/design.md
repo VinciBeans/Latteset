@@ -1,7 +1,7 @@
 # TeXPresso 设计文档
 
-> 项目状态：**已实现**（Windows 首发 MVP 落地：项目/编辑/编译调度/错误去重/连续 PDF 预览+SyncTeX/设置页均可用；迭代中，实测与优化结论见下）。
-> 术语见根目录 [CONTEXT.md](../CONTEXT.md)，决策记录见 [ADR 目录](./adr/)，分层/接口/技术栈见 [architecture.md](./architecture.md)，函数级设计见 [modules.md](./modules.md)。
+> 项目状态：**已实现并迭代中**（Windows 首发 MVP：项目/编辑/编译调度/错误去重/连续 PDF 预览 + SyncTeX/设置页均可用）。
+> 术语见根目录 [CONTEXT.md](../CONTEXT.md)，决策记录见 [ADR 目录](./adr/)，分层/接口/技术栈见 [architecture.md](./architecture.md)，函数级设计与实现契约见 [modules.md](./modules.md)。
 
 ## 产品定位
 
@@ -44,17 +44,17 @@
 
 | 情形 | 处理 |
 |---|---|
-| **超时**（单次 >120s，可配置，上限 1800s） | 队列有等待 → 直接执行等待条目；无等待 → **立即失败并给出证据化诊断**（roadmap ㉕：**不再静默重试**，改为错误列表里一条「为什么慢/疑似卡住 + 怎么办」，带**一键「提高到 Ns 并重试」**） |
+| **超时**（单次 >120s，可配置，上限 1800s） | 队列有等待 → 直接执行等待条目；无等待 → **立即失败，不重试**：错误列表给一条证据化诊断（为什么慢 / 疑似卡住 + 怎么办）+ **一键「提高到 Ns 并重试」**（判据见 [modules.md](./modules.md) §4.2） |
 | **内容错误**（源码问题，进程非零退出） | 不重试；队列有等待 → 直接执行最新版本；无 → 展示错误信息 |
 | **手动终止**（用户点停止） | 终止运行中编译 + **清空队列**中的等待条目 |
 
-**超时为什么不自动重试（2026-09，roadmap ㉕ 改）**：同一份源码在同一个上限下重跑几乎必然再次超时（TeX 运行确定性强），而代价是**再等一个完整超时窗口**——默认 120s 下用户要等 240s 才看到任何提示，且超时此前**不进错误列表**（状态栏只有「失败 · 超时」，没有任何可操作信息）。现在改为立刻失败 + 证据化诊断，把"重试"从调度器静默行为变成用户可见、可调参的动作。诊断的证据与判据见 [modules.md](./modules.md) §12「编译超时诊断」。
+**超时为什么不重试**：同一份源码在同一个上限下重跑几乎必然再次超时（TeX 运行确定性强），代价却是**再等一个完整超时窗口**——默认 120s 下用户要等 240s 才看到任何提示。所以「重试」不进调度器，而是变成用户可见、可调参的动作：立刻失败 + 证据化诊断 + 一键提高上限。诊断的证据与判据见 [modules.md](./modules.md) §4.2。
 
 ### 错误列表
 
 - 编译中清空 → 失败展示最新错误 → 点击跳转源码行
 - 依据 .log 解析（结构化错误提取）
-- **诊断**（2026-09，roadmap ④）：把原始报错翻译成「原因 + 怎么改」——缺包/缺字体/引擎不匹配/语法类等 22 类（㉕ 追加超时 2 类 + 写不出中间文件 1 类），匹配不到则退回原文 + 行号（不猜）。这是本产品对"错误信息不可读"这一行业最高频痛点的正面回应；**替代了原「引擎自动推断」后置项**（⑲ 实测：默认 XeLaTeX 在 19 个真实模板里选错 0 次，无需推断，只需在用户选错时明确提示怎么改）。见 [modules.md](./modules.md) §12。
+- **诊断**：把原始报错翻译成「原因 + 怎么改」——22 类（缺包/缺类/缺文件/缺字体/字体集/引擎不匹配/不支持的引擎/语法与结构类/超时两类/写不出中间文件/宏包与 LaTeX 兜底），匹配不到则退回原文 + 行号（**不猜**）。这是对"错误信息不可读"这一行业最高频痛点的正面回应。**不做引擎自动推断**：19 个真实模板双引擎实测中 **0 例**因默认 XeLaTeX 选错，正确替代是"不猜，但选错时明确告诉用户怎么改"（见 [research/template-corpus-survey.md](./research/template-corpus-survey.md)）。契约与语料见 [modules.md](./modules.md) §4.1。
 
 ### 延迟预算（产品约束，验收标准）
 
@@ -69,13 +69,13 @@
 | `multifile`（原 `000test`，**单文件前身**，重测前） | 4.06s | 2.02s |
 | 重多文件（ctexbook+hyperref+toc+公式，20 章） | 3.74s | 2.29s |
 
-> 注：`test_file/projects/multifile/`（原 `000test/`）已重构为**多文件 + 跨文件引用**工程（ctexbook、`\include` 组织 chapters/sections，15 页），上表 `multifile` 行的数值为重构前的单文件版测量，仅供量级参考；多文件工程编译与引用解析已在 [modules.md](./modules.md) §12 / e2e 中验证。
+> 注：上表 `multifile` 行测的是该工程**单文件版**（重构为多文件 + 跨文件引用工程之前），仅供量级参考；现行 `test_file/projects/multifile/` 是 ctexbook + `\include` 组织的 15 页多文件工程，数值见下方基准表。
 
 **结构性结论（关键）**：latexmk 的"增量" = 对**整份文档**重跑一次 xelatex 单遍；它优化的是"跑几遍"（引用/`\bib` 多次 pass、`\ref` 未变就少跑），**不是跳过未改动文件**。编辑任何子文件都触发整份重排——这是 **xelatex 引擎特性**，自研驱动无法突破。→ **确认暂不过 latexmk**（见 ADR-0005）。
 
 对照预算：中小文档增量 1.5–2.3s，落在"大文档 3s 优秀"线内/附近；小文档接近及格线；**真正大文档（数百页/重图/bib）单遍必然超预算，属引擎上限**（后续文档预算说明需如实标注）。
 
-### 基准脚本与 2026-09 一轮实测（roadmap ③：性能基准与回归基建）
+### 基准脚本与实测基线（roadmap ③：性能基准与回归基建）
 
 **工具**（fixture 不入库，入库的是脚本——`test_file/projects/` 已 gitignore）：
 
@@ -106,14 +106,14 @@ node scripts/bench.mjs --with-real         # 追加真实模板档（依赖本�
 **三条结论**：
 
 1. **瓶颈在小文档的固定开销，不在大文档**。`tiny`（6 行）与 `large`（约 300 页）的编辑触发只差 2.5×（1625ms vs 4104ms），而内容量差两个数量级——说明 ≈1.5s 的固定开销（latexmk 启动 + xelatex 启动 + 字体加载）在主导小文档；`noop`（latexmk 判定最新、什么都不做）也要 **~0.5s**，这是任何触发的地板。
-2. **三档小文档全部超预算**，且按 design.md 的分类口径（"一次完整编译 ≤2s"）本机**已几乎不存在"小文档"**——连 6 行的 `tiny` 冷编译都要 2.3s。→ **预算口径需复核**：是放宽小文档预算，还是改为"相对基线/回归容忍度"（例如以 `tiny` 的 1.6s 为地板、其他档按倍数判定）。本轮不做结论，但数据已就位。
-3. **真实学位论文远超产品默认超时**：`thesis-real-hithesis` 冷编译 **>240s 未收敛**（另一次观察 >600s），而默认 `compile.timeout_secs = 120` → **必超时失败**。这是 roadmap ㉕ 的直接输入（合成 `thesis` 档 9.4s 是"论文规模"的下界，真实模板才是上界）。
-   - **2026-09 复核（㉕ 实施期间实测，结论修正）**：用产品完全相同的命令重跑该模板，它在 ~4 分钟后**不是"慢"而是报错**：`! I can't write on file 'body/introduction.aux'`（`\include{body/...}` 需要 `tmp/body/` 存在，而它不存在）→ `Emergency stop`，随后 **latexmk/perl 进程挂住（10 分钟零 CPU）**。所以该模板当前的阻塞点是**模板自带 latexmkrc × 本产品 `-outdir=tmp` 约定**（roadmap ㉖），**不是**超时——把它调高超时也编不过。上表 ">240s/ >600s 未收敛" 的记录需在 ㉖ 修好后重新测量。
-   - **超时上限已随之放宽**：`compile.timeout_secs` 范围 5..=600 → **5..=1800**（600 的上限本身就是"调到顶也编不过"的死路）。
+2. **三档小文档全部超预算**，且按本文的分类口径（"一次完整编译 ≤2s"）本机**已几乎不存在"小文档"**——连 6 行的 `tiny` 冷编译都要 2.3s。→ **预算口径待复核**：是放宽小文档预算，还是改为"相对基线/回归容忍度"（例如以 `tiny` 的 1.6s 为地板、其他档按倍数判定）。数据已就位（见 [modules.md](./modules.md) §12.1）。
+3. **真实学位论文远超产品默认超时**：`thesis-real-hithesis` 冷编译 **>240s 未收敛**（另一次观察 >600s），而默认 `compile.timeout_secs = 120` → **必超时失败**（合成 `thesis` 档 9.4s 是"论文规模"的下界，真实模板才是上界）。
+   - **该模板的阻塞点不是慢，是报错**：用产品完全相同的命令重跑，它在 ~4 分钟后报 `! I can't write on file 'body/introduction.aux'`（`\include{body/...}` 需要 `tmp/body/` 存在，而它不存在）→ `Emergency stop`，随后 **latexmk/perl 进程挂住（10 分钟零 CPU）**。所以阻塞点是**模板自带 latexmkrc × 本产品 `-outdir=tmp` 约定**（roadmap ㉖）——调高超时也编不过；">240s 未收敛"的记录需在 ㉖ 修好后重测（见 [modules.md](./modules.md) §12.1）。
+   - **超时上限按真实论文规模放宽**：`compile.timeout_secs` 范围 **5..=1800**（上限 600 是"调到顶也编不过"的死路）。
 
 > 复现性：两轮独立运行的关键档差异 <5%（tiny edit 1617→1625ms、multifile edit 2461→2463ms），脚本可作回归基线。
 
-#### 附：latexmk 开销拆解与「编辑期单趟」收益（roadmap ㉘ 评估，2026-09）
+#### 附：latexmk 开销拆解与「编辑期单趟」收益（roadmap ㉘）
 
 `node scripts/bench-single-pass.mjs`（六档 × 3 次、A/B 交替消序）测「完整 latexmk」vs「单趟 xelatex」：
 
@@ -132,31 +132,36 @@ node scripts/bench.mjs --with-real         # 追加真实模板档（依赖本�
 
 **代价（已量化）**：单趟的目录/交叉引用页码**落后一趟**。实测 `multifile` 插 400 行后单趟运行，`.toc` 里「第四章」页码由 **29 → 41**，即该趟 PDF 显示的是旧值 29；再跑一趟 `.toc` 稳定（「单趟旧、两趟收敛」）。
 
-**已实现（2026-09，roadmap ㉘）**：编辑触发走 `CompileKind::Quick`（直调 `xelatex -interaction=nonstopmode -synctex=1 -output-directory=tmp`，不经 latexmk）；首编 / 手动「编译」/ 空闲收敛走 `CompileKind::Full`（完整 latexmk）。**实测落点**：
-- **无构建产物自动升级**：Quick 请求但 `tmp/<stem>.aux` 不存在 → runner 自动升级为 Full（否则单趟引用全是 `??`）。集成用例 `quick_upgrades_to_full_without_artifacts`（真实引擎）断言升级后 `.log` 无 `There were undefined references`。
-- **状态事件报"实际执行强度"**：`CompileStatusDto.draft` 由 `CompileOutcome::Success { kind }` 决定，故首编被升级为 Full 时**不会**误报草稿（否则前端会多提示一次"引用待更新"并多跑一次无意义收敛）。
-- **空闲收敛**：前端 `useIdleConvergence` 在「成功且是草稿」后 **2000ms** 无编辑（任何编辑/新编译都取消）时调 `compile_now` → Full。延时取 2s 而非沿用 500ms 防抖：调度器合并队列只留一个待办，正在跑的 Full 会把紧随其后的编辑态 Quick 堵在队列里（大项目 Full ≈4s），反而拖慢"编辑→出图"。
-- **真机时间线（tauri server MCP 驱动，`multifile`）**：就绪 → 排版中(t=1980) → 就绪+**引用待更新**(t=6780) → 排版中(t=8786，Δ=**2006ms**，即空闲收敛的 Full) → 就绪、提示消失(t=12169)。同一 cycle 内 `tmp/main.fdb_latexmk` 由收敛那一趟更新（晚于 Quick 趟），证明收敛**真的跑了 latexmk**、不是空转跳过。手动「编译」日志为 `手动编译` + `Full 编译（完整 latexmk 收敛）`。
-- **UI**：状态栏在草稿期间显示琥珀色「引用待更新」；`queued/running/failed` 不改该标记（屏幕上的 PDF 仍是旧的，失败不产出新 PDF）。
-- **Quick 真的不经 latexmk**（集成用例断言）：跑完 Quick 后 `tmp/main.fdb_latexmk` 的 mtime **不变**。
+**落地形态**（实现契约见 [modules.md](./modules.md) §2.4 / §2.6 / §9.3）：
 
-**未验证**：bib/biber 场景下单趟的可用性（现有 fixture 编辑期未触发 bibtex；收敛兜底应能覆盖，但未见实测）。
+- 编辑触发走 `CompileKind::Quick`（直调 `xelatex -interaction=nonstopmode -synctex=1 -output-directory=tmp`，不经 latexmk）；首编、手动「编译」、空闲收敛走 `CompileKind::Full`（完整 latexmk）。
+- **无构建产物自动升级**：`tmp/<stem>.aux` 不存在时单趟会让引用全成 `??`，runner 探测后自动升级为 Full，并把**实际**执行的强度回传（升级趟不误报草稿）。
+- **空闲收敛**：成功且为草稿后停手 **2000ms**（任何编辑或新编译都取消）补一次 Full，把目录/交叉引用页码追上；期间状态栏显示琥珀色「引用待更新」，只由下一次成功且为 Full 的编译清除（失败与运行中都不清——屏幕上的 PDF 没变）。
+- **真机证据**（tauri server MCP，`multifile`）：一个 cycle 内 就绪 → 排版中 → 就绪 +「引用待更新」→ **Δ≈2.0s** 后再次排版中（收敛的 Full）→ 就绪、提示消失；`tmp/main.fdb_latexmk` 由收敛那一趟更新（晚于 Quick 趟）而 Quick 趟不动它——确证收敛真的跑了 latexmk、Quick 真的没跑。
+- **未验证**：bib/biber 场景下编辑期单趟的可用性（现有 fixture 编辑期不触发 bibtex；收敛兜底应能覆盖，但没有实测结论）。
 
-**端到端延迟**（编辑 → PDF 刷新 ≈ 防抖 500ms + latexmk + pdf.js 重载）：`multifile` 重载实测 `fetch≈7ms / parse≈103ms / render≈320ms / total≈400–450ms` → **render 占 ~75% 是瓶颈**（`canvasEpoch` 整页 canvas 重建 + 视口重绘 + 二次 `renderNearViewport`）。**A/B 优化已落地**（分页 DOM 虚拟化 + 同文件重载复用 canvas、仅缩放/换文档才重建）——见 [modules.md](./modules.md) §12。
+#### 预览重载实测（`multifile`、31 页 `benchmark`）
 
-**A/B 优化后真实窗口复测（2026-08-25，tauri server MCP 驱动）**：`npm run tauri dev` + `VITE_TEXPRESSO_PROJECT=…/test_file/projects/multifile` 自动开项目 → 点「编译」→ `main.pdf`(3 页/108KB) 重载。**像素级视觉确认通过**（标题页/目录/正文正常，无黑屏/文字反转——此前受限点已解决）。**插桩修正**：把 `render` 从 setup 时间改为等挂载窗口渲染链落盘后的真实 canvas 绘制耗时（原 `pagesRendered` 恒 0）。**实测**：同文件复用 `fetch≈9–10ms / parse≈30ms / render≈59ms / total≈98–100ms / pagesRendered=2`；首次换文档 `render≈77ms / total≈112ms / pagesRendered=3`。**render 占总耗时 ~59%，仍为 PDF 重载开销主因**（一致结论）；3 页小文档总耗时 ~100ms 远低于延迟预算（先前 `render≈320ms/total≈400–450ms` 是 12 页文档数值，非同比）。
+**口径**：编辑 → PDF 刷新 ≈ 防抖 500ms + 编译 + pdf.js 重载；`fetch/parse/render/total` 由 `window.__previewLastReload` 插桩读出，其中 `render` = 本次挂载窗口渲染链全部落盘后的**真实 canvas 绘制耗时**（不是 setup 时间）。
 
-**受控 A/B 对比（2026-08-25，同一 31 页 `benchmark`）**：重构前全量挂载 31 canvas，重构后虚拟化只挂 ~7 canvas（**DOM 节点 ~4.4× 减少**）；同文件复用路径 `render 49→21–28ms / total 89→62–69ms / pagesRendered 9→2`。DOM 减量为无歧义收益；render/total 下降含「渲染页数变少」因素，但同文档总耗时仍明显下降。`test_file/projects/benchmark/` 为基准工程（未提交）。
+| 场景 | fetch | parse | render | total | 备注 |
+|---|---|---|---|---|---|
+| `multifile` 同文件重载（3 页 / 108KB） | 9–10ms | 30ms | 59ms | **98–100ms** | 复用 canvas，`pagesRendered=2` |
+| `multifile` 首次换文档 | 6ms | 29ms | 77ms | **112ms** | `pagesRendered=3` |
+| 31 页 `benchmark` 同文件 | — | — | 21–28ms | **62–69ms** | 对比全量挂载版：render 49ms / total 89ms / `pagesRendered` 9→2 |
+
+- **render 是 PDF 重载开销主因**（占总耗时 ~59%）：视口重绘 + 二次 `renderNearViewport`（分页虚拟化前还含整页 canvas DOM 重建）。分页 DOM 虚拟化把 DOM 节点从 31 降到 ~7 个 canvas（**~4.4× 减少**），同文件内容重载复用 canvas、仅缩放/换文档才重建——契约见 [modules.md](./modules.md) §9.4。31 页那行的 render/total 下降含「渲染页数变少（9→2）」因素，DOM 减量才是无歧义收益。
+- 3 页文档总耗时 ~100ms 远低于延迟预算；更早一次 12 页 `multifile` 的 `render≈320ms / total≈400–450ms` 是旧插桩数值，与上表不可直接比较。
+- `test_file/projects/benchmark/` 为基准工程（未提交）。
 
 ## 预览
 
 - **内嵌 PDF 面板**（pdf.js）：编译成功后自动刷新、保持滚动位置（v1 必须）
 - **SyncTeX 双向**（v1）：源码 Ctrl+点击 → PDF 高亮；PDF 点击 → 跳回源码
-  - **加固与实测（2026-09，roadmap ⑤/㉒）**：
-    - **只跳真实源码**：`synctex edit` 在生成内容上会返回生成它的中间文件（实测点目录区得 `tmp/main.toc:15`）。产品行为：**不打开生成文件**，先在附近小范围探测（y ±40/80pt）**回落到最近的真实源码**并提示"已回落"；仍无源码则忽略跳转、只提示（"此处来自自动生成的文件 main.toc…"）。项目外文件（`article.cls` 等）同理给提示。
-    - **同步提示可见**：反向/正向失败、以及"没有可跳转源码"都在预览工具条给一句提示（5s 自动消失）。此前这些情况只有 `console.error`——用户看到的是"点了没反应"。
-    - **竞争重试**：编译进行中 `.synctex.gz` 正被重写（引擎先写 `main.synctex(busy)` 再改名），失败按 100/200/300ms 退避重试。
-    - **实测精度（`node scripts/synctex-report.mjs`，三组样本 34 个样本点）**：正向 **34/34**、反向 **34/34**、往返同文件 **34/34**；往返行号差 ≤3 行 **31/34（91.2%）**、≤5 行 **34/34**。分档：`large`（125 页）差恒为 **0**、`multifile` **0–1 行**、`beamer` **2–4 行**（帧边界 `\begin{frame}`/`\label` 处最松）。**块选择启发式已证伪**：first / 最小 H / "文本行"三种取块规则给出**完全相同**的往返结果 → 保留"取第一个完整块"（beamer 的 2–4 行偏移是 beamer 记录粒度的固有现象，不是我们的取块策略造成的）。
+  - **只跳真实源码**：`synctex edit` 在生成内容上会返回生成它的中间文件（实测点目录区得 `tmp/main.toc:15`）。产品行为：**不打开生成文件**，先在附近小范围探测（y ±40/80pt）**回落到最近的真实源码**并提示"已回落"；仍无源码则忽略跳转、只提示（"此处来自自动生成的文件 main.toc…"）。项目外文件（`article.cls` 等）同理给提示。命令层策略与纯函数分类见 [modules.md](./modules.md) §5。
+  - **同步提示可见**：反向/正向失败、以及"没有可跳转源码"都在预览工具条给一句提示（5s 自动消失）——否则用户看到的是"点了没反应"（错误只在 `console.error` 里）。
+  - **竞争重试**：编译进行中 `.synctex.gz` 正被重写（引擎先写 `main.synctex(busy)` 再改名），失败按 100/200/300ms 退避重试。
+  - **实测精度（`node scripts/synctex-report.mjs`，三组样本 34 个样本点）**：正向 **34/34**、反向 **34/34**、往返同文件 **34/34**；往返行号差 ≤3 行 **31/34（91.2%）**、≤5 行 **34/34**。分档：`large`（125 页）差恒为 **0**、`multifile` **0–1 行**、`beamer` **2–4 行**（帧边界 `\begin{frame}`/`\label` 处最松）。**取块启发式已排除**：first / 最小 H / "文本行"三种取块规则给出**完全相同**的往返结果 → 保留"取第一个完整块"，beamer 的 2–4 行偏移是 beamer 记录粒度的固有现象。
 - 外部 PDF 查看器支持：后续版本
 
 ## 工具链
@@ -167,14 +172,17 @@ node scripts/bench.mjs --with-real         # 追加真实模板档（依赖本�
 
 ## 编辑器
 
-- **v1（已实现）**：语法高亮（自研 Monarch）、查找替换、错误跳转、**中文 IME 兼容验证**（Windows 首发，webview 组合输入是已知坑，e2e 有实操要点见 troubleshooting）
-- **v1.1（规划）**：texlab LSP、~~折叠~~（**已实现** 2026-08-26：`\begin{env}`/`\end{env}` 环境块折叠，见 modules.md §12）、~~多光标~~（**已实现**：Alt+点击/Alt+方向，Ctrl+D 加选；多光标修饰符设为 alt 避免与 SyncTeX Ctrl+点击冲突）、~~代码片段~~（**已实现**：LaTeX CompletionItemProvider，覆盖文档/环境/章节/数学/格式，Tab 展开）、拼写检查
+- **v1（已实现）**：语法高亮（自研 Monarch）、查找替换、错误跳转、**中文 IME 兼容验证**（Windows 首发，webview 组合输入是已知坑，实操要点见 troubleshooting）
+- **语言特性（已实现）**：环境块折叠（`\begin{env}`/`\end{env}`，含嵌套）、多光标（Alt+点击/Alt+方向，Ctrl+D 加选；修饰符用 alt 以免与 SyncTeX 的 Ctrl+点击冲突）、代码片段（LaTeX CompletionItemProvider，覆盖文档骨架/环境/章节/数学/格式/文件操作，Tab 展开）。解析与折叠语义见 [modules.md](./modules.md) §9.5
+- **v1.1（规划）**：texlab LSP、拼写检查
 
 ## MVP 边界
 
 **MVP 包含**：项目打开 + 文件树 + 标签页 + 编辑（高亮/查找替换）+ 双模式编译 + 调度全套（队列/超时/手动终止/错误分类）+ 错误列表跳转 + 内嵌预览（含 SyncTeX）。
 
-**MVP 后（已完成/规划）**：~~增量编译~~（**已实测**：latexmk 增量=整份文档单遍重排，属引擎上限，**暂不过 latexmk**，见 ADR-0005）、~~设置页~~（已完成 v1）、~~错误列表去重/截断~~（已完成）、~~文件树增量刷新~~（已完成：内容修改跳过）、LSP（v1.1 规划）、折叠/多光标、外部查看器、TinyTeX 兜底、引擎语言自适应、自动更新。
+**MVP 后未做（规划中/后置）**：LSP（v1.1）、外部查看器、TinyTeX 兜底、自动更新、代码签名证书。已落地项见 [roadmap §1 基线](./research/tex-ide-roadmap-priority.md)。
+
+**已否决**：引擎语言自适应（见文末「后置/未决清单」）｜ 增量编译（latexmk 的"增量" = 整份文档重跑单遍，属引擎上限，见 ADR-0005）。
 
 ## 分发
 
@@ -198,4 +206,6 @@ node scripts/bench.mjs --with-real         # 追加真实模板档（依赖本�
 
 ## 后置/未决清单
 
-多窗口与多项目 ｜ 外部查看器 ｜ TinyTeX 捆绑 ｜ ~~引擎语言自适应规则~~（**已实测否决** 2026-09：19 个真实模板双引擎实测中 **0 例**因默认 XeLaTeX 选错、`\RequirePDFTeX` 为 0/7374、文档口径 19/19 兼容 XeLaTeX——"引擎自动推断"解决的是不存在的问题；唯一两种引擎都不行的是日文 `jsarticle`（需 platex），不在三引擎范围内。见 [research/template-corpus-survey.md](./research/template-corpus-survey.md)）｜ 自动更新 ｜ 代码签名证书 ｜ ~~增量编译具体策略~~（**已实测**：latexmk 增量=整份单遍重排，属引擎上限，暂不过——见 ADR-0005）｜ LSP 具体集成（v1.1 规划，monaco-languageclient 需专项研究）｜ ~~冲突对话框~~（**v1 以状态栏「外部修改」点击重载替代**，独立对话框后置）｜ ~~多面板布局~~（**后置**）｜ ~~页码跳转~~（**已实现** 2026-08-25：预览工具条输入页码跳转；并修复 SyncTeX 正向定位未加载页无法一次跳到位——见 modules.md §12）｜ **CLI + MCP 交互接口（计划任务，2026-08 记录，仅记录待实现）**：目标让 harness/Agent（如 DeepSeek Harness）不经 GUI 直接调用 TexPresso 的编译/预览/SyncTeX 能力——详见 [cli-mcp-plan.md](./cli-mcp-plan.md)（现状盘点、工具清单、P0/P1 优化点与落地顺序）
+多窗口与多项目 ｜ 外部查看器 ｜ TinyTeX 捆绑 ｜ 自动更新 ｜ 代码签名证书 ｜ 冲突对话框（v1 以状态栏「外部修改」点击重载替代，独立对话框后置）｜ 多面板布局 ｜ LSP 具体集成（v1.1 规划，monaco-languageclient 需专项研究）｜ **CLI + MCP 交互接口**（计划任务，仅记录、待实现）：目标让 harness/Agent（如 DeepSeek Harness）不经 GUI 直接调用 TexPresso 的编译/预览/SyncTeX 能力——见 [cli-mcp-plan.md](./cli-mcp-plan.md)
+
+**已否决**：引擎语言自适应规则（19 个真实模板双引擎实测中 **0 例**因默认 XeLaTeX 选错、`\RequirePDFTeX` 为 0/7374、文档口径 19/19 兼容 XeLaTeX——"引擎自动推断"解决的是不存在的问题；唯一两种引擎都不行的是日文 `jsarticle`，需 platex，不在三引擎范围内。见 [research/template-corpus-survey.md](./research/template-corpus-survey.md)）｜ 增量编译具体策略（latexmk 增量 = 整份单遍重排，属引擎上限，见 ADR-0005）
