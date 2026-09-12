@@ -16,7 +16,8 @@
 | [cli-mcp-plan.md](./cli-mcp-plan.md) | 计划任务：CLI + MCP 交互接口（现状盘点、工具清单、P0/P1 优化点与落地顺序；**仅记录，待实现**） |
 | [adr/](./adr/) | 决策记录（ADR），当前 10 项 |
 | [troubleshooting.md](./troubleshooting.md) | 排障记录（Windows 路径/工具链/日志解析场景） |
-| [research/](./research/) | 市场调研：TeX IDE 核心痛点（[总览](./research/tex-ide-pain-points.md)、[桌面编辑器专项](./research/desktop-latex-editor-pain-points.md)、[在线平台专项](./research/online-latex-editor-pain-points.md)、[VS Code 专项](./research/vscode-latex-workshop-pain-points.md)）、[**Roadmap（第 2 版 + ⑲ 修订）**](./research/tex-ide-roadmap-priority.md)、[P0-② 分析](./research/p0-2-first-open-analysis.md)、[**模板语料调研**](./research/template-corpus-survey.md) 与 [中文高校模板引擎要求](./research/cn-thesis-template-engines.md)；用于产品取舍的外部事实依据 |
+| [research/](./research/) | 市场调研：TeX IDE 核心痛点（[总览](./research/tex-ide-pain-points.md)、[桌面编辑器专项](./research/desktop-latex-editor-pain-points.md)、[在线平台专项](./research/online-latex-editor-pain-points.md)、[VS Code 专项](./research/vscode-latex-workshop-pain-points.md)）、[**Roadmap（第 3 版 · 重构）**](./research/tex-ide-roadmap-priority.md)、[P0-② 分析](./research/p0-2-first-open-analysis.md)、[模板语料调研](./research/template-corpus-survey.md) 与 [中文高校模板引擎要求](./research/cn-thesis-template-engines.md)；用于产品取舍的外部事实依据 |
+| [texpresso-live-rendering-roadmap.md](./texpresso-live-rendering-roadmap.md) | 外部方案研究：对上游 [let-def/texpresso](https://github.com/let-def/texpresso)（改造 XeTeX 的实时预览器）的源码通读与 8 阶段复刻路线；**本项目评估结论见 [roadmap](./research/tex-ide-roadmap-priority.md) §5（不采用，吸收 3 条）** |
 
 ## 阅读顺序
 
