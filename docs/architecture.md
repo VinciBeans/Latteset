@@ -5,12 +5,14 @@
 
 ## 1. 分层总览
 
+> 图示版（Mermaid，含编译链路 / 调度语义 / SyncTeX 三张附图）见 [architecture-diagram.md](./architecture-diagram.md)。
+
 非对称分层，依赖方向严格单向：
 
 ```
 ┌─ 前端（Vue 3 + TS）───────────────────────────────┐
 │  views / components（EditorPane、PreviewPane、…） │
-│  stores（Pinia ×5）                               │
+│  stores（Pinia ×6）                               │
 │  services（ipc.ts / events.ts）← 唯一碰 IPC 的层   │
 └──────────────┬────────────────────────────────────┘
                │ IPC 契约（tauri-specta 生成 TS 类型）
@@ -57,8 +59,8 @@ Cargo workspace 两 crate（见 ADR-0006）：
 ## 3. 前端侧：模块划分
 
 - **services**：`ipc.ts`（specta 生成的类型化 invoke 封装）、`events.ts`（事件订阅 → store 分发）
-- **stores（Pinia ×5）**：projectStore（项目/根文件/文件树）｜editorStore（打开文件、脏标志、活动标签）｜compileStore（编译状态/队列/错误列表）｜previewStore（PDF 文档、滚动位置、SyncTeX 高亮）｜settingsStore
-- **组件**：EditorPane（Monaco 封装）、PreviewPane（pdf.js 封装）、FileTree、TabBar、ErrorList、StatusBar、布局壳、**自研 splitter**（不引入 vue-code-layout，多面板布局后置）
+- **stores（Pinia ×6）**：projectStore（项目/根文件/文件树）｜editorStore（打开文件、脏标志、活动标签）｜compileStore（编译状态/队列/错误列表）｜previewStore（PDF 文档、滚动位置、SyncTeX 高亮）｜outlineStore（源码结构树）｜settingsStore
+- **组件**：EditorPane（Monaco 封装）、PreviewPane（pdf.js 封装）、FileTree、TabBar、OutlinePane（大纲）、ErrorList、StatusBar、布局壳、**自研 splitter**（不引入 vue-code-layout，多面板布局后置）
 - **composables**：useAutoSave（防抖保存）、useSyncTex
 
 ## 4. 层间接口契约（IPC）
@@ -73,6 +75,7 @@ Cargo workspace 两 crate（见 ADR-0006）：
 | list_dir | path | Vec\<DirEntryInfo\>（递归文件树，含目录；前端防抖） |
 | read_file | path | content |
 | save_all | files: Vec\<FileContent\> | 空（写盘：`save_content`；自动保存批量写盘用，唯一保存路径） |
+| get_outline | buffers, files | Vec\<OutlineNode\>（结构树，详见 modules.md） |
 | compile_now | 空 | 空 |
 | abort_compile | 空 | 空 |
 | synctex_forward | file, line, col | { page, x, y } |

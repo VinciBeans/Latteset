@@ -11,6 +11,7 @@
 | [CONTEXT.md](../CONTEXT.md) | 术语表（ubiquitous language） |
 | [design.md](./design.md) | 完整设计：产品定位、技术栈、编译子系统、MVP 边界、分发与质量底线（含后置/未决清单） |
 | [architecture.md](./architecture.md) | 分层设计：Rust/前端模块、层间接口契约、数据流、技术栈冻结、安全与工程基建 |
+| [architecture-diagram.md](./architecture-diagram.md) | 架构图（Mermaid 源码 + [diagrams/](./diagrams/) SVG/PNG）：分层与依赖、编译触发链路、调度器语义、SyncTeX 双向定位 |
 | [modules.md](./modules.md) | 模块详细设计：大模块拆分、函数签名与算法、通信契约、信息局部性 |
 | [cli-mcp-plan.md](./cli-mcp-plan.md) | 计划任务：CLI + MCP 交互接口（现状盘点、工具清单、P0/P1 优化点与落地顺序；**仅记录，待实现**） |
 | [adr/](./adr/) | 决策记录（ADR），当前 9 项 |
@@ -19,7 +20,7 @@
 
 ## 阅读顺序
 
-新成员：`根 README → CONTEXT.md → design.md → architecture.md → modules.md → adr/0001-0009`
+新成员：`根 README → CONTEXT.md → design.md → architecture.md → architecture-diagram.md → modules.md → adr/0001-0009`
 
 ## 决策记录索引
 
