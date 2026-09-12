@@ -109,6 +109,27 @@ node scripts/bench.mjs --with-real         # 追加真实模板档（依赖本�
 
 > 复现性：两轮独立运行的关键档差异 <5%（tiny edit 1617→1625ms、multifile edit 2461→2463ms），脚本可作回归基线。
 
+#### 附：latexmk 开销拆解与「编辑期单趟」收益（roadmap ㉘ 评估，2026-09）
+
+`node scripts/bench-single-pass.mjs`（六档 × 3 次、A/B 交替消序）测「完整 latexmk」vs「单趟 xelatex」：
+
+| 档 | 完整 latexmk | 单趟 xelatex | 节省 |
+|---|---:|---:|---:|
+| `tiny` | 1625ms | 1119ms | 31.1% |
+| `small-article` | 2683ms | 1320ms | 50.8% |
+| `multifile` | 2437ms | 1761ms | 27.8% |
+| `graphics` | 1878ms | 1315ms | 30.0% |
+| `large` | 5307ms | 2361ms | 55.5% |
+| `thesis` | 3370ms | 1816ms | 46.1% |
+
+**平均 40.2%，6/6 达标 → 值得做**（阈值预设 20%）。
+
+**省在哪（已核实）**：捕获 latexmk 实际命令是 `xelatex -no-pdf … -output-directory="tmp" main.tex` **然后** `xdvipdfmx -E -o "tmp/main.pdf" "tmp/main.xdv"`——它把「LaTeX 趟」与「转换」拆成两个规则，而直接 `xelatex` 一趟内部完成转换。**两者工作量本质相同**，省下的是 **latexmk 外层机制（perl 启动 + `.fdb_latexmk` 依赖库读写）+ 其判断出的收敛趟**。这也解释了上文 `noop ≈ 0.5s` 的地板——纯 latexmk 开销。
+
+**代价（已量化）**：单趟的目录/交叉引用页码**落后一趟**。实测 `multifile` 插 400 行后单趟运行，`.toc` 里「第四章」页码由 **29 → 41**，即该趟 PDF 显示的是旧值 29；再跑一趟 `.toc` 稳定（「单趟旧、两趟收敛」）。
+
+**约束**：空闲 500ms 后必须完整收敛；**UI 需显示"引用待更新"**（连续打字期间目录会长时间是旧的）；首编与手动「编译」仍走完整 latexmk。**未验证**：bib/biber 场景下单趟的可用性（现有 fixture 编辑期未触发 bibtex）。
+
 **端到端延迟**（编辑 → PDF 刷新 ≈ 防抖 500ms + latexmk + pdf.js 重载）：`multifile` 重载实测 `fetch≈7ms / parse≈103ms / render≈320ms / total≈400–450ms` → **render 占 ~75% 是瓶颈**（`canvasEpoch` 整页 canvas 重建 + 视口重绘 + 二次 `renderNearViewport`）。**A/B 优化已落地**（分页 DOM 虚拟化 + 同文件重载复用 canvas、仅缩放/换文档才重建）——见 [modules.md](./modules.md) §12。
 
 **A/B 优化后真实窗口复测（2026-08-25，tauri server MCP 驱动）**：`npm run tauri dev` + `VITE_TEXPRESSO_PROJECT=…/test_file/projects/multifile` 自动开项目 → 点「编译」→ `main.pdf`(3 页/108KB) 重载。**像素级视觉确认通过**（标题页/目录/正文正常，无黑屏/文字反转——此前受限点已解决）。**插桩修正**：把 `render` 从 setup 时间改为等挂载窗口渲染链落盘后的真实 canvas 绘制耗时（原 `pagesRendered` 恒 0）。**实测**：同文件复用 `fetch≈9–10ms / parse≈30ms / render≈59ms / total≈98–100ms / pagesRendered=2`；首次换文档 `render≈77ms / total≈112ms / pagesRendered=3`。**render 占总耗时 ~59%，仍为 PDF 重载开销主因**（一致结论）；3 页小文档总耗时 ~100ms 远低于延迟预算（先前 `render≈320ms/total≈400–450ms` 是 12 页文档数值，非同比）。
