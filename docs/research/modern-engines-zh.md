@@ -252,7 +252,7 @@ lualatex -jobname=inj "\AddToHook{shipout/before}{\directlua{dofile('pageship.lu
 
 | # | 想法 | 实测 | 结论 |
 |---|---|---|---|
-| 1 | **LuaJIT 变体**（`luajitlatex`） | TL2026 的 `fmtutil.cnf` **只有 plain 的** `luajittex`/`luajithbtex`（`luatex.ini`），**根本没有 luajitlatex**；手工用 `lualatex.ini` 给 JIT 引擎建 LaTeX 格式 → dump 出来的格式编译即错（`! Undefined control sequence.` / bad DVI）。**另外三件实测**：① 该构建里 **JIT 默认是关的**（`jit.status()==false`，手动 `jit.on()` 才变 true）；② 它是 **Lua 5.1**、stock 引擎是 **Lua 5.3**（`utf8` 库缺失、`math.type` 缺失，连 `//` 整数除法都是语法错误——我的基准脚本第一次就栽在这上面）⇒ 为 5.3 写的 `luaotfload`/`luatexja` **不能假定可直接跑**；③ 纯 Lua 层微基准（N=200 万，最好值）：numeric/string/table = **Lua 5.3 24/124/253 ms**、LuaJIT(JIT off) **14/66/131 ms**、LuaJIT(JIT on) **3/45/118 ms** ⇒ Lua 层本身**快 1.7–8×**（[推断] 若 CJK 字体层的耗时确实主要在 Lua（§7.4），JIT 本可吃掉一大块；但受 ① ② 两条限制，本机无法验证） | ⛔ **此版本 TeX Live 上不可用**（不是没试，是没有受支持配置） |
+| 1 | **LuaJIT 变体**（`luajitlatex`） | ⛔ **此版本 TeX Live 上不可用**（根因见 §7.5：**连 LaTeX 内核自己的 Lua 代码都解析不了**）。TL2026 的 `fmtutil.cnf` 只有 plain 的 `luajittex`/`luajithbtex`（`luatex.ini`）；另外三件实测：① 该构建里 **JIT 默认是关的**（`jit.status()==false`，`jit.on()` 才 true）；② 它是 **Lua 5.1**、stock 引擎是 **Lua 5.3**（`utf8` 库缺失、`math.type` 缺失，连 `//` 都是语法错误）；③ 纯 Lua 层微基准（N=200 万，最好值）：numeric/string/table = **Lua 5.3 18–24/92–124/230–253 ms**、LuaJIT(JIT off) **11–14/57–66/88–131 ms**、LuaJIT(JIT on) **3/39–49/111–122 ms** ⇒ Lua 层本身**快 2–8×**（[推断] 若 CJK 字体层的耗时确在 Lua，JIT 本可吃掉一大块；受 §7.5 限制无法验证） |
 | 2 | **PDF 压缩调优**（`\pdfvariable compresslevel=0 objcompresslevel=0`） | min-zh：PDF **281,486 B**（原 96,362 B，2.9×）而耗时 **3817 ms vs 3704 ms**（噪声内，甚至更慢） | ⛔ 无收益 |
 | 3 | **预编译导言区**（fmt） | dump 成功（§3.4）；导言区占 LuaLaTeX 单趟 **44%**（2869/6468 ms）→ 上限约 **2.9 s** | 🟡 **唯一大杠杆**，但需 `mylatexformat` 等价实现（本机未装），未落地 |
 | 4 | **引擎内页指纹**（恢复 B/C） | 原型打通、钩子零开销（§7.2） | 🟡 可行，收益 ~100 ms，风险不成比例，未落地 |
@@ -276,3 +276,58 @@ lualatex -jobname=inj "\AddToHook{shipout/before}{\directlua{dofile('pageship.lu
 - **不是"LuaLaTeX 引擎慢"**：英文文档里它**反而更快**（1878 vs 2341 ms），且它的 PDF 产出方式（引擎内写，~288 ms）比 XeLaTeX 的"先 XDV 再转换"（~1125 ms）更省。
 - **差距全在 CJK 字体层**：XeTeX 的 native font 是**引擎内编译进去的**，`xeCJK` 只是薄薄一层；而 LuaLaTeX 走 `luatexja + luaotfload`，字体加载与字距调整都是 **Lua 层实现**——中文场景 3.2–3.5× 的差距就从这里来。
 - 因此"给 LuaLaTeX 做针对性优化"的正确落点是**固定开销里的字体/导言区部分**（§7.3 第 3 项，上限 2.9 s，能把 3.5× 压到约 1.9×），而不是页级复用（~100 ms 量级）或压缩之类的边角。
+
+### 7.5 LuaJIT 源码实测：能不能用它跑 LaTeX（2026-09 追加）
+
+拿到 LuaJIT 源码（`E:\Works\luajit`，v2.1 分支）后把"不可用"从"TL 没提供格式"追到了**确切的一行**：
+
+**① 正规形态建格式 → 内核 Lua 直接解析失败**
+
+上一轮我手工建格式时把 `language.dat language.dat.lua` 当**命令行输入**传了进去——那是错的：在 fmtutil 的数据模型里它们是 **hyphen 字段**，命令行只该传 ini 文件。改正后复现（`language.dat` 由 kpathsea 按 `-progname` 解析）：
+
+```powershell
+luajithbtex -ini -interaction=nonstopmode -halt-on-error -jobname=ljlatex -progname=ljlatex lualatex.ini
+# → error loading module ltluatex from file .../base/ltluatex.lua:
+#      .../ltluatex.lua:335: unexpected symbol near '/'
+# → !  ==> Fatal error occurred, no output PDF file produced!     （没有 dump 出任何格式）
+```
+
+`ltluatex.lua:335` 是 `for i=2, length//2 do`——**Lua 5.3 的整除运算**（同段还用了 `table.move`）。
+Lua 是整块解析的，所以这一处足以让**整个 LaTeX 内核加载不了**，与是否走到那条分支无关。
+> 这也解释了为什么 TL2026 的 `fmtutil.cnf` 只给 JIT 引擎配 plain 格式（`luatex.ini`）：**不是漏了，是 LaTeX 侧过不去**。
+
+**② 用你给的源码构建 + 能力探针（VS18 / MSVC 14.51）**
+
+```powershell
+cmd /c "call `"C:\Program Files\Microsoft Visual Studio\18\Community\VC\Auxiliary\Build\vcvars64.bat`" && cd /d <src>\src && msvcbuild.bat"
+# → === Successfully built LuaJIT for Windows/x64 ===
+```
+
+| 探针 | 你源码构建的 LuaJIT | TL 自带的 luajittex | stock 引擎 |
+|---|---|---|---|
+| 版本 | `LuaJIT 2.1.1788856981`（2026 rolling） | `LuaJIT 2.1.81742` | Lua 5.3 |
+| `_VERSION` | **Lua 5.1** | **Lua 5.1** | Lua 5.3 |
+| `jit.status()` 默认 | **true（JIT 开）** | false（要手动开） | 无 jit |
+| `table.move` | ✅（新版补了） | ✅ | ✅ |
+| `5 & 3`（位运算） | ✅（新版补了） | ❌ | ✅ |
+| **`4//2`（整除）** | ❌ **syntax error** | ❌ syntax error | ✅ |
+| `utf8` / `math.type` / `string.pack` / `goto` | ❌ / ❌ / ❌ / ❌ | 同左 | ✅（goto 5.3 也有） |
+
+⇒ **即使是最新的 LuaJIT 2.1，也解析不了 `ltluatex.lua`**——因为 LuaJIT 有意停留在 5.1 语法（缺的正是 `//` 这类 5.3 新增运算符）。
+（LuaJIT 的 5.2 特性如 `goto` 需要**构建时**开 `-DLUAJIT_ENABLE_LUA52COMPAT`，两个现成构建都没开。）
+
+**③ 真要跑起来得改多少（静态扫描 5.3 专属语法）**
+
+| Lua 树 | .lua 文件 | 5.3 专属语法点 |
+|---|---|---|
+| LaTeX 内核 `base`（`ltluatex.lua`） | 1 | **1**（`//`；`table.move` 新版 JIT 已有） |
+| `luaotfload` | 93 | **182**（goto/标签 127、`utf8.` 26、`//` 10、位运算 10、`string.pack` 5、`math.type` 4） |
+| `luatexja` | 38 | **14**（`//` 9、位运算 5） |
+| `lua-uni-algos` | 10 | **30**（`string.pack` 8、`utf8.` 7、`//` 7、goto 4、`math.type` 2、位运算 2） |
+| **合计** | **142** | **227 处**（开 `LUA52COMPAT` 可消掉 127 处 goto，**残余仍约 79 处**；其中 `math.type` 是**语义差异**——5.1 没有整数子类型，polyfill 不了） |
+
+**④ 结论：不做**（三条硬理由）
+1. **要改的是用户机器上的 TeX Live 内核与宏包**（`ltluatex.lua` / `luaotfload` / `luatexja`）。我们不分发 TeX Live；用 `TEXINPUTS`/`LUAINPUTS` 覆盖等于给每个用户塞一份补丁副本，且 **TL 一升级补丁就失效**。
+2. 与 ADR-0003（签名分发、不自维护引擎分支）冲突——这正是上游 TeXpresso 那条路线被否的原因之一。
+3. **收益不确定**：Lua 层实测快 2–8×，但 §7.4 只把 3.5× 归因到"CJK 字体层"，层内 Lua 占多少**没有 profile**；而代价是 79+ 处语义级补丁的长期维护。
+> 触发重估的条件（都在我们手里之外）：LuaJIT 上游支持 `//`，或 LaTeX 内核放弃 5.3 专属语法。
