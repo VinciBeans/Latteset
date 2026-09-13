@@ -102,11 +102,10 @@ pub fn build_emitter(app: &AppHandle) -> Emitter {
         Arc::new(move |errors: Vec<ErrorEntry>| {
             let _ = ErrorsUpdatedEvent(errors).emit(&handle2);
         }),
-        Arc::new(move |path: std::path::PathBuf| {
-            let _ = PdfUpdatedEvent(PdfUpdated {
-                path: path.to_string_lossy().into_owned(),
-            })
-            .emit(&handle3);
+        // PDF 就绪：载荷现在是完整 DTO（含 changed_pages / pages）——调度器算好页级差异后直接透传，
+        // 接线层不再自己重建 `PdfUpdated`（差异信息只有调度器知道，接线层重建不了）。
+        Arc::new(move |payload: PdfUpdated| {
+            let _ = PdfUpdatedEvent(payload).emit(&handle3);
         }),
     )
 }

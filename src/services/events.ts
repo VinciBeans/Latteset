@@ -31,7 +31,8 @@ export function subscribeEvents(): () => void {
       useCompileStore().setErrors(e.payload);
     }),
     events.pdfUpdated.listen((e) => {
-      usePreviewStore().onPdfUpdated(e.payload.path);
+      // 载荷含变化页集合（roadmap「增量编辑 × DVI」B/C）：store 决定是否真的重载。
+      usePreviewStore().onPdfUpdated(e.payload);
     }),
     events.filesChanged.listen((e) => {
       const p = e.payload;

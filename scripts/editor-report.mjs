@@ -101,13 +101,17 @@ class Session {
   /** 执行一段 JS（IIFE 或表达式），返回可序列化结果。 */
   async eval(script, timeoutMs = 120000) {
     const id = `er_${++this.seq}_${Date.now()}`;
+    // 实测坑（2026-09）：应用的执行器把脚本**包进括号**求值，所以"以行注释开头的脚本"会被
+    // 解析失败，且失败是**静默**的（返回 null 而不是 error）。补一个前导换行让注释自成一行即可。
+    const head = script.trimStart();
+    const code = head.startsWith("//") || head.startsWith("/*") ? `\n${script}` : script;
     const res = await new Promise((ok, fail) => {
       const timer = setTimeout(() => {
         this.pending.delete(id);
         fail(new Error(`探针超时（${timeoutMs}ms）：${script.slice(0, 60)}…`));
       }, timeoutMs);
       this.pending.set(id, { resolve: ok, timer });
-      this.ws.send(JSON.stringify({ id, command: "execute_js", args: { script, windowLabel: "main" } }));
+      this.ws.send(JSON.stringify({ id, command: "execute_js", args: { script: code, windowLabel: "main" } }));
     });
     if (!res.success) throw new Error(`探针失败：${res.error ?? JSON.stringify(res).slice(0, 200)}`);
     return res.data;
@@ -482,23 +486,19 @@ function judge(r, tier) {
 // ---------------------------------------------------------------- 主流程
 
 const args = parseArgs(process.argv.slice(2));
-if (!existsSync(MANIFEST)) {
-  console.error(`缺少夹具清单 ${MANIFEST}\n先跑：node scripts/gen-large-project.mjs`);
-  process.exit(2);
-}
-const manifest = JSON.parse(readFileSync(MANIFEST, "utf8"));
-const tier = manifest.tiers.find((t) => t.name === args.tier);
-if (!tier) {
-  console.error(`清单里没有档位 ${args.tier}；可选：${manifest.tiers.map((t) => t.name).join(", ")}`);
-  process.exit(2);
-}
+// 夹具清单只在"跑口径"时需要：`--eval-file` 是通用调试入口（不依赖 ⑦c 夹具），故这里宽松解析，
+// 真正用到档位时（fill()）再报错。
+const manifest = existsSync(MANIFEST) ? JSON.parse(readFileSync(MANIFEST, "utf8")) : { tiers: [] };
+const tier = manifest.tiers.find((t) => t.name === args.tier) ?? null;
 
-console.log(`编辑器侧性能口径（roadmap ⑦c）`);
-console.log(`档位 ${tier.name}：${tier.chapters} 章 / ${(tier.bytes / 1048576).toFixed(2)} MB / 目录 ${tier.dir}`);
-console.log(`门槛来源：p1-large-doc-editor-analysis.md §7（本脚本按规模做线性归一，见各行注）\n`);
+if (tier) {
+  console.log(`编辑器侧性能口径（roadmap ⑦c）`);
+  console.log(`档位 ${tier.name}：${tier.chapters} 章 / ${(tier.bytes / 1048576).toFixed(2)} MB / 目录 ${tier.dir}`);
+  console.log(`门槛来源：p1-large-doc-editor-analysis.md §7（本脚本按规模做线性归一，见各行注）\n`);
+}
 
 const session = await Session.connect(args.host, args.port);
-const results = { tier: tier.name, at: new Date().toISOString(), fixture: { chapters: tier.chapters, bytes: tier.bytes } };
+const results = { tier: tier?.name ?? null, at: new Date().toISOString(), fixture: { chapters: tier?.chapters ?? 0, bytes: tier?.bytes ?? 0 } };
 try {
   await session.eval(BOOTSTRAP, 20000);
   if (args.evalFile) {
@@ -506,6 +506,13 @@ try {
     console.log(JSON.stringify(out, null, 2));
     session.close();
     process.exit(0);
+  }
+  if (!tier) {
+    console.error(
+      `缺少档位信息：先生成夹具清单（node scripts/gen-large-project.mjs），或用 --eval-file 走调试入口。\n清单里的档位：${manifest.tiers.map((t) => t.name).join(", ") || "（清单不存在）"}`
+    );
+    session.close();
+    process.exit(2);
   }
   const tierDir = tier.dir.replace(/\\/g, "/");
   const editTargetAbs = `${tierDir}/${tier.editTarget}`;

@@ -70,7 +70,7 @@ async fn open_detect_compile_full_chain() {
     let runner = Arc::new(FakeRunner::with_results(vec![CompileOutcome::Success {
         pdf_path: PathBuf::from("proj/main.pdf"),
         kind: CompileKind::Quick,
-    }]));
+    page_hashes: Vec::new() }]));
     let log = Arc::new(EventLog::new());
     let (handle, scheduler) = Scheduler::create(runner.clone(), event_log_emitter(log.clone()));
     tokio::spawn(scheduler.run());
@@ -132,8 +132,8 @@ async fn continuous_typing_merges_to_latest() {
     let settings = Settings::default();
 
     let runner = Arc::new(FakeRunner::with_hold_and_results(vec![
-        CompileOutcome::Success { pdf_path: PathBuf::from("p.pdf"), kind: CompileKind::Quick },
-        CompileOutcome::Success { pdf_path: PathBuf::from("p.pdf"), kind: CompileKind::Quick },
+        CompileOutcome::Success { pdf_path: PathBuf::from("p.pdf"), kind: CompileKind::Quick , page_hashes: Vec::new() },
+        CompileOutcome::Success { pdf_path: PathBuf::from("p.pdf"), kind: CompileKind::Quick , page_hashes: Vec::new() },
     ]));
     let log = Arc::new(EventLog::new());
     let (handle, scheduler) = Scheduler::create(runner.clone(), event_log_emitter(log.clone()));
@@ -201,7 +201,7 @@ async fn error_then_fix_then_recover() {
 
     let runner = Arc::new(FakeRunner::with_hold_and_results(vec![
         CompileOutcome::ContentError { errors: errors.clone() },
-        CompileOutcome::Success { pdf_path: PathBuf::from("proj/main.pdf"), kind: CompileKind::Quick },
+        CompileOutcome::Success { pdf_path: PathBuf::from("proj/main.pdf"), kind: CompileKind::Quick , page_hashes: Vec::new() },
     ]));
     let log = Arc::new(EventLog::new());
     let (handle, scheduler) = Scheduler::create(runner.clone(), event_log_emitter(log.clone()));
@@ -245,7 +245,7 @@ async fn abort_then_manual_compile() {
     let settings = Settings::default();
 
     let runner = Arc::new(FakeRunner::with_hold_and_results(vec![
-        CompileOutcome::Success { pdf_path: PathBuf::from("p.pdf"), kind: CompileKind::Full },
+        CompileOutcome::Success { pdf_path: PathBuf::from("p.pdf"), kind: CompileKind::Full , page_hashes: Vec::new() },
     ]));
     let log = Arc::new(EventLog::new());
     let (handle, scheduler) = Scheduler::create(runner.clone(), event_log_emitter(log.clone()));

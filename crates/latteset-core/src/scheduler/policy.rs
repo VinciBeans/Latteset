@@ -77,7 +77,7 @@ mod tests {
         CompileOutcome::Success {
             pdf_path: PathBuf::from("proj/main.pdf"),
             kind: CompileKind::Full,
-        }
+        page_hashes: Vec::new() }
     }
 
     fn content_error() -> CompileOutcome {

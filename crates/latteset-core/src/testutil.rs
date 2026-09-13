@@ -5,7 +5,7 @@
 
 use crate::project::{DirEntry, FileSystem};
 use crate::scheduler::CompileRunner;
-use crate::types::{CompileKind, CompileOutcome, CompileRequest};
+use crate::types::{CompileKind, CompileOutcome, CompileRequest, PdfUpdated};
 use async_trait::async_trait;
 use std::collections::{HashMap, HashSet};
 use std::io;
@@ -98,6 +98,14 @@ impl FileSystem for FakeFS {
             .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "文件不存在"))
     }
 
+    /// FakeFS 的"文件"是字符串，二进制读按其 UTF-8 字节返回（够测 XDV 解析的调用方）。
+    async fn read_bytes(&self, path: &Path) -> io::Result<Vec<u8>> {
+        self.files
+            .get(path)
+            .map(|s| s.as_bytes().to_vec())
+            .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "文件不存在"))
+    }
+
     /// 内存路径已归一：原样返回，但目标必须存在（与真实 canonicalize 的"不存在即报错"一致）。
     async fn canonicalize(&self, path: &Path) -> io::Result<PathBuf> {
         if self.files.contains_key(path) || self.dirs.contains(path) {
@@ -186,7 +194,7 @@ impl FakeRunner {
             .unwrap_or(CompileOutcome::Success {
                 pdf_path: PathBuf::from("out.pdf"),
                 kind: req_kind,
-            })
+            page_hashes: Vec::new() })
     }
 }
 
@@ -221,7 +229,8 @@ impl CompileRunner for FakeRunner {
 pub struct EventLog {
     statuses: Mutex<Vec<crate::types::CompileStatusDto>>,
     errors: Mutex<Vec<Vec<crate::types::ErrorEntry>>>,
-    pdfs: Mutex<Vec<PathBuf>>,
+    /// PDF 就绪事件（含变化页集合）——B/C 功能点的断言入口。
+    pdf_events: Mutex<Vec<PdfUpdated>>,
 }
 
 impl Default for EventLog {
@@ -235,7 +244,7 @@ impl EventLog {
         Self {
             statuses: Mutex::new(Vec::new()),
             errors: Mutex::new(Vec::new()),
-            pdfs: Mutex::new(Vec::new()),
+            pdf_events: Mutex::new(Vec::new()),
         }
     }
 
@@ -245,8 +254,18 @@ impl EventLog {
     pub fn errors(&self) -> Vec<Vec<crate::types::ErrorEntry>> {
         self.errors.lock().unwrap().clone()
     }
+    /// PDF 就绪事件全文（含 `changed_pages` / `pages`）。
+    pub fn pdf_events(&self) -> Vec<PdfUpdated> {
+        self.pdf_events.lock().unwrap().clone()
+    }
+    /// 只看路径的便捷视图（历史断言沿用；路径是 `PdfUpdated.path` 的字符串形态）。
     pub fn pdfs(&self) -> Vec<PathBuf> {
-        self.pdfs.lock().unwrap().clone()
+        self.pdf_events
+            .lock()
+            .unwrap()
+            .iter()
+            .map(|p| PathBuf::from(&p.path))
+            .collect()
     }
 }
 
@@ -257,6 +276,6 @@ pub fn event_log_emitter(log: Arc<EventLog>) -> crate::scheduler::Emitter {
     crate::scheduler::Emitter::new(
         Arc::new(move |s| log.statuses.lock().unwrap().push(s)),
         Arc::new(move |e| log2.errors.lock().unwrap().push(e)),
-        Arc::new(move |p| log3.pdfs.lock().unwrap().push(p)),
+        Arc::new(move |p| log3.pdf_events.lock().unwrap().push(p)),
     )
 }

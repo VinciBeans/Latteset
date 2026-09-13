@@ -30,6 +30,15 @@ pub trait FileSystem: Send + Sync {
         self.read_to_string(path).await
     }
 
+    /// 读**二进制**文件（原样字节）。
+    ///
+    /// 用途（docs/research/incremental-edit-x-dvi.md 的 B/C/A 三个功能点）：读
+    /// `tmp/<stem>.xdv` 算页哈希，判断"这次编译的排版结果与上次是否逐页相同"。
+    /// XDV 是二进制流，**不能**走文本读取（有损解码会破坏页字节）。
+    ///
+    /// 契约：文件不存在 → `NotFound`；调用方应把它当作"无法判定"（保守刷新），而非错误。
+    async fn read_bytes(&self, path: &std::path::Path) -> io::Result<Vec<u8>>;
+
     /// 规范化绝对路径（解析 `.`/`..`/软链接）。
     ///
     /// 契约：返回**对外可用形态**——Windows 上必须剥掉 `\\?\` verbatim 前缀

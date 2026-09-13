@@ -69,6 +69,11 @@ impl FileSystem for TokioFs {
         Ok(latteset_core::log_parser::decode_log(&bytes))
     }
 
+    /// 二进制读（`tmp/<stem>.xdv` 的页哈希用；XDV 不能被有损解码）。
+    async fn read_bytes(&self, path: &Path) -> io::Result<Vec<u8>> {
+        tokio::fs::read(path).await
+    }
+
     /// canonicalize 后剥掉 Windows verbatim 前缀：core 的路径策略（D8）与前端
     /// resolvePath 都要求「对外可用形态」，两种形态混用会让 starts_with 判定永远失败。
     async fn canonicalize(&self, path: &Path) -> io::Result<PathBuf> {

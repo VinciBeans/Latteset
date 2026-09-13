@@ -346,10 +346,17 @@ impl CompileRunner for LatexmkRunner {
                         tokio::fs::rename(&pdf_tmp, &pdf_dst).await
                     };
                     match copy.await {
-                        Ok(_) => CompileOutcome::Success {
-                            pdf_path: pdf_dst,
-                            kind,
-                        },
+                        Ok(_) => {
+                            // 页级差异的判据（docs/research/incremental-edit-x-dvi.md 的 B/C）：
+                            // 读本次产出的 XDV 算页哈希，交给调度器与上一轮比对。读不到 → 空表
+                            // = "无法判定"，前端保守全量刷新（这是优化判据，失败不上报为错误）。
+                            let page_hashes = self.page_hashes(&tmp_dir, &stem).await;
+                            CompileOutcome::Success {
+                                pdf_path: pdf_dst,
+                                kind,
+                                page_hashes,
+                            }
+                        }
                         Err(e) => {
                             let _ = tokio::fs::remove_file(&pdf_tmp).await;
                             CompileOutcome::IoError {
@@ -402,6 +409,26 @@ impl CompileRunner for LatexmkRunner {
 }
 
 impl LatexmkRunner {
+    /// 读 `tmp/<stem>.xdv` 算**页哈希**（顺序 = 页号）。
+    ///
+    /// 为什么需要它（docs/research/incremental-edit-x-dvi.md）：XDV 的页是自包含的字节区间，
+    /// 页哈希相同 ⇔ 该页的排版结果逐字节未变。于是"这次编译到底改了什么"可以被精确判定，
+    /// 下游据此跳过无谓工作——B：不发 `pdf-updated`；C：只重绘变化页；A：跳过 `xdvipdfmx` 转换。
+    ///
+    /// 契约：**不做错误上报**（它是优化判据，读不到只是"这次退化为全量刷新"）；返回空表
+    /// 表示**无法判定**，调用方不要把它当成"零页变化"。
+    async fn page_hashes(&self, tmp_dir: &Path, stem: &str) -> Vec<u64> {
+        let path = tmp_dir.join(format!("{stem}.xdv"));
+        match self.fs.read_bytes(&path).await {
+            Ok(bytes) => latteset_core::xdv::page_hashes(&bytes),
+            Err(e) => {
+                // Quick 与 Full 都会产出 XDV；走到这里通常是"引擎没跑完就失败"或工作目录被清空
+                debug!(path = %path.display(), "读 XDV 失败，页级差异不可判定：{e}");
+                Vec::new()
+            }
+        }
+    }
+
     /// 源码版模板提示（roadmap ㉗）：编译报"缺 `.cls`"时，看看项目里是不是只有 `.ins`/`.dtx`。
     ///
     /// 判据是**看得见的事实**：项目根目录里存在哪些 `.ins`/`.dtx` 文件（源码版模板的发布形态）。

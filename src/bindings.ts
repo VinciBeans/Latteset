@@ -263,9 +263,22 @@ export type OutlineNode = {
 	children: OutlineNode[],
 };
 
-/**  pdf-updated 事件载荷。 */
+/**
+ *  pdf-updated 事件载荷。
+ * 
+ *  `changed_pages` / `pages`（2026-09，docs/research/incremental-edit-x-dvi.md 的 B/C 两个功能点）：
+ *  本次编译相对**上一次**变化的页号（1-based、升序）。前端语义：
+ *  - `pages > 0` 且 `changed_pages` **非空** → 只有这些页需要重绘，其余页复用 canvas 位图；
+ *  - `pages > 0` 且 `changed_pages` **为空** → 逐页字节完全相同 → **跳过重载**（新旧 PDF 逐页等价，
+ *    刷新只会白重绘并可能引起视觉跳动）；
+ *  - `pages == 0` → **无法判定**（XDV 缺失/损坏/首次运行拿不到）→ 按全量刷新处理。
+ */
 export type PdfUpdated = {
 	path: string,
+	/**  本次变化的页号（1-based）；空表 ≠ "无法判定"——后者看 `pages == 0`。 */
+	changed_pages: number[],
+	/**  本次编译的页数；`0` 表示页信息不可用。 */
+	pages: number,
 };
 
 export type PdfUpdatedEvent = PdfUpdated;

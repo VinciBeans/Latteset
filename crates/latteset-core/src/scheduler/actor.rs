@@ -9,9 +9,8 @@ use super::queue::Queue;
 use super::runner::CompileRunner;
 use crate::types::{
     CompileKind, CompileOutcome, CompilePhase, CompileRequest, CompileStatusDto, ErrorEntry,
-    ErrorKind,
+    ErrorKind, PdfUpdated,
 };
-use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
@@ -22,14 +21,16 @@ use tracing::{debug, info, warn};
 pub struct Emitter {
     on_status: Arc<dyn Fn(CompileStatusDto) + Send + Sync>,
     on_errors: Arc<dyn Fn(Vec<ErrorEntry>) + Send + Sync>,
-    on_pdf: Arc<dyn Fn(PathBuf) + Send + Sync>,
+    /// PDF 就绪通道。载荷含**变化页集合**（2026-09，B/C 功能点）：调度器在这里做跨轮比对，
+    /// 前端据此跳过无谓重载（空集合）或只重绘变化页。
+    on_pdf: Arc<dyn Fn(PdfUpdated) + Send + Sync>,
 }
 
 impl Emitter {
     pub fn new(
         on_status: Arc<dyn Fn(CompileStatusDto) + Send + Sync>,
         on_errors: Arc<dyn Fn(Vec<ErrorEntry>) + Send + Sync>,
-        on_pdf: Arc<dyn Fn(PathBuf) + Send + Sync>,
+        on_pdf: Arc<dyn Fn(PdfUpdated) + Send + Sync>,
     ) -> Self {
         Self {
             on_status,
@@ -46,8 +47,8 @@ impl Emitter {
         (self.on_errors)(errors);
     }
 
-    pub(crate) fn pdf(&self, path: PathBuf) {
-        (self.on_pdf)(path);
+    pub(crate) fn pdf(&self, payload: PdfUpdated) {
+        (self.on_pdf)(payload);
     }
 }
 
@@ -90,6 +91,12 @@ pub struct Scheduler {
     queue: Queue,
     running: Option<RunningJob>,
     cancel: Option<CancellationToken>,
+    /// 上一次成功编译的**页哈希**（顺序 = 页号），用于算"本次变化了哪些页"。
+    ///
+    /// 放在 actor 内（而不是 runner 里）：runner 是**无状态**的（`&self` 不可变，一次调用完全
+    /// 独立），跨轮状态属于调度语义——与 `queue`/`running` 同类，收容在 task 内不外露。
+    /// `None` = 还没有可比对的基线（首次编译 → 全部页视为变化）。
+    last_page_hashes: Option<Vec<u64>>,
 }
 
 impl Scheduler {
@@ -110,6 +117,7 @@ impl Scheduler {
             queue: Queue::new(),
             running: None,
             cancel: None,
+            last_page_hashes: None,
         };
         (SchedulerHandle { tx }, scheduler)
     }
@@ -249,9 +257,27 @@ impl Scheduler {
             }]),
             _ => {}
         }
-        // 成功：广播 PDF 就绪
-        if let CompileOutcome::Success { pdf_path, .. } = &outcome {
-            self.emitter.pdf(pdf_path.clone());
+        // 成功：广播 PDF 就绪，并带上**本次变化的页号**（2026-09，docs/research/incremental-edit-x-dvi.md）：
+        // 空变化表 + pages > 0 ⇒ 这次编译的排版结果与上次逐页字节相同 ⇒ 前端可跳过重载（B）、
+        // 且只重绘变化页（C）。比对基线是**上一次成功编译**的页哈希（进程内状态，见字段注释）。
+        if let CompileOutcome::Success {
+            pdf_path,
+            page_hashes,
+            ..
+        } = &outcome
+        {
+            let changed = crate::xdv::changed_pages(self.last_page_hashes.as_deref(), page_hashes);
+            self.last_page_hashes = Some(page_hashes.clone());
+            debug!(
+                pages = page_hashes.len(),
+                changed = changed.len(),
+                "PDF 就绪：已算出与上一轮的页级差异（changed=0 且 pages>0 表示逐页未变）"
+            );
+            self.emitter.pdf(PdfUpdated {
+                path: pdf_path.to_string_lossy().into_owned(),
+                changed_pages: changed,
+                pages: page_hashes.len() as u32,
+            });
         }
 
         let has_pending = !self.queue.is_empty();
@@ -303,6 +329,9 @@ impl Scheduler {
 #[cfg(test)]
 mod tests {
     use super::*;
+    // PathBuf 只被测试用例用到（生产代码里不再直接构造路径），所以 import 放在测试模块内，
+    // 避免 lib 目标出现 unused import 警告。
+    use std::path::PathBuf;
     use crate::testutil::{event_log_emitter, wait_until, EventLog, FakeRunner};
     use crate::types::{Engine, ErrorKind, FailureKind};
     use std::sync::Arc;
@@ -388,7 +417,7 @@ mod tests {
         let (h, log, _) = setup(FakeRunner::with_results(vec![CompileOutcome::Success {
             pdf_path: PathBuf::from("proj/main.pdf"),
             kind: CompileKind::Quick,
-        }]));
+        page_hashes: Vec::new() }]));
         h.compile(quick_req("main.tex"));
         wait_until(|| log.statuses().len() >= 2).await;
         let st = log.statuses();
@@ -399,12 +428,64 @@ mod tests {
         assert_eq!(st[1].phase, CompilePhase::Success);
     }
 
+    // ---- 页级差异（2026-09，docs/research/incremental-edit-x-dvi.md 的 B/C）----
+    //
+    // 契约：pdf-updated 事件必须带上"相对上一次成功编译的变化页"。
+    // 前端据此跳过无谓重载（空表）或只重绘变化页——所以这三条语义是产品行为的判据。
+
+    /// 造一个"成功 + 指定页哈希"的 runner 结果。
+    fn ok_with_pages(hashes: Vec<u64>) -> CompileOutcome {
+        CompileOutcome::Success {
+            pdf_path: PathBuf::from("proj/main.pdf"),
+            kind: CompileKind::Full,
+            page_hashes: hashes,
+        }
+    }
+
+    #[tokio::test]
+    async fn pdf_event_reports_changed_pages_across_rounds() {
+        let runner = FakeRunner::with_results(vec![
+            ok_with_pages(vec![1, 2, 3]), // 第 1 轮：无基线 → 全部
+            ok_with_pages(vec![1, 9, 3]), // 第 2 轮：只有第 2 页变
+            ok_with_pages(vec![1, 9, 3]), // 第 3 轮：逐页相同 → 空表
+            ok_with_pages(vec![1, 9]),    // 第 4 轮：页数变了 → 全部
+        ]);
+        let (h, log, _) = setup(runner);
+        for expected_len in 1..=4 {
+            h.compile(quick_req("main.tex"));
+            wait_until(|| log.pdf_events().len() >= expected_len).await;
+        }
+        let ev = log.pdf_events();
+        assert_eq!(ev[0].changed_pages, vec![1, 2, 3], "首次编译：无基线 → 全部页");
+        assert_eq!(ev[0].pages, 3);
+        assert_eq!(ev[1].changed_pages, vec![2], "只有第 2 页的字节变了");
+        assert!(ev[2].changed_pages.is_empty(), "逐页相同 → 空表（B 的跳过判据）");
+        assert_eq!(ev[2].pages, 3, "空表必须与 pages>0 一起出现才算'无变化'");
+        assert_eq!(ev[3].changed_pages, vec![1, 2], "页数变化 → 全部重绘");
+        assert_eq!(ev[3].pages, 2);
+    }
+
+    #[tokio::test]
+    async fn pdf_event_without_page_info_is_unknown_not_no_change() {
+        // 空 page_hashes = 无法判定（XDV 读不到）→ pages == 0，前端据此全量刷新。
+        // 这条判据必须与"零页变化"区分开，否则会错误地跳过刷新。
+        let runner = FakeRunner::with_results(vec![ok_with_pages(vec![1, 2]), ok_with_pages(Vec::new())]);
+        let (h, log, _) = setup(runner);
+        h.compile(quick_req("main.tex"));
+        wait_until(|| log.pdf_events().len() >= 1).await;
+        h.compile(quick_req("main.tex"));
+        wait_until(|| log.pdf_events().len() >= 2).await;
+        let ev = log.pdf_events();
+        assert_eq!(ev[1].pages, 0, "无法判定 → pages = 0");
+        assert!(ev[1].changed_pages.is_empty());
+    }
+
     #[tokio::test]
     async fn full_request_reports_not_draft() {
         let (h, log, _) = setup(FakeRunner::with_results(vec![CompileOutcome::Success {
             pdf_path: PathBuf::from("proj/main.pdf"),
             kind: CompileKind::Full,
-        }]));
+        page_hashes: Vec::new() }]));
         h.compile(req("main.tex"));
         wait_until(|| log.statuses().len() >= 2).await;
         assert!(log.statuses().iter().all(|s| !s.draft), "Full 应报 draft=false");
@@ -418,7 +499,7 @@ mod tests {
         let (h, log, _) = setup(FakeRunner::with_results(vec![CompileOutcome::Success {
             pdf_path: PathBuf::from("proj/main.pdf"),
             kind: CompileKind::Full,
-        }]));
+        page_hashes: Vec::new() }]));
         h.compile(quick_req("main.tex"));
         wait_until(|| log.statuses().len() >= 2).await;
         let st = log.statuses();
@@ -434,7 +515,7 @@ mod tests {
         let (h, log, _) = setup(FakeRunner::with_results(vec![CompileOutcome::Success {
             pdf_path: PathBuf::from("proj/main.pdf"),
             kind: CompileKind::Full,
-        }]));
+        page_hashes: Vec::new() }]));
         h.compile(req("main.tex"));
         wait_until(|| log.statuses().len() >= 2).await;
         assert_eq!(
@@ -506,7 +587,7 @@ mod tests {
             CompileOutcome::Success {
                 pdf_path: PathBuf::from("proj/main.pdf"),
                 kind: CompileKind::Full,
-            },
+            page_hashes: Vec::new() },
         ]));
         h.compile(req("main.tex"));
         wait_until(|| log.statuses().contains(&failed_dto(FailureKind::Timeout))).await;
@@ -534,7 +615,7 @@ mod tests {
             CompileOutcome::Success {
                 pdf_path: PathBuf::from("proj/main.pdf"),
                 kind: CompileKind::Full,
-            },
+            page_hashes: Vec::new() },
         ]));
         h.compile(req("a.tex"));
         wait_until(|| runner.calls().len() == 1).await;
@@ -584,7 +665,7 @@ mod tests {
             CompileOutcome::Success {
                 pdf_path: PathBuf::from("proj/main.pdf"),
                 kind: CompileKind::Full,
-            },
+            page_hashes: Vec::new() },
         ]));
         h.compile(req("a.tex"));
         wait_until(|| runner.calls().len() == 1).await;
@@ -673,7 +754,7 @@ mod tests {
             CompileOutcome::Success {
                 pdf_path: PathBuf::from("out.pdf"),
                 kind: CompileKind::Full,
-            }
+            page_hashes: Vec::new() }
         }
     }
 

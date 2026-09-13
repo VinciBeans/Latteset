@@ -11,6 +11,7 @@ pub mod scheduler;
 pub mod settings;
 pub mod synctex;
 pub mod types;
+pub mod xdv;
 
 #[cfg(test)]
 mod integration_tests;
