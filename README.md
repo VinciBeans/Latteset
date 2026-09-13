@@ -52,6 +52,18 @@ npm install && npm run tauri dev
 - **根文件**：正则启发式自动探测（含 `\documentclass` 的顶层 .tex），可手动覆盖。
 - **设置**：引擎（XeLaTeX 默认，可切 LuaLaTeX/pdfLaTeX）、编译模式、防抖、超时、根文件覆盖；全局 + 项目（`.texpresso/settings.json`）两层，改即生效。
 
+## 命令行与 MCP（无 GUI，面向自动化）
+
+GUI 之外，同一套核心也能被脚本与 AI Agent 直接驱动：`crates/texpresso-server` 提供 `texpresso-cli`（一条命令一个 JSON）与 `texpresso-mcp`（MCP over stdio），可完成打开项目、编译并拿到结构化错误与诊断、读写文件、大纲、SyncTeX 双向定位。
+
+```bash
+cargo build -p texpresso-server            # 产物在工作区 target/debug（未打进安装包）
+texpresso-cli --project <项目目录> compile # 退出码 0=编译通过，1=编译未通过
+texpresso-mcp --project <项目目录>         # 供 harness / Agent 拉起（stdio）
+```
+
+用法、工具清单与限制见 [docs/cli-mcp-plan.md](./docs/cli-mcp-plan.md)；注意同一项目**不要**同时用 GUI 和 CLI 编译（会抢 `tmp/`）。
+
 > 开发与设计细节（构建、测试、Roadmap 等）见 [docs/](./docs/) 与 [CONTEXT.md](./CONTEXT.md)。
 
 ## 许可

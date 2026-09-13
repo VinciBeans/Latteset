@@ -34,14 +34,14 @@
 
 原则：
 
-- 依赖单向：`前端 → IPC 契约 → src-tauri → texpresso-infra → texpresso-core`（接口在 core、实现在 infra、注入在 src-tauri；ADR-0010）
+- 依赖单向：`前端 → IPC 契约 → src-tauri → texpresso-infra → texpresso-core`（接口在 core、实现在 infra、注入在 src-tauri；ADR-0010）。**第二条入口**：`CLI / MCP → texpresso-server → texpresso-infra → texpresso-core`（同样不碰 Tauri，见 §2 末）
 - 上层（src-tauri）不直接调用 OS API：文件与进程一律经 core trait，路径安全策略（D8）在 core `project::paths`
 - 领域层不依赖 Tauri、不做 IO；IO 经基础设施，测试经 trait 注入
 - 不做 ports & adapters 式 trait 泛滥；只有真正需要替换/注入的边界才抽象（CompileRunner、SyncTexProvider）
 
 ## 2. Rust 侧：workspace 与模块
 
-Cargo workspace 三 crate：ADR-0006 拆出 core，ADR-0010 再拆出 infra（基础设施层与 core 同级）。
+Cargo workspace 四 crate：ADR-0006 拆出 core，ADR-0010 再拆出 infra（基础设施层与 core 同级）；⑥ 新增 headless 交互层 server（与 src-tauri 同级，两条入口共用 core + infra）。
 
 **texpresso-core**（无 Tauri 依赖、无 IO，全量可单测）
 
@@ -73,6 +73,17 @@ Cargo workspace 三 crate：ADR-0006 拆出 core，ADR-0010 再拆出 infra（�
 | `commands` | invoke 处理器：DTO 转换、路径策略调用、错误契约 `{ code, message }`；无业务逻辑 |
 | `events` | 事件契约（specta 生成）+ `TauriSink`（监视结果 → tauri 事件）+ 调度器 Emitter 适配 |
 | `lib` | 装配：构造 infra 实现注入 core trait 位；持有 AppState（调度器、设置、项目状态） |
+
+**texpresso-server**（无 GUI 交互层：headless 服务 + CLI + MCP，roadmap ⑥）
+
+| 模块 | 职责 |
+|---|---|
+| `lib` | `Session`：项目会话（打开项目、编译并同步返回结果、大纲、文件读写、SyncTeX、设置读取）；直接实例化 infra 的 fs/runner/synctex/storage，不经 scheduler、无 watch、无 Tauri |
+| `mcp` | MCP over stdio：手写最小 JSON-RPC（initialize / tools/list / tools/call / ping），11 个 tool；工具内错误回 `isError: true` |
+| `bin/texpresso-cli` | 一条命令一个 JSON（stdout 只有 JSON，日志走 stderr）；退出码：0 成功 / 1 编译未通过 / 2 用法·路径 / 3 内部 |
+| `bin/texpresso-mcp` | 常驻 stdio server（harness 侧本地拉起） |
+
+契约与限制见 [modules.md](./modules.md) §8.1，用法与实测见 [cli-mcp-plan.md](./cli-mcp-plan.md)。
 
 ## 3. 前端侧：模块划分
 

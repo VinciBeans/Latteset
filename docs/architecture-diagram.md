@@ -7,6 +7,7 @@
 
 依赖方向严格单向：`视图 → 状态 → 服务 → IPC 契约 → src-tauri（接线） → texpresso-infra（基础设施） → texpresso-core（领域）`。
 接口在 core、实现在 infra、注入在 src-tauri：**core 不依赖 infra**（也不依赖 Tauri、不做 IO，ADR-0006）；**src-tauri 不碰 OS API**（文件与进程一律经 core trait，ADR-0010）。
+**第二条入口（roadmap ⑥）**：`harness / Agent → texpresso-server（CLI / MCP） → texpresso-infra → texpresso-core`——同样不碰 Tauri、不碰 OS API，与 GUI 并列而非上下级。
 
 <!-- mermaid: 01-layers -->
 ```mermaid
@@ -30,6 +31,18 @@ flowchart TB
     EVENTS["events.rs<br/>事件契约（specta）· TauriSink · Emitter 适配"]
     STATE["lib.rs 装配<br/>AppState：构造实现并注入 core trait 位"]
     CMDS --- STATE
+  end
+
+  AGENT["harness / Agent（DeepSeek Harness 等）<br/>不经 GUI，直接驱动「读 → 改 → 编译验证 → 修」"]
+
+  subgraph SERVER["crates/texpresso-server · 无 GUI 交互层（headless，无 Tauri）"]
+    direction TB
+    BINS["bin/texpresso-cli · bin/texpresso-mcp<br/>一条命令一个 JSON（stdout 只有 JSON）／MCP over stdio"]
+    SESS["lib.rs · Session<br/>打开项目 · 编译并同步返回结果 · 大纲 · 文件读写 · SyncTeX · 设置"]
+    MCPM["mcp.rs<br/>最小 JSON-RPC：initialize / tools/list / tools/call<br/>11 个 tool，错误回 isError"]
+    BINS --> SESS
+    BINS --> MCPM
+    MCPM --> SESS
   end
 
   subgraph INFRA["crates/texpresso-infra · 基础设施（外部依赖与文件系统唯一落点，无 Tauri）"]
@@ -63,6 +76,13 @@ flowchart TB
   SVC -->|"invoke 命令（结果 ok / CmdError）"| CONTRACT
   CONTRACT -.->|"emit 事件（单向：事件 → store 动作）"| SVC
   CONTRACT --> CMDS
+  AGENT --> BINS
+  SESS -->|"领域策略：路径（D8）/ 根文件探测 / 大纲"| PROJECT
+  SESS --> SETTINGS
+  SESS -->|"经 core trait 调用实现"| IFS
+  SESS --> IRUN
+  SESS --> ISYN
+  SESS --> ISTO
   EVENTS -.->|"实现 WatchSink（监视结果 → tauri 事件）"| IWATCH
   CMDS -->|"领域策略：路径（D8）/ 设置 / 大纲"| PROJECT
   CMDS --> SETTINGS
@@ -95,12 +115,15 @@ flowchart TB
   classDef fe fill:#e9e8ff,stroke:#4a4cd8,color:#241f3a
   classDef ipc fill:#fff3d6,stroke:#c98a12,color:#3a2c05
   classDef shell fill:#e4f6ec,stroke:#2f8f6b,color:#123024
+  classDef headless fill:#dff0fb,stroke:#2b7fb8,color:#0d2536
   classDef infra fill:#ffe6e0,stroke:#c0563a,color:#3a1a12
   classDef core fill:#f3e8ff,stroke:#7c3aed,color:#2b1a45
   classDef ext fill:#f0f0f4,stroke:#8a8aa0,color:#2b2438
   class VIEW,STORE,SVC,WORKERS fe
   class CONTRACT ipc
   class CMDS,EVENTS,STATE shell
+  class BINS,SESS,MCPM headless
+  class AGENT ipc
   class IFS,IRUN,ISYN,ISTO,IWATCH infra
   class COMPOSE,SCHED,PROJECT,LOGP,SYNM,SETTINGS core
   class TEXLIVE,SXCLI,PROJ,PDFOUT,GSET ext
@@ -111,7 +134,8 @@ flowchart TB
 **读图要点**
 
 - **只有服务层碰 IPC**：视图与 store 不直接 invoke；命令与事件类型全部由 Rust 侧 specta 生成（`src/bindings.ts`，调试构建启动时刷新）。事件面与命令面共用一个边界：箭头向下为 invoke，虚线向上为 emit。
-- **三层 Rust，两个"唯一落点"**：core 是唯一的**策略与接口**落点（队列语义、探测规则、D8 路径策略、trait 定义）；texpresso-infra 是唯一的**外部依赖与文件系统**落点（tokio::fs、tokio::process、notify、设置落盘）。src-tauri 只做接线与契约（DTO、事件形态、装配注入）。
+- **四个 Rust crate，两个"唯一落点"**：core 是唯一的**策略与接口**落点（队列语义、探测规则、D8 路径策略、trait 定义）；texpresso-infra 是唯一的**外部依赖与文件系统**落点（tokio::fs、tokio::process、notify、设置落盘）。src-tauri 只做接线与契约（DTO、事件形态、装配注入）；texpresso-server（⑥）是**与 src-tauri 并列的第二入口**——headless，不装配 scheduler/watch，不经 IPC 契约，直接调 core 策略 + infra 实现。
+- **两条入口不互相认识**：GUI 走「前端 → IPC → src-tauri → infra → core」，headless 走「harness/Agent → server → infra → core」。二者**共用同一份**路径策略与 SyncTeX 实现（`core::synctex` / `core::project::paths`），但**不并发编译同一个项目**（会抢 `tmp/`，约定 headless 独占）。
 - **core 零 IO**：进程、文件、监视、CLI 全在 infra；core 经 trait（`FileSystem` / `CompileRunner` / `SyncTexProvider`）被注入，单测用 fake 实现。虚线 `实现 Xxx` 表示「core 声明接口、infra 提供实现、运行期由 core 反向调用」。
 - **infra 不认识 Tauri**：监视结果经 `WatchSink` 回调，事件形态（compile-status / files-changed …）在 src-tauri 的 events.rs 定型。
 - 图中 `~~~` 是不可见连线，只用于固定分层顺序，不表示依赖。

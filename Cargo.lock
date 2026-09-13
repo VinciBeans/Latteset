@@ -4422,6 +4422,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "texpresso-server"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "texpresso-core",
+ "texpresso-infra",
+ "thiserror 2.0.20",
+ "tokio",
+ "tokio-util",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
 name = "thiserror"
 version = "1.0.69"
 source = "registry+https://github.com/rust-lang/crates.io-index"

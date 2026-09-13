@@ -223,6 +223,6 @@ node scripts/bench.mjs --with-real         # 追加真实模板档（依赖本�
 
 ## 后置/未决清单
 
-多窗口与多项目 ｜ 外部查看器 ｜ TinyTeX 捆绑 ｜ 自动更新 ｜ 代码签名证书 ｜ 冲突对话框（v1 以状态栏「外部修改」点击重载替代，独立对话框后置）｜ 多面板布局 ｜ LSP 具体集成（v1.1 规划，monaco-languageclient 需专项研究）｜ **CLI + MCP 交互接口**（计划任务，仅记录、待实现）：目标让 harness/Agent（如 DeepSeek Harness）不经 GUI 直接调用 TexPresso 的编译/预览/SyncTeX 能力——见 [cli-mcp-plan.md](./cli-mcp-plan.md)
+多窗口与多项目 ｜ 外部查看器 ｜ TinyTeX 捆绑 ｜ 自动更新 ｜ 代码签名证书 ｜ 冲突对话框（v1 以状态栏「外部修改」点击重载替代，独立对话框后置）｜ 多面板布局 ｜ LSP 具体集成（v1.1 规划，monaco-languageclient 需专项研究）
 
 **已否决**：引擎语言自适应规则（19 个真实模板双引擎实测中 **0 例**因默认 XeLaTeX 选错、`\RequirePDFTeX` 为 0/7374、文档口径 19/19 兼容 XeLaTeX——"引擎自动推断"解决的是不存在的问题；唯一两种引擎都不行的是日文 `jsarticle`，需 platex，不在三引擎范围内。见 [research/template-corpus-survey.md](./research/template-corpus-survey.md)）｜ 增量编译具体策略（latexmk 增量 = 整份单遍重排，属引擎上限，见 ADR-0005）

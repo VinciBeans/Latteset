@@ -321,3 +321,39 @@ DEBUG watch 原始事件: [".texpresso\settings.json"] kind=Modify(Any)  ← 第
 **处置**：探针文档含中文时用 `xelatex`/`lualatex`；只有在 **Windows PowerShell 5.1**（非本机 `pwsh`）上才需要担心 `Set-Content -Encoding UTF8` 的 BOM 问题。
 
 > 与 AGENTS.md §4 的「PowerShell 转义」是同类排查场景：反斜杠过度转义、编码、**引擎选择**都会表现为 exit 12，先确认是哪一个再改。
+
+## headless（CLI / MCP）怎么跑、怎么排障（2026-09，⑥ 落地记录）
+
+**跑起来**（二进制是工作区产物，`cargo build -p texpresso-server` 后位于 `src-tauri/target/debug/texpresso-{cli,mcp}.exe`）：
+
+```powershell
+texpresso-cli --project test_file\projects\multifile compile        # stdout 只有 JSON
+texpresso-cli --project <dir> compile | ConvertFrom-Json | % { $_.compile.status, $_.compile.errors }
+texpresso-mcp --project <dir>                                        # stdio server（harness 本地拉起）
+```
+
+**四条踩过的坑**：
+
+1. **PowerShell 会吃掉 `$`**：直接把含公式的 LaTeX 当命令行参数传，`$E = mc^2$` 的 `$...$` 被 PowerShell 当变量展开 → 文件里剩下 `E = mc^2`（无数学模式）→ 编译报 `! Missing $ inserted.`。**处置**：用 stdin 写——
+   ```powershell
+   $body = @'
+   \section{测试}
+   能量 $E = mc^2$。
+   '@
+   $body | texpresso-cli --project <dir> write chapters/intro.tex -
+   ```
+   （单引号 here-string = 不求值；`-` 表示从 stdin 读内容。）
+2. **`write` 不会替你建目录**：父目录不存在 → 报 `NotFound` 并说明"父目录必须已存在"（与 GUI `save_all` 同契约）。先建目录，或先写已存在的目录下的文件。
+3. **退出码语义**：`compile` 的 `0` 只表示 **status=success**；编译未通过是 `1`（**不是**命令出错）。`2` = 用法/路径类错误，`3` = 内部错误。
+4. **配置目录**：默认与 GUI **同一份**（Windows `%APPDATA%\com.texpresso.app`），所以 CLI 改了设置 GUI 也会看到；要隔离（测试/CI）用 `--config-dir <dir>` 或 `TEXPRESSO_CONFIG_DIR`。
+
+**并发禁忌**：同一项目**不要**同时用 GUI 和 CLI 编译——两路 latexmk 抢同一个 `tmp/`（先到先写、后到覆盖）。当前约定 headless 独占，没有项目锁。
+
+**MCP 侧自检**：协议没握手成功时先手工喂一行看回什么——
+
+```powershell
+'{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{}}}' |
+  texpresso-mcp --project <dir>
+```
+
+应回 `result.protocolVersion` + `capabilities.tools` + `instructions`。日志（含每一次工具调用）走 **stderr**，stdout 只有协议报文——排查时别把两者混在一个管道里。

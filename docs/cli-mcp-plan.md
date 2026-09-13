@@ -1,109 +1,110 @@
-# CLI + MCP 交互接口 · 计划任务（仅记录）
+# CLI + MCP 交互接口（roadmap ⑥）
 
-> 状态：**计划任务，仅记录，待实现**。本文档是后续实现的唯一事实来源，对应 [design.md](./design.md) 后置/未决清单里的「CLI + MCP 交互接口」条目。
-> 目标：让 harness/Agent（如 DeepSeek Harness）**不经 GUI 直接调用** TexPresso 的编译/预览/SyncTeX 能力，形成「读 → 改 → 编译验证 → 修」闭环。
-> 标注约定：**已核实**=读过代码/文档确认；**分析结论**=设计推演，未实测；未标注规划项一律视为未实现。
+> 状态：**已实现**（2026-09）。让 harness / Agent **不经 GUI** 直接调用 TexPresso 的编译/大纲/SyncTeX 能力，形成「读 → 改 → 编译验证 → 修」闭环。
+> 实现位置：`crates/texpresso-server`（headless 服务层 + 两个二进制）。设计依据与落地偏差见 §4。
+> 标注约定：**已核实**=读过代码/实测确认；**分析结论**=设计推演（未实测）。
 
-## 1. 现状盘点（已核实，2026-08）
+## 1. 形态与用法
 
-### 1.1 命令面（`src-tauri/src/commands.rs`，tauri command，DTO 进出无业务逻辑）
+```
+crates/texpresso-server
+├── lib.rs             —— Session：headless 会话（打开项目/编译/大纲/文件/SyncTeX）
+├── mcp.rs             —— MCP（stdio JSON-RPC + tools/list + tools/call）
+└── bin/
+    ├── texpresso-cli.rs —— 命令行（一条命令一个 JSON）
+    └── texpresso-mcp.rs —— MCP server（stdio）
+```
 
-| 命令 | 签名/返回 | 说明 |
+构建：`cargo build -p texpresso-server` → `src-tauri/target/debug/texpresso-{cli,mcp}.exe`（**工作区产物，未打进安装包**）。
+
+```bash
+# CLI：一条命令一个 JSON（stdout 只有 JSON，日志走 stderr）
+texpresso-cli --project <目录> open
+texpresso-cli --project <目录> tree
+texpresso-cli --project <目录> outline
+texpresso-cli --project <目录> read chapters/intro.tex
+texpresso-cli --project <目录> write chapters/intro.tex -      # 内容从 stdin 读（避免 shell 转义吃掉 $）
+texpresso-cli --project <目录> compile                        # 默认完整 latexmk；--quick 单趟
+texpresso-cli --project <目录> compile | jq .compile.errors    # 结构化错误 + 诊断
+texpresso-cli --project <目录> forward chapters/intro.tex 3    # 源码 → PDF 页码/坐标
+texpresso-cli --project <目录> inverse 5 --x 100 --y 600       # PDF → 源码
+
+# MCP：stdio server（harness 侧配置成本地 server 即可）
+texpresso-mcp --project <目录>
+```
+
+**退出码**：`0` 成功（`compile` 仅当 `status == "success"`）；`1` 编译未通过；`2` 用法/路径类错误；`3` 内部错误。
+JSON 里同时有 `{ok, error:{code,message}}`，两种判断方式都可用。
+
+**配置目录**：默认与 GUI 相同（Windows `%APPDATA%\com.texpresso.app`），因此 CLI/MCP 与 GUI **共享同一份设置**；`--config-dir` 或环境变量 `TEXPRESSO_CONFIG_DIR` 可覆盖（测试/CI 隔离用）。
+
+## 2. 工具/命令清单（全部已实现）
+
+| CLI 子命令 | MCP tool | 说明 |
 |---|---|---|
-| `open_project` | `folder: String` → `ProjectInfo{root, root_file}` | 打开项目 + 根文件探测/覆盖校验 + 设置合并；已返回根文件，CLI 直接可用 |
-| `list_dir` | `path` → `Vec<DirEntryInfo>` | 递归文件树（排除 tmp/ 与隐藏项） |
-| `read_file` | `path` → `String` | 路径校验在项目根内（D8） |
-| `save_all` | `Vec<FileContent{path, content}>` → `()` | 批量写盘 |
-| `compile_now` | `()` → `()` | **fire-and-forget**：结果只走事件，无返回 |
-| `abort_compile` | `()` → `()` | 终止运行中编译 + 清空队列 |
-| `synctex_forward` | `file, line, column` → `SyncTexTarget{page,x,y}` | 源码 → PDF 定位 |
-| `synctex_inverse` | `page, x, y` → `SourcePositionDto{file,line,column}` | PDF → 源码定位 |
-| `get_settings` | `()` → `Settings` | 生效设置（含 mode/debounce/timeout/engine） |
-| `update_settings` | `SettingsPatch` → `Settings` | 局部更新（root_file 走项目覆盖，其余走全局） |
+| `open` | `project_open` | 打开项目 → 根文件 / 候选 / 生效设置 |
+| `compile [--quick]` | `compile` | **编译并等待结果**：`{status, failure, errors, pdf_path, elapsed_ms, engine, kind, upgraded_from_quick}` |
+| `status` | `compile_get_status` | 本会话最近一次编译状态 |
+| `errors` | `compile_get_errors` | 最近一次编译的结构化错误（含「原因 + 怎么改」诊断） |
+| `outline` | `outline_get` | 文档大纲（章/节 → `文件:行号`） |
+| `tree [--all]` | `project_tree` | 文件列表（默认只 `.tex`，排除 `tmp/` 与隐藏项） |
+| `read <路径>` | `file_read` | 读文件（非 UTF-8 → 明确错误） |
+| `write <路径> <内容\|->` | `file_write` | 写文件（父目录必须已存在，与 GUI 同契约） |
+| `forward <文件> <行>` | `synctex_forward` | 源码 → PDF 页码/坐标 |
+| `inverse <页> [--x --y]` | `synctex_inverse` | PDF → 源码（命中生成内容时就近回落 + `note` 说明） |
+| `settings` | `settings_get` | 生效设置（确认 mode/engine/timeout 与假设一致） |
 
-### 1.2 事件面（`src-tauri/src/events.rs`，Emitter 三回调 → tauri 事件）
+MCP 侧还实现了 `initialize`（回显受支持的 `protocolVersion` + `capabilities.tools` + `instructions`）、`notifications/initialized`、`ping`、`tools/list`；
+未知方法回 JSON-RPC `-32601`，**工具内错误按 MCP 约定回 `isError: true` 的 content**（Agent 能读到 `{code,message}`，而不是一个裸协议错误）。
 
-| 事件 | 载荷 |
-|---|---|
-| `compile-status` | `CompileStatusDto{phase: queued\|running\|success\|failed, kind}` |
-| `errors-updated` | `Vec<ErrorEntry{message, file, line, kind}>`（结构化错误，AI 可直接消费） |
-| `pdf-updated` | `PdfUpdated{path}` |
-| `files-changed` | `FilesChanged{paths, structural}`（structural=增删改名，内容修改为 false） |
-| `settings-changed` | `Settings` |
+## 3. 实测（2026-09，本机 TeX Live 2026）
 
-### 1.3 可复用资产（核心资产已与 Tauri 解耦）
+- **闭环走通**（`test_file/projects/multifile`）：`open` → `tree`（6 个 .tex）→ `outline`（章/节带 `文件:行号`）→ `read` → `write`（经 stdin 写入含 `$E=mc^2$` 的段落）→ `compile` 成功（`elapsed_ms=912`，`pdf_path=…\main.pdf`）。
+- **失败路径可操作**：写入一段缺 `$` 的公式 → `compile` 返回 `status: failed`、**退出码 1**，错误里带 `diagnosis.cause`「在数学模式之外用了上下标（_ 或 ^）…」与 `hint`「把该片段放进 `$...$`…」；改对后再 `compile` → `success`。
+- **SyncTeX**：`forward chapters/intro.tex 3` → `page 4 (70.87, 47.48)`；`inverse 5 --x 100 --y 600` → `chapters/intro.tex:24`。
+- **确定性**：同一份源码连编两次，`main.pdf` SHA-256 一致（与 roadmap ㉚ 的 `SOURCE_DATE_EPOCH` 一致）。
+- **MCP 会话**：手工喂 `initialize` / `notifications/initialized` / `tools/call compile` / `tools/call compile_get_status`，四条响应形状符合协议；仓库内有 `tests/mcp_stdio.rs`（**真实二进制 + stdio 管道**，5 个用例 + 1 个 `#[ignore]` 真编译用例）把这条链路固化成回归。
 
-- `texpresso-core`：scheduler（合并队列/失败语义/abort）、log_parser（`.log` → `ErrorEntry` + 诊断）、project（文件收集/根文件探测/树排除）、settings（全局+覆盖合并）、synctex provider（CLI 封装）、**outline（文档结构树解析 + `load` 编排，见 `crates/texpresso-core/src/outline.rs`；GUI 走 `get_outline` 命令调它）**。
-- `crates/texpresso-infra/src/runner.rs`：`LatexmkRunner`（独立 `CompileRunner` trait 实现：tokio 进程、Quick 直调引擎 / Full latexmk、超时树杀、PDF 拷贝），headless 可直接实例化复用。
-- `crates/texpresso-infra/src/storage.rs`：`SettingsStorage` 按路径构造（全局设置目录路径由调用方传入），headless 传相同路径即可；`is_self_write` 过滤当前**仅用于 settings.json**（`watch.rs`），`.tex` 无自写盘过滤。
+## 4. 落地时的三处偏差（与 §4 原计划）
 
-## 2. 工具清单（建议暴露，按 AI 价值排序）
+| 原计划 | 实际落地 | 为什么 |
+|---|---|---|
+| P0-1：`CompileOutcome` 补 `elapsed` + actor 写 `Arc<RwLock<CompileSnapshot>>` | **不加 core 字段、不动 actor**：`elapsed_ms` 在 server 调用处用 `Instant` 测；`status`/`errors` 的"最近一次"存在 `Session` 里 | 快照只有**同进程**看得见（CLI 是独立进程，读不到 GUI 的内存），GUI 本来就有事件流。加字段会牵动 core 全部构造点与测试，收益相同 |
+| P0-2：`lib.rs` setup 参数化，GUI/CLI 共用装配 | 只共享**基础设施构造方式**（TokioFs / LatexmkRunner / SettingsStorage / SyncTexCli），不共用 `lib.rs` | GUI 要 spawn watch + scheduler + tauri 事件，headless 全都不需要；共享装配反而把 tauri 拖进 headless 依赖 |
+| 用 clap 解析 CLI | **手写解析**（≈80 行 + 8 个单测） | 本 crate 保持**零新增依赖**：沙箱/离线环境也能构建（`clap` 需要联网取包，实测被沙箱拒绝） |
 
-### 第一梯队：AI「改 → 编 → 验」闭环核心（必须做）
+P0-3（路径与 SyncTeX 策略下沉 core）按计划做了：`core::synctex::{pdf_path_for_root, synctex_data_path, resolve_inverse}`
+（含 ㉒ 的生成产物分类 + 就近回落 + 提示文案），GUI 命令面与 headless 调同一份 → 不会行为漂移。
 
-| CLI 子命令 | MCP tool | 说明 | 复用现状 |
-|---|---|---|---|
-| `compile --wait` | `compile` | 触发编译并**返回结果**（status/errors/pdf 路径/耗时） | 需包装（现状 fire-and-forget，见 §4 P0-1/2） |
-| `errors` | `compile_get_errors` | 结构化错误 `{file, line, message, kind}` | log_parser + errors-updated 已有 |
-| `status` | `compile_get_status` | 当前编译状态 | CompileStatusDto 已有 |
-| `abort` | `compile_abort` | 终止编译 | abort_compile 已有 |
-| `open-project` | `project_open` | 打开项目 + 根文件探测 + 生效设置 | open_project 已有 |
+## 5. 已知限制（形态已定，写清楚而不是埋着）
 
-### 第二梯队：AI 上下文感知（高价值）
+- **同一项目不要同时用 GUI 和 CLI 编译**：两路 latexmk 会抢同一个 `tmp/`（先到先写、后到覆盖）。约定 **headless 独占**；GUI 那条路无自写盘过滤（`.tex` 目前只有 settings.json 有过滤），想并行需要给 watch 加一次性忽略通道（未做）。
+- **没有合并队列 / 超时重试 / 手动终止**：headless 是"一条命令跑一次拿结果"（AI 场景正是在此），超时树杀仍在 runner 内生效。
+- **`file_write` 不代建目录**：父目录必须已存在（与 GUI `save_all` 同契约）。Agent 要新建子目录时先建目录（或用 GUI）。
+- **不暴露预览渲染**：AI 不看像素——`compile` 返回 `pdf_path`，AI 自己读 PDF。
+- **状态订阅（MCP notifications）未做**：一期用"`compile` 同步返回 + `status`/`errors` 快照"覆盖；有真实订阅需求再做 Emitter fanout（原 P1-5）。
+- **根文件探测每次重扫**：多数项目 <100ms；大项目再考虑缓存（缓存一致性成本 > 收益）。
 
-| CLI 子命令 | MCP tool | 说明 | 复用现状 |
-|---|---|---|---|
-| `outline` | `outline_get` | 文档结构树（章→节→行），AI 理解文档语义结构 | **已在 core**（`texpresso-core::outline` + `get_outline` 命令，前端已改调——见 §4 表后说明）；CLI 命令本体待实现 |
-| `list-files` | `project_tree` | 项目 `.tex` 文件树 | list_dir 已有 |
-| `read` / `write` | `file_read` / `file_write` | 读写文件 | read_file / save_all 已有 |
-| `synctex-forward` | `synctex_forward` | 源码位置 → PDF 页码 | 已有 |
-| `synctex-inverse` | `synctex_inverse` | PDF 页码 → 源码位置 | 已有 |
+## 6. 原计划编号对照（本文档旧版的 P0/P1 条目）
 
-### 第三梯队：状态订阅（MCP 专属价值；CLI 侧用 `--wait`/快照代替）
+> 旧版按「P0-1…P1-5」编号计划；源码注释与 roadmap 里仍可能引用这些编号（如 `outline.rs` 的 P1-4、⑥ 条目的 P0-1/2）。对照如下：
 
-- `pdf_updated` / `compile_status` / `errors` 通知（MCP notifications）。
-- `files_changed` 通知（含 structural 载荷）。
-- 一期可不做（用 §4 P0-1 快照轮询覆盖），有真实订阅需求再做 fanout（§4 P1-5）。
+| 旧编号 | 内容 | 现状 |
+|---|---|---|
+| P0-1 | `CompileOutcome` 加 `elapsed` + actor 写编译快照 + `status`/`errors` 查询命令 | **改为会话内快照**（`elapsed` 在调用处测），命令面已提供 `status`/`errors`（见 §4） |
+| P0-2 | headless `run_once` + `lib.rs` setup 参数化共用装配 | **部分**：`run_once` 已落地；装配不共用（见 §4） |
+| P0-3 | `pdf_path_for_root` / SyncTeX 请求构造下沉 core，GUI 改调 | **已做**（`core::synctex::{pdf_path_for_root, synctex_data_path, resolve_inverse}`） |
+| P1-4 | outline 解析下沉 Rust（前端改调 `get_outline`） | **早已落地**（更早的提交，见 [modules.md](./modules.md) §3.5） |
+| P1-5 | Emitter 三回调改多订阅者 fanout（跑 MCP notifications） | **未做**（一期用快照；见 §5） |
 
-### 暂不暴露 / 不做
+## 7. harness 接线（DSH 示例）
 
-- **预览渲染**（pdf.js canvas）：AI 不看像素，暴露 PDF 文件路径即可（AI 自己有 reader）。
-- `settings` 修改：低价值；保留 `settings_get` 让 AI 确认 mode/engine/debounce 即可。
-- 项目级锁 / watch `IgnorePaths`：**形态定案前不动**（见 §4 注意事项）。
-
-## 3. 关键设计建议（分析结论）
-
-1. **命令式一次性语义**：AI 场景要 `compile --wait`（跑一次、拿结果），不需要合并队列/防抖/watch 那套 GUI 体验逻辑；直接复用 `LatexmkRunner` 跑一次完整编译（超时树杀仍在 runner 内），不走 scheduler 状态机——简单、结果确定。注：因此无「超时重试」语义（GUI scheduler 有），AI 场景可接受。
-2. **形态**：workspace 新增 `crates/texpresso-server`：服务层（无 tauri 依赖）+ `cli` 二进制 + `mcp` 二进制；MCP 用 **stdio 传输优先**（harness 本地拉起最简单）。headless setup 复用 fs/runner/synctex/storage 的构造（src-tauri `lib.rs` setup 参数化，不 spawn watch）。
-3. **outline 下沉**：解析已在 Rust 服务层（`texpresso-core::outline`），GUI 前端改调 `get_outline` 命令、无双实现；`src/texParse.ts` 仍供折叠/补全使用。
-
-## 4. 优化点：小改动换 CLI/MCP 强化，GUI 零/极小影响（分析结论）
-
-> 共同前提：现有 GUI 路径（事件流 / watch / scheduler actor / 前端命令调用）**一行不改**即可获得下述收益，全部为「纯新增或可选参数」形态。
-
-### P0（建议先做）
-
-| # | 改动点 | GUI 影响 | CLI/MCP 收益 |
-|---|---|---|---|
-| 1 | `CompileOutcome` 补 `elapsed: Duration`（现无耗时字段）；`actor.rs on_finished` 顺手写 `Arc<RwLock<Option<CompileSnapshot>>>`（status/errors/pdf 信息在回调处已齐）；新增 `status`/`errors` 查询命令 | 零（GUI 走事件流不读快照；前端 DTO 忽略新字段） | `compile --wait` 一次返回 `{status, errors, pdf_path, elapsed}`；status/errors 变同步查询；AI 可感知编译耗时（与延迟预算挂钩） |
-| 2 | headless `run_once`：直接实例化 `LatexmkRunner` 跑一次；`lib.rs` setup 参数化（headless 不 spawn watch/不初始化 tauri 依赖），传相同全局设置路径 | 零（GUI 继续走 scheduler 路径） | 单命令单次完整编译+结果；进程启动快、无 watcher 开销 |
-| 3 | `pdf_path_for_root`（`commands.rs` 私有）与 SyncTeX 请求构造下沉 core，GUI 命令改调 | 零（行为等效重构） | CLI 的 PDF 路径/SyncTeX 逻辑与 GUI 永远一致，无双实现漂移 |
-
-### P1（按需跟进）
-
-| # | 改动点 | GUI 影响 | CLI/MCP 收益 |
-|---|---|---|---|
-| 5 | Emitter 三回调改多订阅者 fanout（tauri 注册为第一路） | 零（第一路照发） | MCP notifications（编译/PDF/错误推送）；**建议后置**，一期用快照轮询 |
-
-> P1-4（outline 下沉 Rust）已落地：core `outline` 模块 + `get_outline` 命令，前端 `stores/outline.ts` 改调，`OutlinePane` / `events.ts` / `App.vue` 零改动，core 单测含与旧前端实现的对拍用例（见 [modules.md](./modules.md) §3.5）；CLI 侧 `outline` 子命令本体仍待实现。
-
-### 注意事项（形态定案前不动代码）
-
-- **CLI/GUI 并发同项目**：CLI 独立进程写 `.tex` 后显式编译，若 GUI 同时开着（watch 活跃），两路 latexmk 抢同一 `tmp/` 可能互相覆盖/竞争。方案二选一：约定 headless 独占；或 watch 加 `IgnorePaths` 一次性忽略通道（`.tex` 目前无自写盘过滤，仅 settings.json 有）。取决于 MCP server 是否内嵌 GUI 进程，**形态定了再实现**。
-- **根文件探测每次重扫**：CLI 每命令 `collect_tex_files` + 正则探测，多数项目 <100ms 可接受；真要大项目再考虑 `.texpresso/state.json` 缓存（缓存一致性成本大于收益，暂不做）。
-- **run_once 与 scheduler 语义差异**：无合并队列/超时重试/手动终止（AI 场景 Accept；超时树杀在 runner 内仍生效）。
-
-### 落地顺序
-
-1. P0-1（elapsed + 快照）→ 2. P0-2（run_once + headless setup）→ 3. P0-3（路径逻辑下沉 core）——三步做完，`open`/`compile --wait`/`status`/`errors`/`synctex` 即低成本成立；
-2. P1-5（fanout）按实际需求跟进（P1-4 已完成，见 §4 表后说明）。
+```yaml
+# ~/.dsh/profiles/web/cordis.patch.yml（MCP 层）
+mcp:
+  servers:
+    texpresso:
+      command: "<node 不需要；这里直接是可执行文件>"
+      args: ["E:/Works/tex-presso/src-tauri/target/debug/texpresso-mcp.exe", "--project", "<默认项目目录>"]
+```
+> `--project` 只是"预打开"：工具调用仍可带 `project` 参数切换到别的项目（一个 server 管多项目已实测）。

@@ -18,12 +18,13 @@
 | ㉕ | 学位论文首编超时 | 2026-09 | 上限 **600→1800s**；**不再静默重试**（旧行为要白等两个超时窗口）；超时**进错误列表**并带证据化诊断（首编/源文件数/日志页码 → 慢 vs 疑似卡住；日志已有致命错误则直接报那条）；`Diagnosis.suggested_timeout_secs` + ErrorList 一键「提高到 Ns 并重试」。真机 cycle 已验证。**真实模板 DoD 被 ㉖ 阻塞**（见 §6.1） |
 | ㉘ | 编辑期轻量出图 + 空闲收敛 | 2026-09 | 实测省 **40.2%**（6/6 档达标）→ 落地：Quick 直调引擎 / Full 完整 latexmk；无产物自动升级 Full；`draft` 状态 + 状态栏「引用待更新」+ 2s 空闲收敛。真机 cycle 与 `fdb_latexmk` mtime 双重佐证。见 §6.3 |
 | ⑤ | SyncTeX 可靠性加固（含 ㉒、⑳） | 2026-09 | `scripts/synctex-report.mjs` + beamer 夹具；三组样本 34 点：正向/反向/同文件 **34/34**、跳到位 ≤3 行 31/34（**≤5 行 34/34**）；修掉「生成文件被当源码打开 / 失败静默 / 编译中竞争」三处缺陷。见 design.md §预览 |
-| ㉔ | 文档欠账：`cli-mcp-plan.md` 的路径引用迁到 `texpresso-infra` | 2026-09 | §1.3 的 `src-tauri/runner.rs` / `src-tauri/storage.rs` 已改为 `crates/texpresso-infra/src/{runner,storage}.rs`（本次复核确认无残留） |
+| ㉔ | 文档欠账：`cli-mcp-plan.md` 的路径引用迁到 `texpresso-infra` | 2026-09 | `src-tauri/runner.rs` / `src-tauri/storage.rs` 已改为 `crates/texpresso-infra/src/{runner,storage}.rs`（本次复核确认无残留；⑥ 完成后该文的现状盘点章节已改写为使用说明） |
 | ㉚ | 构建确定性验证 | 2026-09 | 新增 `scripts/check-determinism.mjs`；**实测**：不固定 `SOURCE_DATE_EPOCH` 时同一份源码两次编译不一致（差异只在 trailer `/ID`：Quick 首差 @92143 共 67 字节），固定后 **3 档 × 2 路径全部逐字节一致**；顺带实测排除"会影响 `\today`"的顾虑。见 [design.md](../design.md) §构建确定性 |
 | ㉛ | 编译决策日志 | 2026-09 | 触发侧打"不触发"的三类原因（无根文件 / 项目外 / 被忽略）；调度侧打 开始(root/kind/timeout)、入队等待、合并替换、直接执行最新、成功(draft)/失败(kind)、终止清队。core 加 `tracing` facade（非 IO，ADR-0006 仍成立） |
 | ㉓ | 编辑非 UTF-8 源文件 | 2026-09 | `read_file` 遇 `InvalidData` 返回**中文可操作提示**（另存为 UTF-8），前端状态栏提示条承接（此前是英文 IO 错误 + 无人接的 rejection = "点了没反应"）；**故意不做 lossy 打开**（保存会写回 U+FFFD = 静默损坏文件）。真机用 `中文GBK工程/子目录/gbk.tex` 验证（截图） |
 | ㉗ | `.ins`/`.dtx` 源码版模板 | 2026-09 | `Diagnosis.missing_file` + core `source_release_hint` + runner 读项目根：缺 `.cls` 且项目里有同名 `.ins` → 给具体命令 `xelatex X.ins`。**实测教训**：`.ins`/`.dtx` 同名时目录序会先选中 `.dtx`（文档源码，不是安装脚本）→ 显式优先 `.ins`；只有 `.dtx` 时不编造命令（指向模板 README）。真机两行式展示已验证 |
 | ㉑ | 外部改 `.texpresso/settings.json` 同步 `root_file` | 2026-09 | watch 热更新后同步内存 `ProjectState.root_file`（设覆盖按 D8 解析、清覆盖回自动探测）+ **合并基数改为磁盘纯全局**（否则"清掉覆盖"永远不生效——验证中实测发现）+ 前端 `settingsChanged` 不一致时 `syncProject()`；`detect_root` 的 IO 编排下沉 core 供命令面与 watch 共用。**真机双向验证**：外部设 → 提示消失；外部清 → 提示回来。顺带修掉外部非原子写导致的"读到截断文件即丢弃"（3×150ms 短重试） |
+| ⑥ | CLI + MCP 交互接口 | 2026-09 | 新 crate `texpresso-server`（headless `Session` + `texpresso-cli` + `texpresso-mcp`，**零新增第三方依赖**）。**实测闭环**：`open → read → write → compile(912ms 成功) → 改坏 → compile(status:failed + 诊断 + 退出码 1) → 修好 → compile 成功`；SyncTeX 正反向往返命中；同一源码两次编译 PDF 逐字节一致。回归固化：`cargo test -p texpresso-server`（9 用例）+ `--test mcp_stdio`（**真实二进制 + stdio 管道** 5 用例）+ 5 个 `#[ignore]` 真编译用例全绿。用法/工具表/偏差/限制见 [cli-mcp-plan.md](../cli-mcp-plan.md)，契约见 [modules.md](../modules.md) §8.1 |
 
 > 同期完成的**非 roadmap 工程项**（记录以免重复提议）：`texpresso-infra` 拆分（ADR-0010）、大纲解析下沉 Rust、架构图与渲染脚本、MCP Bridge 0.12→0.13 升级、真机验收清单固化。
 
@@ -44,7 +45,6 @@
 
 | ID | 事项 | W | D | C | V | P | 档 | 主要依据 |
 |---|---|---|---|---|---|---|---|---|
-| ⑥ | CLI + MCP 接口 | 3 | 5 | 2 | 2 | **2.00** | P1* | C 3→2（infra 拆分后 headless 复用直接）；W=3 故不入 P0，人工列 P1 首位 |
 | ⑦ | 大文档编辑器侧性能 | 5 | 4 | 4 | 3 | **1.29** | P1 | desktop 报告"最大可攻占缺口" |
 | ⑧ | 跨文件 LaTeX 语义操作 | 4 | 5 | 4 | 3 | **1.29** | P1 | P10：VS Code 明确缺失 |
 | ⑩ | 深色主题（Candy Desk 暗色） | 3 | 2 | 2 | 2 | **1.25** | P1 | 配置类第一痛点：206 票 / 23 万浏览 |
@@ -60,9 +60,9 @@
 | ⑰ | 自动更新 | 2 | 2 | 3 | 3 | **0.67** | P2 | design.md 后置项 |
 | ⑱ | 代码签名证书 | 2 | 2 | 2 | 4 | **0.67** | P2 | 分发信任，但外部依赖重 |
 
-> P0 档当前为空：㉕ 首编超时、⑤ SyncTeX 已完成并移入 §1 基线；下一优先项是下表首行的 ⑥。
+> P0 档当前为空：㉕ 首编超时、⑤ SyncTeX、⑥ CLI+MCP 已完成并移入 §1 基线；下一优先项是下表首行的 ⑦。
 
-\* ⑥ 的分数（2.00）在表内最高，但 **W=3** 不满足 P0 的 `W ≥ 4` 门槛——它的价值在"杠杆"（Agent 可驱动 + 顺带成为其他项的自动化验证手段），不在用户痛点权重，故列 P1 首位并注明理由，**不硬塞进 P0**。
+\* 已完成项里 ⑥ 的分数（2.00）仍是全表最高，但 **W=3** 不满足 P0 的 `W ≥ 4` 门槛——它的价值在"杠杆"（Agent 可驱动 + 顺带成为其他项的自动化验证手段），不在用户痛点权重。**下一步的排序不变**：Batch 3 按 ⑦ → ⑧⑨ → ⑩⑪㉖ 推进。
 
 ## 4. 快速通道（小项，成本 ≤2，随时可插）
 
@@ -154,7 +154,7 @@
 
 **建议顺序（与 §9 决策原则一致）**：先做 ㉘（测收益）+ ㉚㉛（便宜）→ 若证明瓶颈在"每趟重算"，再考虑 LuaLaTeX 回调做 overlay（不改 C）→ **"拥有引擎"只应作为一次显式战略决策（另立 ADR），而不是一个功能项**；真要走，走 Tectonic 而不是 texlive 的 xetex。
 
-## 6. 分档详述（未完成项）
+## 6. 分档详述（P1/P2 未完成项）
 
 ### 6.1 ㉖ 模板自带 latexmkrc 与构建约定的交互（P1，证据已就位）
 
@@ -164,11 +164,10 @@
 - **尚未定位**：用精简 rc 复刻其关键行跑最小工程仍能正常恢复 → **没有可复现的 rc 最小组合**。最小复现与可用绕过（`\include` → `\input`）见 [troubleshooting.md](../troubleshooting.md)「`\include{子目录/文件}` + `-output-directory`」。
 - **出口条件**：带 latexmkrc 的真实模板能编译成功，或产品给出明确可操作的诊断；③ 的 ">240s 未收敛" 记录在 ㉖ 修好后用 `node scripts/bench.mjs --with-real --no-warmup` 重测。
 
-### 6.2 ⑥ CLI + MCP 接口
+### 6.2 ⑥ CLI + MCP 接口 —— ✅ 已完成（2026-09）
 
-- **现状**：计划与清单见 [cli-mcp-plan.md](../cli-mcp-plan.md)；**ADR-0010 后 headless 复用更直接**（core + infra 都不依赖 Tauri）。
-- **杠杆价值**：既是差异化能力（Agent 可直接驱动「读 → 改 → 编译验证 → 修」），也是其他项的自动化验证手段。
-- **注意**：`compile_now` 目前是 fire-and-forget，`compile --wait` 需包装（见 cli-mcp-plan §4 P0-1/2）。
+已移入 [§1 基线](#1-已完成基线保留-id-与证据不再出现在待办中)。实现与用法、实测证据、与原计划的偏差、已知限制见 [cli-mcp-plan.md](../cli-mcp-plan.md)；实现契约见 [modules.md](../modules.md) §8.1。
+三条对后续项的影响：**① 自动化验证手段**——⑧⑨ 语义层、㉖ latexmkrc 这类"改完要证明真的对了"的项，现在可以先用 CLI 跑闭环再上真机；**② `compile` 有了确定性退出码**（0 成功 / 1 编译未通过），脚本化断言不再依赖解析日志；**③ 与 GUI 的分工写清了**——同一项目不并发编译（headless 独占），没有引入项目锁。
 
 ### 6.3 P1 其余项（理由未变）
 
@@ -199,7 +198,7 @@
 | 批次 | 内容 | 出口条件 |
 |---|---|---|
 | **Batch 1 收口** | ~~快速通道 ㉚㉛㉑㉓㉗~~（✅ 2026-09 全部完成） | 小项闭环（每项独立可交付）——**已达成** |
-| **Batch 2 攻核心承诺** | ⑥ CLI+MCP | Agent 能驱动「改 → 编 → 验」闭环 |
+| **Batch 2 攻核心承诺** | ~~⑥ CLI+MCP~~（✅ 2026-09 完成，移入 §1 基线） | Agent 能驱动「改 → 编 → 验」闭环——**已达成**（真机走通并固化为 `cargo test -p texpresso-server` 回归） |
 | **Batch 3 硬骨头** | ⑦ 大文档编辑器侧性能 → ⑧⑨ 语义层（合并） → ⑩ 深色主题 / ⑪ 预览状态保持 / ㉖ latexmkrc（**证据已就位，优先级应上调**） | 大文档打字不掉帧；跨文件重命名可用；主题一致；带 rc 的模板编译路径有结论 |
 | **独立里程碑** | ⑫ TinyTeX 捆绑 | 干净 Windows 机器零预装可用 |
 
@@ -225,12 +224,12 @@
 | ㉕ 首编超时 | modules.md §4.2 + design.md §失败语义 + [CONTEXT.md](../../CONTEXT.md)「超时」+ ErrorList 一键重试 |
 | ㉘ 编辑期单趟 + 空闲收敛 | design.md §附：latexmk 开销拆解 + modules.md §2.4 / §2.6 / §9.3 + `useIdleConvergence.ts` |
 | ⑤ SyncTeX | [ADR-0008](../adr/0008-synctex-via-cli-with-interface.md) + modules.md §5 + design.md §预览 + `scripts/synctex-report.mjs` |
-| ⑥ CLI+MCP | [cli-mcp-plan.md](../cli-mcp-plan.md) |
+| ⑥ CLI+MCP（**已实现**） | [cli-mcp-plan.md](../cli-mcp-plan.md)（用法/工具表/实测/偏差/限制）+ modules.md §8.1（契约与验证入口）+ `crates/texpresso-server` |
 | ⑦ 大文档编辑器侧性能 | modules.md §3.5「已知成本」+ §12.1 |
 | ㉖ latexmkrc 交互 | 本文件 §6.1 + troubleshooting.md「`\include{子目录/文件}` + `-output-directory`」 |
 | ㉚㉛ | [texpresso-live-rendering-roadmap.md](../texpresso-live-rendering-roadmap.md)（外部方案）+ 本文件 §5 |
 | ⑫ TinyTeX / ⑮⑯⑰⑱ | design.md §后置/未决清单 |
-| ㉔ 文档欠账（已修） | cli-mcp-plan.md §1.3 的路径引用已改为 `crates/texpresso-infra/src/{runner,storage}.rs` |
+| ㉔ 文档欠账（已修） | `crates/texpresso-infra/src/{runner,storage}.rs` 引用已就位（当时核对的是 cli-mcp-plan 的现状盘点章节，该章节已随 ⑥ 完成改写为使用说明） |
 
 ## 11. 不确定性与待补数据
 
@@ -244,3 +243,5 @@
 8. **③ 真实档数字需重测（㉕ 实测修正）**：`thesis-real-hithesis` 的 ">240s / >600s 未收敛" 至少部分是**"报错后 latexmk 挂住"**造成的（见 §6.1），不是纯慢。㉖ 修好后必须重跑 `node scripts/bench.mjs --with-real --no-warmup` 才能给真实论文档一个可信的耗时上界。
 9. **㉖ 的触发条件未定位**：`\include{子目录}` + `-outdir=tmp` 的最小复现在**无 rc / 精简 rc** 下 latexmk 都能自愈（建目录 + 重跑）；hithesis 那一档不自愈且挂起，**具体是 rc 的哪一行造成的还没定论**（已排除"单纯覆写 `$pdflatex` + 尾部 `;cp`"这一组合）。
 10. **beamer 的 2–4 行往返偏移未消除（已定性）**：三组样本里只有 beamer 有偏移，且换取块规则后不变 → 归因于 beamer/主题的 synctex 记录粒度。要进一步改善得离开"CLI + 记录匹配"这条路（例如自己在 `.synctex` 里做盒模型筛选），与 ⑤ 的成本/收益不成比例，**暂不做**。
+11. **⑥ 留了三个未做项**（不阻塞闭环，按需再开）：MCP 状态订阅（notifications，一期用 `compile` 同步返回 + `status`/`errors` 快照代替）、headless 与 GUI 并发编译同一项目的锁（现约定 headless 独占）、headless `file_write` 不代建父目录（与 GUI `save_all` 同契约）。
+12. **⑥ 的 `compile` 不再有"等待期状态"**：headless 是"跑一次拿结果"，`status` 只在**调用返回后**有意义（GUI 那种 `queued/running` 中间态不可见）。想让 Agent 看到进度需要先做第 11 条的订阅——目前没有证据表明需要。

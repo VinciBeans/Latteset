@@ -32,6 +32,8 @@
 
 core 内的调度器、探测、解析、合并全部是**无全局态**的纯逻辑或 task 内状态。
 
+> 上表是 **GUI 进程**的清单。headless 进程（§8.1）没有 Tauri state、没有调度器：唯一的状态是一个 `Session`（项目 + 最近一次编译结果），由 CLI/MCP 二进制自己持有。
+
 ## 2. 编译子系统（scheduler 大模块）
 
 ### 2.1 拆分
@@ -543,6 +545,40 @@ pub fn compile_request_manual(ctx: ComposeContext<'_>) -> Option<CompileRequest>
 | synctex_forward / inverse | 调 provider（失败按 100/200/300ms 退避重试）；`inverse` 输出 `InverseResultDto{source,note}`：命中生成产物/项目外文件时就近回落，落空则只给提示（㉒） |
 | get_settings / update_settings | 读快照 / apply_patch → 校验 → 写盘（记录 hash，供 watch 自写盘过滤）→ 广播 settings-changed。**root_file 分支**：`Some(rel)` 先按 D8 解析为项目内绝对路径（失败即拒绝、**不落盘**）；`null` → 回到自动探测（复用 `detect_root`）；随后**同步内存 `ProjectState.root_file`**——漏掉这一步的症状是「选了根文件仍报未确定根文件，必须重开项目」 |
 
+### 8.1 无 GUI 交互层（crates/texpresso-server，roadmap ⑥）
+
+与命令面**并列的第二个入口**：CLI 与 MCP 都不经 Tauri，直接复用 core + infra（ADR-0010 的红利）。使用者是 harness / Agent，形态是「一条命令跑一次、拿一个 JSON」。用法、工具表、实测证据与偏差见 [cli-mcp-plan.md](./cli-mcp-plan.md)（本文件只写实现契约）。
+
+```
+crates/texpresso-server
+├── lib.rs              Session：项目会话（打开 / 编译 / 大纲 / 文件 / SyncTeX / 设置）
+├── mcp.rs              MCP（stdio JSON-RPC：initialize / tools/list / tools/call / ping）
+└── bin/{texpresso-cli,texpresso-mcp}.rs
+```
+
+| 部件 | 实现要点 |
+|---|---|
+| `Session::open_project` | 与 `open_project` 命令同路径：项目覆盖 + `detect_root` + `ProjectState`；根文件未定时**报候选而不是猜** |
+| `Session::compile(quick)` | 直接实例化 infra `LatexmkRunner` 跑一趟 → `CompileReport{status, failure, errors, pdf_path, elapsed_ms, engine, root_file, kind, upgraded_from_quick}`；**不走 scheduler**（无合并队列/防抖/watch），超时树杀仍在 runner 内 |
+| 会话内快照 | `status` / `errors` 返回**本进程最近一次**结果（`Session` 字段持有）。*不是* GUI 状态的镜像：CLI 是独立进程，读不到 GUI 内存（偏差见 cli-mcp-plan §4） |
+| `outline` / `tree` / `read` / `write` | 调 core：`outline::load`（与 GUI 同源）、`project::scan`、`FileSystem`。`write` **不代建父目录**（与 GUI `save_all` 同契约），错误消息直接说清 |
+| SyncTeX | 调 `core::synctex::{pdf_path_for_root, resolve_inverse}`——与 GUI 命令面同一份实现（㉒ 的生成产物回落一起继承），不会漂移 |
+| `settings` | 读同一份全局设置（默认 Tauri `app_config_dir`，`TEXPRESSO_CONFIG_DIR` / `--config-dir` 可覆盖）→ **CLI/MCP 与 GUI 共享设置**，Agent 看到的 mode/engine/timeout 就是 GUI 会用的 |
+| MCP 协议面 | `mcp.rs` 手写最小 JSON-RPC 子集：11 个 tool，`initialize` 回显受支持版本，未知方法回 `-32601`，**工具内错误按 MCP 约定回 `isError: true` + `structuredContent{code,message}`**（Agent 读得到"为什么失败"，不是裸协议错误） |
+| 退出码 | `0` 成功（`compile` 仅当 `status == "success"`）/ `1` 编译未通过 / `2` 用法·路径类 / `3` 内部错误；JSON 内同时有 `{ok, error:{code,message}}` |
+| 依赖约束 | 本 crate **零新增第三方依赖**（CLI 手写解析，不用 clap）——离线/沙箱内可构建 |
+
+**并发契约**：headless 与 GUI **不得同时编译同一项目**（两路 latexmk 抢同一个 `tmp/`）。一期约定 headless 独占，不做项目锁；GUI 那条路目前只有 settings.json 有自写盘过滤，`.tex` 没有。
+
+#### 8.1.1 验证入口
+
+| 要验的东西 | 入口 |
+|---|---|
+| Session 逻辑（打开 / 读写 / 树 / 大纲 / 非 UTF-8 / 编译拒绝 / 配置目录） | `cargo test -p texpresso-server`（9 个用例，默认不跑真编译） |
+| 真实编译（multifile 三轮：成功 → 失败诊断 → 修好） | `cargo test -p texpresso-server -- --ignored` |
+| MCP 协议链路（**真实二进制 + stdio 管道**：握手 / tools.list / 工具往返 / 错误语义 / 切换项目） | `cargo test -p texpresso-server --test mcp_stdio`（5 个用例 + 1 个 `#[ignore]` 编译用例） |
+| 端到端人工闭环（open → 改 → 编 → 验） | 见 [cli-mcp-plan.md](./cli-mcp-plan.md) §3 实测记录 |
+
 ## 9. 前端模块（函数级）
 
 ### 9.1 services（唯一碰 IPC 的层）
@@ -703,7 +739,11 @@ settings-changed: Settings
 | 7 | beamer 往返偏差 2–4 行 | 已定性、不修：换用「最小 H」「首个 H≤40」取块规则后往返结果**逐一相同** → 属 beamer/主题的 synctex 记录粒度；`\only<n>` 覆盖层内容在非本层页面上的反向映射天然不确定（基线数字见 [design.md](./design.md) §预览） |
 | 8 | 非 Windows 平台 | 未验证：进程组 kill 与平台相关路径处理均为 v1 后置 |
 | 9 | `cargo test -p texpresso`（src-tauri） | 本机因 WebView2 限制无法运行，见 [troubleshooting.md](./troubleshooting.md) |
-| 10 | 文档欠账（roadmap ㉔） | 已核对：`cli-mcp-plan.md` §1.3 的 `runner.rs`/`storage.rs` 引用早已是 `crates/texpresso-infra/...`，无残留（`src-tauri/src/{commands,events}.rs` 的引用本就正确） |
+| 10 | 文档欠账（roadmap ㉔） | 已核对：`crates/texpresso-infra/...` 的引用无残留（`src-tauri/src/{commands,events}.rs` 的引用本就正确）；当时核对的 cli-mcp-plan 现状盘点章节已随 ⑥ 改写为使用说明 |
+| 11 | headless 与 GUI 并发编译同项目 | **未加锁**：约定 headless 独占（§8.1 并发契约）。要让两者并存需给 watch 加一次性 `IgnorePaths` 通道或项目锁，均未做 |
+| 12 | MCP 状态订阅（notifications） | 未做（P1-5）：一期用「`compile` 同步返回 + `status`/`errors` 快照」覆盖，订阅式推送等真实需求 |
+| 13 | headless `file_write` 不代建目录 | **设计取舍**（与 GUI `save_all` 同契约）：父目录必须已存在，错误消息明说。Agent 新建子目录需先建目录 |
+| 14 | headless 根文件探测每次重扫 | 未做缓存：多数项目 <100ms；大项目再评估（缓存一致性成本 > 收益） |
 
 ### 12.2 跨模块不变量（改回去即复发）
 
@@ -717,6 +757,9 @@ settings-changed: Settings
 - **两条编译路径都必须固定 `SOURCE_DATE_EPOCH`**：不固定时同一份源码两次编译的 PDF 只差 trailer 的 `/ID`（实测 Quick 路径 67 字节、Full 路径长度都变），会让"输出 diff / 只重排变化页"分不清"真改了"与"ID 抖了"。（实测：该变量**不影响** XeTeX 的 `\today`。）
 - **生成产物永不当作源码打开**（㉒）：反向定位命中 `tmp/*.toc` 之类时先就近回落真实源码、落空则只给提示——直接打开会出现一屏用户没写过的内容。
 - **失败必须可见**：`openFile` 的 rejection 与 SyncTeX 的正反向失败都要落到 UI（状态栏提示条 / 预览工具条同步提示），不能只有 `console.error`——否则一律表现为"点了没反应"。
+- **路径与 SyncTeX 策略只有一份实现**：headless（§8.1）必须调 `core::synctex::{pdf_path_for_root, resolve_inverse}` 与 `core::project::paths`，不得自己拼 `tmp/` 路径或另写回落逻辑——两套实现迟早漂移（GUI 命令面与 CLI 的 PDF 路径必须永远一致）。
+- **CLI 的 stdout 只有 JSON**：日志一律走 stderr——否则 Agent 侧 `compile | jq` 这类管道立刻坏掉。
+- **`compile` 的退出码是"编译是否通过"**：`0` 仅当 `status == "success"`，失败即 `1`（未通过 ≠ 命令出错）。改坏这个语义会让 Agent 的「改 → 编 → 验」闭环静默失效。
 
 前端的三处异步守卫与 PreviewPane 渲染契约见 §9.2 / §9.4，SyncTeX 相关约束见 §5。
 
@@ -729,6 +772,7 @@ settings-changed: Settings
 | SyncTeX 往返精度 | `node scripts/synctex-report.mjs`（三组样本；基线见 design.md §预览） |
 | core 逻辑（调度 / 解析 / 诊断 / 大纲） | `cargo test -p texpresso-core` |
 | 真实 latexmk / synctex 集成 | `cargo test -p texpresso-infra -- --ignored` |
+| headless 服务层（CLI/MCP 共用） | `cargo test -p texpresso-server`（`-- --ignored` 跑真编译；`--test mcp_stdio` 跑真实二进制的 MCP 管道链路；见 §8.1.1） |
 | 前端 store 与 composable | `npm run test` |
 | 类型检查与构建 | `npm run build` |
 | 只有真实窗口能验的部分 | [troubleshooting.md](./troubleshooting.md) §真机验收清单（tauri server MCP 驱动） |
@@ -740,3 +784,4 @@ settings-changed: Settings
 - architecture.md §2/§3/§5 的模块表在本文件展开为函数级；**本文件冻结后，architecture.md 的模块表不再单独细化**。
 - 产品语义（延迟预算、失败语义、MVP 边界）以 [design.md](./design.md) 为准；本文件只写实现契约与已知债。
 - 历史决策与被否决的备选见 [adr/](./adr/) 与 §11。
+- Agent/harness 侧接口（CLI + MCP 的用法、工具表、实测与限制）见 [cli-mcp-plan.md](./cli-mcp-plan.md)；本文件 §8.1 只写它的实现契约与验证入口。
