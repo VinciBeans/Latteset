@@ -47,7 +47,7 @@ const NATIVE_FLAGS = { COLORED: 0x0200, EXTEND: 0x1000, SLANT: 0x2000, EMBOLDEN:
 const be = (b, p, n) => (n === 1 ? b[p] : n === 2 ? b.readUInt16BE(p) : n === 3 ? (b[p] << 16) | (b[p + 1] << 8) | b[p + 2] : b.readUInt32BE(p));
 
 /** 单条指令的**载荷长度**（不含 opcode 本身）；返回 null = 数据不足（末尾不完整）。 */
-function payloadLength(buf, p) {
+export function payloadLength(buf, p) {
   const op = buf[p];
   if (op <= 127) return 0; // set_char_0..127
   if (op >= 128 && op <= 131) return op - 127; // set1..4

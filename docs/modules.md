@@ -764,6 +764,9 @@ settings-changed: Settings
 
 | 19 | 编译期"已排版 N 页"进度未做（G2 已实测可行） | `tmp/<stem>.xdv` 每次编译都在，页索引只算指令长度：截断到任意位置解出的页与完整文件逐字节相同、全量 4.41MB = 2.7ms。工具见 `scripts/xdv-report.mjs`；**未接线到 UI**（[G2 报告](./research/g2-byte-offset-resync.md)、roadmap §5.7 与 §10-B.8） |
 
+| 20 | 引擎 stdout/stderr 被丢弃（编译期无进度、无实时错误） | `runner.rs` 用 `Stdio::null()` 起 latexmk/xelatex，只在退出后读 `tmp/<stem>.log`。实测（[阶段 2 报告](./research/stage2-streaming-feasibility.md)）：stdout 的 `[N]` 页码标记与 XDV 完整页时间线一致（首个非零 ≈ 编译 48%），**core 已有 `pages_typeset()`**；接管道即可得「已排版 N 页」+ 边编译边报错（C1，未做） |
+| 21 | 预览只能显示"编译完成的 PDF" | PDF 由 `xdvipdfmx` 在排版结束后产出（需完整 XDV + postamble）→ 编译期无图可显示。**可行性已验证**：页前缀 + 从零合成 postamble → `xdvipdfmx` 接受（页数正确、首页渲染一致），成本 0.65–0.94s/次；**未接线**（[阶段 2 报告](./research/stage2-streaming-feasibility.md) §3） |
+
 ### 12.2 跨模块不变量（改回去即复发）
 
 - **Quick 的前置条件**：无 `tmp/<stem>.aux` 时 runner 必须把 Quick 升级为 Full，且 `Success{kind}` 报**实际**强度——否则引用全成 `??`，或前端多提示一次「引用待更新」并多跑一次空收敛。
