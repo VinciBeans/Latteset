@@ -1,15 +1,15 @@
 [package]
-name = "texpresso"
+name = "latteset"
 version.workspace = true
-description = "TeXPresso：本地运行的 TeX 完整 IDE（实时编译）"
-authors = ["TeXPresso"]
+description = "Latteset：本地运行的 TeX 完整 IDE（实时编译）"
+authors = ["Latteset"]
 edition.workspace = true
 
 [lib]
 # The `_lib` suffix may seem redundant but it is necessary
 # to make the lib name unique and wouldn't conflict with the bin name.
 # This seems to be only an issue on Windows, see https://github.com/rust-lang/cargo/issues/8519
-name = "texpresso_lib"
+name = "latteset_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
 [build-dependencies]
@@ -23,8 +23,8 @@ tauri-plugin-window-state = "2"
 tauri-specta = { version = "=2.0.0-rc.25", features = ["derive", "typescript"] }
 specta-typescript = "0.0.12"
 specta = { version = "=2.0.0-rc.25", features = ["derive"] }
-texpresso-core = { path = "../crates/texpresso-core" }
-texpresso-infra = { path = "../crates/texpresso-infra" }
+latteset-core = { path = "../crates/latteset-core" }
+latteset-infra = { path = "../crates/latteset-infra" }
 serde.workspace = true
 tokio.workspace = true
 thiserror.workspace = true

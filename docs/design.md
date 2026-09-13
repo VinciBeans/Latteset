@@ -1,4 +1,4 @@
-# TeXPresso 设计文档
+# Latteset 设计文档
 
 > 项目状态：**已实现并迭代中**（Windows 首发 MVP：项目/编辑/编译调度/错误去重/连续 PDF 预览 + SyncTeX/设置页均可用）。
 > 术语见根目录 [CONTEXT.md](../CONTEXT.md)，决策记录见 [ADR 目录](./adr/)，分层/接口/技术栈见 [architecture.md](./architecture.md)，函数级设计与实现契约见 [modules.md](./modules.md)。
@@ -24,7 +24,7 @@
 - 多文件项目 v1 支持；**任何 .tex 文件变化都触发编译**（监视范围 = 项目内全部 .tex，排除 tmp/）
 - **中间文件**（.aux/.log/.toc/.out）→ 项目内 `tmp/` 目录（latexmk `-outdir=tmp`，进 .gitignore）
 - **PDF 产物** → 项目根目录、与根文件同级（编译成功后从 tmp/ 拷贝）
-- **配置两层**：全局默认值（用户目录）+ 项目级 `.texpresso/settings.json`（可进 git）
+- **配置两层**：全局默认值（用户目录）+ 项目级 `.latteset/settings.json`（可进 git）
 
 ## 编译子系统（核心）
 

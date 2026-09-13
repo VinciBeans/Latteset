@@ -1,13 +1,13 @@
-# TeXPresso 架构图（Mermaid）
+# Latteset 架构图（Mermaid）
 
 > 本文件是 [architecture.md](./architecture.md) 的配套**图示**：把「分层与依赖 / 编译触发链路 / 调度器语义 / 编辑 ↔ 预览双向定位」四张图以 Mermaid 源码固化为事实来源。
 > 图形随代码同步维护：**模块或链路一变，本文件与 architecture.md 一起改**（渲染与校验方式见文末 §5）。
 
 ## 1. 分层与依赖总览
 
-依赖方向严格单向：`视图 → 状态 → 服务 → IPC 契约 → src-tauri（接线） → texpresso-infra（基础设施） → texpresso-core（领域）`。
+依赖方向严格单向：`视图 → 状态 → 服务 → IPC 契约 → src-tauri（接线） → latteset-infra（基础设施） → latteset-core（领域）`。
 接口在 core、实现在 infra、注入在 src-tauri：**core 不依赖 infra**（也不依赖 Tauri、不做 IO，ADR-0006）；**src-tauri 不碰 OS API**（文件与进程一律经 core trait，ADR-0010）。
-**第二条入口（roadmap ⑥）**：`harness / Agent → texpresso-server（CLI / MCP） → texpresso-infra → texpresso-core`——同样不碰 Tauri、不碰 OS API，与 GUI 并列而非上下级。
+**第二条入口（roadmap ⑥）**：`harness / Agent → latteset-server（CLI / MCP） → latteset-infra → latteset-core`——同样不碰 Tauri、不碰 OS API，与 GUI 并列而非上下级。
 
 <!-- mermaid: 01-layers -->
 ```mermaid
@@ -35,9 +35,9 @@ flowchart TB
 
   AGENT["harness / Agent（DeepSeek Harness 等）<br/>不经 GUI，直接驱动「读 → 改 → 编译验证 → 修」"]
 
-  subgraph SERVER["crates/texpresso-server · 无 GUI 交互层（headless，无 Tauri）"]
+  subgraph SERVER["crates/latteset-server · 无 GUI 交互层（headless，无 Tauri）"]
     direction TB
-    BINS["bin/texpresso-cli · bin/texpresso-mcp<br/>一条命令一个 JSON（stdout 只有 JSON）／MCP over stdio"]
+    BINS["bin/latteset-cli · bin/latteset-mcp<br/>一条命令一个 JSON（stdout 只有 JSON）／MCP over stdio"]
     SESS["lib.rs · Session<br/>打开项目 · 编译并同步返回结果 · 大纲 · 文件读写 · SyncTeX · 设置"]
     MCPM["mcp.rs<br/>最小 JSON-RPC：initialize / tools/list / tools/call<br/>11 个 tool，错误回 isError"]
     BINS --> SESS
@@ -45,7 +45,7 @@ flowchart TB
     MCPM --> SESS
   end
 
-  subgraph INFRA["crates/texpresso-infra · 基础设施（外部依赖与文件系统唯一落点，无 Tauri）"]
+  subgraph INFRA["crates/latteset-infra · 基础设施（外部依赖与文件系统唯一落点，无 Tauri）"]
     direction TB
     IFS["fs<br/>TokioFs：FileSystem 实现<br/>canonicalize / is_dir / write · verbatim 前缀剥离"]
     IRUN["runner<br/>LatexmkRunner：CompileRunner 实现<br/>超时树杀 · PDF 原子拷贝 · .log 容错解码"]
@@ -54,7 +54,7 @@ flowchart TB
     IWATCH["watch<br/>notify 8.2 · 事件分类<br/>结果经 WatchSink 回调"]
   end
 
-  subgraph CORE["crates/texpresso-core · 纯领域核心（无 Tauri、无 IO、可单测）"]
+  subgraph CORE["crates/latteset-core · 纯领域核心（无 Tauri、无 IO、可单测）"]
     direction TB
     COMPOSE["compose<br/>文件事件 → CompileRequest 快照"]
     SCHED["scheduler<br/>actor + 合并队列 + 失败策略<br/>只有事件输入与指令输出，不 spawn 进程"]
@@ -68,7 +68,7 @@ flowchart TB
     direction TB
     TEXLIVE["latexmk + xelatex / pdflatex / lualatex"]
     SXCLI["synctex CLI（TeX Live 自带）"]
-    PROJ["项目目录<br/>*.tex 源文件 · tmp/ 编译中间产物<br/>.texpresso/settings.json 项目设置"]
+    PROJ["项目目录<br/>*.tex 源文件 · tmp/ 编译中间产物<br/>.latteset/settings.json 项目设置"]
     PDFOUT["项目根 &lt;stem&gt;.pdf（编译产物）"]
     GSET["全局 settings.json（app_config_dir）"]
   end
@@ -129,12 +129,12 @@ flowchart TB
   class TEXLIVE,SXCLI,PROJ,PDFOUT,GSET ext
 ```
 
-![TeXPresso 分层与依赖总览](./diagrams/01-layers.png)
+![Latteset 分层与依赖总览](./diagrams/01-layers.png)
 
 **读图要点**
 
 - **只有服务层碰 IPC**：视图与 store 不直接 invoke；命令与事件类型全部由 Rust 侧 specta 生成（`src/bindings.ts`，调试构建启动时刷新）。事件面与命令面共用一个边界：箭头向下为 invoke，虚线向上为 emit。
-- **四个 Rust crate，两个"唯一落点"**：core 是唯一的**策略与接口**落点（队列语义、探测规则、D8 路径策略、trait 定义）；texpresso-infra 是唯一的**外部依赖与文件系统**落点（tokio::fs、tokio::process、notify、设置落盘）。src-tauri 只做接线与契约（DTO、事件形态、装配注入）；texpresso-server（⑥）是**与 src-tauri 并列的第二入口**——headless，不装配 scheduler/watch，不经 IPC 契约，直接调 core 策略 + infra 实现。
+- **四个 Rust crate，两个"唯一落点"**：core 是唯一的**策略与接口**落点（队列语义、探测规则、D8 路径策略、trait 定义）；latteset-infra 是唯一的**外部依赖与文件系统**落点（tokio::fs、tokio::process、notify、设置落盘）。src-tauri 只做接线与契约（DTO、事件形态、装配注入）；latteset-server（⑥）是**与 src-tauri 并列的第二入口**——headless，不装配 scheduler/watch，不经 IPC 契约，直接调 core 策略 + infra 实现。
 - **两条入口不互相认识**：GUI 走「前端 → IPC → src-tauri → infra → core」，headless 走「harness/Agent → server → infra → core」。二者**共用同一份**路径策略与 SyncTeX 实现（`core::synctex` / `core::project::paths`），但**不并发编译同一个项目**（会抢 `tmp/`，约定 headless 独占）。
 - **core 零 IO**：进程、文件、监视、CLI 全在 infra；core 经 trait（`FileSystem` / `CompileRunner` / `SyncTexProvider`）被注入，单测用 fake 实现。虚线 `实现 Xxx` 表示「core 声明接口、infra 提供实现、运行期由 core 反向调用」。
 - **infra 不认识 Tauri**：监视结果经 `WatchSink` 回调，事件形态（compile-status / files-changed …）在 src-tauri 的 events.rs 定型。
@@ -284,7 +284,7 @@ flowchart LR
 
 ![SyncTeX 双向定位与 PDF 刷新](./diagrams/04-synctex.png)
 
-**读图要点**：`SyncTexProvider` 是 core 中的接口，进程调用在 texpresso-infra 的 `synctex` 模块（ADR-0008/0010）；CLI 指向 `tmp/<根名>.synctex.gz`。pdf.js 无增量渲染 API，故刷新用「重载 + 恢复位置」而非局部更新。
+**读图要点**：`SyncTexProvider` 是 core 中的接口，进程调用在 latteset-infra 的 `synctex` 模块（ADR-0008/0010）；CLI 指向 `tmp/<根名>.synctex.gz`。pdf.js 无增量渲染 API，故刷新用「重载 + 恢复位置」而非局部更新。
 
 ## 5. 渲染与校验
 

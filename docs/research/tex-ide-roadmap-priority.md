@@ -1,4 +1,4 @@
-# TeXPresso Roadmap（当前状态、优先级与批次）
+# Latteset Roadmap（当前状态、优先级与批次）
 
 > 作用：把调研结论变成**当前可执行的优先级与批次**，并保留已完成项的 ID 与证据指针。
 > 依据：[调研总览](./tex-ide-pain-points.md) + [desktop](./desktop-latex-editor-pain-points.md) / [online](./online-latex-editor-pain-points.md) / [vscode](./vscode-latex-workshop-pain-points.md) 三份专项 + [P0-② 分析](./p0-2-first-open-analysis.md) + [模板语料调研](./template-corpus-survey.md) / [中文高校模板引擎要求](./cn-thesis-template-engines.md) + [上游实时渲染方案](../texpresso-live-rendering-roadmap.md)（评估见 §5）
@@ -18,12 +18,12 @@
 | ③ | 性能基准与回归基建 | 2026-09 | `scripts/{gen-bench-projects,bench}.mjs`：六档纯文本 fixture + 可选真实模板档；一条命令出 cold/noop/edit 报告，超预算退出码 1。**结论：瓶颈在小文档固定开销而非大文档**；三档小文档超 2s 及格线；真实论文档 cold >240s（口径待重定，见 §10） |
 | ④ | 错误诊断升级 | 2026-09 | 19 类 `DiagnosisKind`（缺包/缺类/缺字体/字体集/引擎不匹配/未定义命令/组未闭合/连锁 Emergency stop…），匹配不到返回 `None` 降级原文；**23 例真实语料** + 手写期望表 + DoD 覆盖率 ≥80%；真机验证两行式展示 + 点条目跳 `Ln 4` |
 | ⑤ | SyncTeX 可靠性加固（含 ㉒、⑳） | 2026-09 | `scripts/synctex-report.mjs` + beamer 夹具；三组样本 34 点：正向/反向/同文件 **34/34**、跳到位 ≤3 行 31/34（**≤5 行 34/34**）；修掉「生成文件被当源码打开 / 失败静默 / 编译中竞争」三处缺陷。见 design.md §预览 |
-| ⑥ | CLI + MCP 交互接口 | 2026-09 | 新 crate `texpresso-server`（headless `Session` + `texpresso-cli` + `texpresso-mcp`，**零新增第三方依赖**）。实测闭环 `open → read → write → compile(成功) → 改坏 → compile(failed + 诊断 + 退出码 1) → 修好 → 成功`；SyncTeX 正反向往返命中；两次编译 PDF 逐字节一致。回归：`cargo test -p texpresso-server`（10）+ `--test mcp_stdio`（真实二进制 + stdio 管道 5）+ 真编译 `#[ignore]` 用例。用法见 [cli-mcp-plan.md](../cli-mcp-plan.md)，契约见 [modules.md](../modules.md) §8.1 |
+| ⑥ | CLI + MCP 交互接口 | 2026-09 | 新 crate `latteset-server`（headless `Session` + `latteset-cli` + `latteset-mcp`，**零新增第三方依赖**）。实测闭环 `open → read → write → compile(成功) → 改坏 → compile(failed + 诊断 + 退出码 1) → 修好 → 成功`；SyncTeX 正反向往返命中；两次编译 PDF 逐字节一致。回归：`cargo test -p latteset-server`（10）+ `--test mcp_stdio`（真实二进制 + stdio 管道 5）+ 真编译 `#[ignore]` 用例。用法见 [cli-mcp-plan.md](../cli-mcp-plan.md)，契约见 [modules.md](../modules.md) §8.1 |
 | ⑦a | 大纲重扫增量（⑦ 的拆项之一） | 2026-09 | core `OutlineCache`（按内容指纹复用未变化文件的扫描结果，**内容每次仍重取**）+ 前端只提交**变化过**的缓冲（`lastSent` 差分 + `open_paths` 淘汰）+ 刷新合并。实测（11 文件/436KB）：全量重扫 + 全量提交 **55.5ms → 9.7ms**（编辑一个文件）/ **8.4ms**（无编辑）；真机端到端 `scans=1 reused=10` → `scans=0 reused=11`。顺带修掉**入口路径未归一**（同一文件两种拼写 → 大纲重复项）与**并发刷新重复发送**（结构事件风暴实测连发 11 次）。契约见 [modules.md](../modules.md) §3.5/§12.2，数据见 [p1 分析](./p1-large-doc-editor-analysis.md) §3.3 |
 | ⑲ | 模板样本调研 | 2026-09 | **0/19** 案例因默认引擎选错；`\RequirePDFTeX` **0/7374**；文档调研 19/19 兼容 XeLaTeX → ②-2 砍掉。另暴露 4 类真实障碍（缺包/缺字体、首编超时、latexmkrc 交互、`.ins`/`.dtx`） |
-| ㉑ | 外部改 `.texpresso/settings.json` 同步 `root_file` | 2026-09 | watch 热更新后同步内存 `ProjectState.root_file`（设覆盖按 D8 解析、清覆盖回自动探测）+ **合并基数改为磁盘纯全局**（否则"清掉覆盖"永远不生效）+ 前端 `settingsChanged` 不一致时 `syncProject()`。真机双向验证。顺带修掉外部非原子写导致的"读到截断文件即丢弃"（3×150ms 短重试） |
+| ㉑ | 外部改 `.latteset/settings.json` 同步 `root_file` | 2026-09 | watch 热更新后同步内存 `ProjectState.root_file`（设覆盖按 D8 解析、清覆盖回自动探测）+ **合并基数改为磁盘纯全局**（否则"清掉覆盖"永远不生效）+ 前端 `settingsChanged` 不一致时 `syncProject()`。真机双向验证。顺带修掉外部非原子写导致的"读到截断文件即丢弃"（3×150ms 短重试） |
 | ㉓ | 编辑非 UTF-8 源文件 | 2026-09 | `read_file` 遇 `InvalidData` 返回**中文可操作提示**（另存为 UTF-8）+ 状态栏提示条；**故意不做 lossy 打开**（保存会写回 U+FFFD = 静默损坏文件）。真机验证（截图） |
-| ㉔ | 文档欠账：`cli-mcp-plan.md` 的路径引用迁到 `texpresso-infra` | 2026-09 | 已改为 `crates/texpresso-infra/src/{runner,storage}.rs`，无残留（⑥ 完成后该文的现状盘点半节改写为使用说明） |
+| ㉔ | 文档欠账：`cli-mcp-plan.md` 的路径引用迁到 `latteset-infra` | 2026-09 | 已改为 `crates/latteset-infra/src/{runner,storage}.rs`，无残留（⑥ 完成后该文的现状盘点半节改写为使用说明） |
 | ㉕ | 学位论文首编超时 | 2026-09 | 上限 **600→1800s**；**不再静默重试**（旧行为要白等两个超时窗口）；超时**进错误列表**并带证据化诊断（首编/源文件数/日志页码 → 慢 vs 疑似卡住；日志已有致命错误则直接报那条）+ `Diagnosis.suggested_timeout_secs` 与一键「提高到 Ns 并重试」。真机 cycle 已验证。**真实模板 DoD 被 ㉖ 阻塞**（§6.1） |
 | ㉗ | `.ins`/`.dtx` 源码版模板 | 2026-09 | `Diagnosis.missing_file` + core `source_release_hint` + runner 读项目根：缺 `.cls` 且项目里有同名 `.ins` → 给具体命令 `xelatex X.ins`。**实测教训**：`.ins`/`.dtx` 同名时目录序会先选中 `.dtx` → 显式优先 `.ins`；只有 `.dtx` 时不编造命令。真机验证 |
 | ㉘ | 编辑期轻量出图 + 空闲收敛 | 2026-09 | 实测省 **40.2%**（6/6 档达标）→ 落地：Quick 直调引擎 / Full 完整 latexmk；无产物自动升级 Full；`draft` 状态 + 状态栏「引用待更新」+ 2s 空闲收敛。真机 cycle 与 `fdb_latexmk` mtime 双重佐证。见 design.md §附 |
@@ -32,7 +32,7 @@
 | 阶段 2 | 引擎子进程 + 流式输出（上游实时渲染路线的吸收项，§5.3 / §5.8） | 2026-09 | 管道已接（`Stdio::piped()`）+ 尾随 `tmp/<stem>.log`（三条读任务 → 同一状态机）→ 状态栏「已排版 N 页」+ 错误列表**编译还没结束**就报致命错误。中间态走**独立事件**（`compile-progress` / `compile-errors`），前端按 `phase` 守卫——终态 `errors-updated` 不被晚到的中间态覆盖。真机实测（400KB / 162 页 ctexbook 首编）：`1.7s running → 3.4–4.8s 页数 2→162 → 8.2s success`；插错后 `41.5s` 收到实时错误、`42.3s` 出终态（37 条含警告）。**落地时才实测到的两条**：引擎输出在非 TTY 下是 4KB 块缓冲（按页 flush 的日志才是主力通道）、中间态可能晚于终态抵达。契约见 [modules.md](../modules.md) §2.4 / §2.6.1 |
 | ⑦c | 多文件大项目（编辑器侧）：夹具 + 口径 + 数据 | 2026-09 | 三档夹具（9/21/41 文件 × 2.2–5.5 MB，后两档**同总量双倍文件数**以分离变量）+ 口径脚本 `scripts/editor-report.mjs`（WS 直驱真机、零第三方依赖、超门槛退出码 1）。**五项门槛全过**：每击键净开销 **0.077–0.097 ms 绝对值恒定**（与文件数/总量无关）、无 >50 ms longtask、折叠 0.73–1.45 ms/MB、大纲往返 5.07–6.41 ms/MB（门槛 20）、20×1 MB model 22–46 ms（门槛 100）；21 个标签全关后 model 25→4、缓冲 0 → **无泄漏**。**结论：不需要优化**。见 [p1c 报告](./p1c-multifile-large-project.md) |
 
-> 同期完成的**非 roadmap 工程项**（记录以免重复提议）：`texpresso-infra` 拆分（ADR-0010）、大纲解析下沉 Rust、架构图与渲染脚本、MCP Bridge 0.12→0.13 升级、真机验收清单固化、**为 DVI/G2 研究新增 `scripts/xdv-report.mjs`**。
+> 同期完成的**非 roadmap 工程项**（记录以免重复提议）：`latteset-infra` 拆分（ADR-0010）、大纲解析下沉 Rust、架构图与渲染脚本、MCP Bridge 0.12→0.13 升级、真机验收清单固化、**为 DVI/G2 研究新增 `scripts/xdv-report.mjs`**。
 
 ## 2. 评分模型与通道
 
@@ -266,7 +266,7 @@ C/V 全表最高（5/4）：干净 Windows 机器零预装可用。属"环境引
 | ③ 性能基准 | design.md §基准脚本与实测基线 + `scripts/{gen-bench-projects,bench}.mjs` |
 | ④ 错误诊断 | modules.md §4.1 + design.md §错误列表 + `log_parser/diagnosis.rs` / `real_error_corpus.rs` |
 | ⑤ SyncTeX | [ADR-0008](../adr/0008-synctex-via-cli-with-interface.md) + modules.md §5 + design.md §预览 + `scripts/synctex-report.mjs` |
-| ⑥ CLI + MCP（**已完成**） | [cli-mcp-plan.md](../cli-mcp-plan.md) + modules.md §8.1 + `crates/texpresso-server` |
+| ⑥ CLI + MCP（**已完成**） | [cli-mcp-plan.md](../cli-mcp-plan.md) + modules.md §8.1 + `crates/latteset-server` |
 | ⑦a 大纲增量（**已完成**） | modules.md §3.5（缓存三不变量）/ §12.2 + `core::outline::{load_cached, OutlineCache}` + `src/stores/outline.ts` |
 | ⑦c / ⑦b（**已完成 / 缓做**） | [p1-large-doc-editor-analysis.md](./p1-large-doc-editor-analysis.md)（拆分依据）+ [p1c-multifile-large-project.md](./p1c-multifile-large-project.md)（夹具/口径/数据）+ `scripts/{gen-large-project,editor-report}.mjs` |
 | ㉖ latexmkrc 交互 | 本文件 §6.1 + troubleshooting.md「`\include{子目录/文件}` + `-output-directory`」 |
@@ -307,7 +307,7 @@ C/V 全表最高（5/4）：干净 Windows 机器零预装可用。属"环境引
 
 15. **beamer 的 2–4 行往返偏移**：三组样本里只有 beamer 有偏移，换取块规则后不变 → 归因于 beamer/主题的 synctex 记录粒度，**不修**（基线见 design.md §预览）。
 16. **① 的遗留（编辑 GBK 源文件只报英文错误）**：已由 ㉓ 处理（中文可操作提示 + 状态栏提示条）；**仍不支持编辑**非 UTF-8 源文件，这是设计取舍不是欠账。
-17. **`cargo test -p texpresso`（src-tauri）在本机因 WebView2 限制无法运行**：见 [troubleshooting.md](../troubleshooting.md)（另有新增坑：接了常驻 `texpresso-mcp` 后该二进制被锁，需换 `CARGO_TARGET_DIR` 或用 `--lib`）。
+17. **`cargo test -p TeXpresso`（src-tauri）在本机因 WebView2 限制无法运行**：见 [troubleshooting.md](../troubleshooting.md)（另有新增坑：接了常驻 `latteset-mcp` 后该二进制被锁，需换 `CARGO_TARGET_DIR` 或用 `--lib`）。
 18. **`parse_log` 的文件栈错位（2026-09 落地阶段 2 时新发现，未修）**：TeX 日志把"关闭上一个文件 + 打开下一个文件"打在**同一行**（`[64]) (./ch_05.tex`），而扫描器只认行首 `(` / `)` → 文件归属错一章（实测：错误在 `ch_05.tex:164`，列表报 `./ch_04.tex:164`），错误列表的文件名与点击跳转目标都错。终态与流式共用同一解析器，两条路径都受影响；修法要按字符顺序做括号配对。见 [modules.md](../modules.md) §12.1 #22 与 [troubleshooting.md](../troubleshooting.md)。
 19. **精确失效的收益未在真实大文档上量化**（[G1 报告](./g1-read-interception-feasibility.md) §8.5）：只测到小探针"改无关文件 → 白编译一次"；真实收益 = 白编译频率 × 单次编译时长，两个因子都未统计。
 20. **`.fls` / `.fdb_latexmk` 当依赖源的边界未全测**（[G1 报告](./g1-read-interception-feasibility.md) §8）：多趟 xelatex 的 `.fls` 合并行为、biber/makeindex 等更多子步骤、编辑期写入时机，均未验证。

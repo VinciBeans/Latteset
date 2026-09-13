@@ -64,9 +64,9 @@ onMounted(async () => {
   };
   window.addEventListener("keydown", onKeyDown);
   removeKeydown = () => window.removeEventListener("keydown", onKeyDown);
-  // 测试/开发钩子：设置 VITE_TEXPRESSO_PROJECT 目录则自动打开项目，绕过原生目录弹窗
+  // 测试/开发钩子：设置 VITE_LATTESET_PROJECT 目录则自动打开项目，绕过原生目录弹窗
   // （原生弹窗 WebDriver 无法驱动），便于端到端测试。生产不设置，行为不变。
-  const envProject = import.meta.env.VITE_TEXPRESSO_PROJECT as string | undefined;
+  const envProject = import.meta.env.VITE_LATTESET_PROJECT as string | undefined;
   if (envProject) {
     try {
       const info = await openProjectInto(envProject);
@@ -179,7 +179,7 @@ const settingsOpen = ref(false);
     <div class="toolbar">
       <div class="brand">
         <span class="brand-mark" aria-hidden="true"><img src="/logo.svg" width="22" height="22" alt="" /></span>
-        <span class="brand-name">TeXPresso</span>
+        <span class="brand-name">Latteset</span>
       </div>
       <div class="toolbar-actions">
         <button class="btn" @click="chooseProject">

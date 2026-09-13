@@ -43,7 +43,7 @@
 一条命令跑完并判门槛（**零第三方依赖**）：
 
 ```bash
-VITE_TEXPRESSO_PROJECT=<...>/editor/multi20 npm run tauri dev
+VITE_LATTESET_PROJECT=<...>/editor/multi20 npm run tauri dev
 node scripts/editor-report.mjs --tier multi20 --json out.json     # 退出码 1 = 有门槛未过
 ```
 
@@ -127,7 +127,7 @@ node scripts/editor-report.mjs --tier multi20 --json out.json     # 退出码 1 
 
 ```bash
 node scripts/gen-large-project.mjs                 # 生成三档夹具（幂等，--force 重建）
-VITE_TEXPRESSO_PROJECT=<repo>/test_file/projects/editor/multi20 npm run tauri dev
+VITE_LATTESET_PROJECT=<repo>/test_file/projects/editor/multi20 npm run tauri dev
 node scripts/editor-report.mjs --tier multi20 --json out.json
 node scripts/editor-report.mjs --tier multi8      # 一个窗口可连跑三档（脚本会自己切项目）
 node scripts/editor-report.mjs --eval-file <path> # 调试入口：把文件当探针跑，打印返回值

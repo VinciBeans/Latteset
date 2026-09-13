@@ -479,7 +479,7 @@ async function load() {
     };
     (window as any).__previewLastReload = timing; // 端到端测试读取
     // 无 Rust 变更的观测通道：把耗时放进窗口标题，便于外部(如 pc-control list_windows)读取
-    document.title = `TeXPresso | reload ${timing.total}ms (fetch ${timing.fetch} parse ${timing.parse} render ${timing.render}) pages ${timing.pages} rendered ${timing.pagesRendered}`;
+    document.title = `Latteset | reload ${timing.total}ms (fetch ${timing.fetch} parse ${timing.parse} render ${timing.render}) pages ${timing.pages} rendered ${timing.pagesRendered}`;
     console.log(
       `[preview] reload#${mySeq} ${timing.file} pages=${timing.pages} bytes=${timing.bytes} ` +
         `fetch=${timing.fetch}ms parse=${timing.parse}ms render=${timing.render}ms ` +

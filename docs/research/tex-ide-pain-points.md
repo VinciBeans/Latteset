@@ -2,14 +2,14 @@
 
 > 状态：**三路专项调研全部完成并已合并**（桌面编辑器 / 在线协作 / VS Code 生态）。
 > 调研时间：2026-08 / 2026-09（各专项报告标注了各自的数据采集时点）
-> 目的：为 TeXPresso 的产品取舍提供外部事实依据；只记录可溯源结论，推断一律标注 `[推断]`。
+> 目的：为 Latteset 的产品取舍提供外部事实依据；只记录可溯源结论，推断一律标注 `[推断]`。
 > 证据等级：**A** = 官方 API / 官方文档 / 仓库 issue 可直接核实；**B** = 社区讨论（来源为检索摘要或归档，未逐帖全文核实）；**C** = 厂商推广内容 / 本文推断。
 
 ## 配套专项报告
 
 | 文档 | 覆盖范围 | 状态 |
 |---|---|---|
-| 本文 | 总览 + 跨类别归纳 + 对 TexPresso 的机会点映射 | 迭代中 |
+| 本文 | 总览 + 跨类别归纳 + 对 Latteset 的机会点映射 | 迭代中 |
 | [desktop-latex-editor-pain-points.md](./desktop-latex-editor-pain-points.md) | 桌面原生编辑器（TeXstudio/TeXworks/WinEdt/Texifier/Kile…）量化痛点 | **已完成**（2026-09） |
 | [online-latex-editor-pain-points.md](./online-latex-editor-pain-points.md) | 在线协作平台（Overleaf 为主 + Papeeria/Typst 对照） | **已完成**（2026-09） |
 | [vscode-latex-workshop-pain-points.md](./vscode-latex-workshop-pain-points.md) | 通用编辑器生态（VS Code + LaTeX Workshop，含迁移动机与回迁） | **已完成**（2026-09） |
@@ -49,7 +49,7 @@
 | AI 原生新玩家 | Overleaf AI Assist、Octree、Crixet、OpenAI Prism | 2025-2026 集中出现，被讨论为对传统平台的威胁（[Reddit](https://www.reddit.com/r/LaTeX/comments/1r3v5e6/is_overleaf_facing_a_slow_death_in_the_ai_era/)、[对比文](https://www.useoctree.com/blog/top-ai-latex-tools-compared-pricing-speed-accuracy)） |
 | 替代排版系统 | Typst | 语法/编译速度/错误信息被公认为优于 LaTeX，但生态与期刊接收是主要阻力（[Reddit](https://www.reddit.com/r/LaTeX/comments/1rw5s4b/typst_isnt_losing_to_latex_because_of_missing/)、[Reddit](https://www.reddit.com/r/LaTeX/comments/1d5lw63/debate_2024_whats_stopping_you_from_switching/)） |
 
-> ⚠️ **命名冲突提示**：GitHub 上已存在同名开源项目 `let-def/texpresso`（LaTeX 实时渲染 + 错误报告，配合已有编辑器使用），见 [let-def/texpresso](https://github.com/let-def/texpresso)。这会直接影响搜索可见性与品牌识别 `[推断]`。
+> ⚠️ **命名冲突提示**：GitHub 上已存在同名开源项目 `let-def/TeXpresso`（LaTeX 实时渲染 + 错误报告，配合已有编辑器使用），见 [let-def/TeXpresso](https://github.com/let-def/TeXpresso)。这会直接影响搜索可见性与品牌识别 `[推断]`。
 
 ## 2.1 量化基线（来自桌面专项报告，A 级）
 
@@ -93,7 +93,7 @@
 ## 2.4 中文市场现状（B 级）
 
 - 中文社区的编辑器推荐排序近年趋于一致：**"VS Code + TeX Live + LaTeX Workshop"被列为第一推荐**，其次是 TeXstudio；新手教程则常推荐 TeXworks 以"避免配置环境带来的问题"（[知乎汇总, 2024](https://zhuanlan.zhihu.com/p/607473890)、[知乎新手教程](https://zhuanlan.zhihu.com/p/456055339)）。
-- 也就是说：**中文用户的主流路径是"通用编辑器 + 手工配置"**，而不是原生 IDE——这正是 TeXPresso 想替代的路径 `[推断]`。
+- 也就是说：**中文用户的主流路径是"通用编辑器 + 手工配置"**，而不是原生 IDE——这正是 Latteset 想替代的路径 `[推断]`。
 - 中文环境的额外摩擦（引擎/字体/宏包、文件名编码、输入法）见 P7；这些在英文社区讨论中基本不存在，属于**本地化空白**。
 
 ## 3. 核心痛点（按「出现频率 × 严重度」排序）
@@ -209,7 +209,7 @@
 | 痛点 | 出现频率 | 严重度 | 现有工具解决程度 | 备注 |
 |---|---|---|---|---|
 | 环境/安装门槛 | 极高 | 高 | 差（Overleaf 绕过但受限） | 一次性成本，但决定新用户去留 |
-| 实时编译/反馈延迟 | 高 | 高 | 差（TeXP/TeXpresso 类项目在攻） | TexPresso 的核心设计因素 |
+| 实时编译/反馈延迟 | 高 | 高 | 差（TeXP/TeXpresso 类项目在攻） | Latteset 的核心设计因素 |
 | 错误信息不可读 | 极高 | 高 | 差 | 与 .log 解析质量直接相关 |
 | SyncTeX 不可靠 | 高 | 中高 | 中 | 多项目长期 issue |
 | 大文档/多文件性能 | 高 | 高 | 差 | 与编辑器内核强相关 |
@@ -240,9 +240,9 @@
    - **跨文件 LaTeX 语义操作缺失**：批量改 label/citation key、章节重排、宏感知分析都做不到——因为底座是正则静态解析，不是 LaTeX AST/索引层。
    > 补充：维护者自建的"暂时无解"标签（`come back later (hopefully)`）**全仓库仅 2 个 issue**（#3467、#3758），因为该仓库当前 open issue 数为 0、新 issue 数小时内即被关闭——所以"作者无解"只能靠官方 wiki 明文声明与标签来识别，不能靠 open 状态。
 
-## 6. 对 TexPresso 的机会点映射
+## 6. 对 Latteset 的机会点映射
 
-| 市场痛点 | TexPresso 现状 | 机会 / 风险 |
+| 市场痛点 | Latteset 现状 | 机会 / 风险 |
 |---|---|---|
 | 实时编译 | **已作为核心设计因素落地**（连续编译，防抖 ~500ms；见 [design.md](../design.md)、[ADR-0005](../adr/0005-latexmk-first-incremental-next.md)） | 直接命中 P2；但 latexmk 单遍重排的引擎上限意味着**超大文档延迟无法靠调度解决**，需要明确定位与预期管理 |
 | 错误不可读 | 已有 `.log` 解析 + 同源去重 + 点击跳转（[README](../../README.md)） | 命中 P3；但"解析+去重"只是及格线，**错误解释/修复建议**才是差异化 `[推断]` |
@@ -251,7 +251,7 @@
 | 大文档性能 | 预览做了分页虚拟化 + canvas 复用；编译为整份单遍 | P5 部分缓解；**超大文档**仍是风险 |
 | 环境门槛 | 依赖系统 TeX Live/MiKTeX，缺失时提示安装 | 未解决 P1。捆绑 TinyTeX 在 [design.md](../design.md) 后置清单里——**这是新手转化的关键一环** `[推断]` |
 | **配置零门槛** | 设置页图形化（引擎/模式/防抖/超时/根文件），无需手写 JSON | 直接命中"配置=跟 IDE 打架"这一 VS Code 第一痛点 `[推断]` |
-| 本地/隐私 | 本地运行、文件夹即项目、`.texpresso/settings.json` 可进 git | 命中 P6 的本地优先需求 |
+| 本地/隐私 | 本地运行、文件夹即项目、`.latteset/settings.json` 可进 git | 命中 P6 的本地优先需求 |
 | **无编译超时** | 本地编译，超时上限可配置（默认 120s，可调） | **这是相对在线方案最锋利的一刀**：Overleaf 官方承认部分项目必须本地编译 `[推断]` |
 | 协作 | 无实时协作 | 本地方案的公认缺口；`[推断]` 与 Overleaf 竞争时会被追问，但也可定位为"个人/离线优先" |
 | Git 工作流 | 文件夹即项目，可直接用本地 git | Overleaf 把 Git 放在付费墙后且官方承认有硬缺口——**本地方案天然更强** `[推断]` |
@@ -261,7 +261,7 @@
 
 ## 7. 存疑与反证
 
-- **"中文文件名不可编译"**：已从单一来源升级为**多来源**（TeX Live 邮件列表的编码根因 + 实操文档 + 中文路径案例），但**仍未在 TexPresso 里实测**——Windows 首发产品必须逐项复核后再当作结论。
+- **"中文文件名不可编译"**：已从单一来源升级为**多来源**（TeX Live 邮件列表的编码根因 + 实操文档 + 中文路径案例），但**仍未在 Latteset 里实测**——Windows 首发产品必须逐项复核后再当作结论。
 - **"桌面编辑器不维护了"**：**证伪**。TeXstudio 2026-08-14 仍在发版（4.9.7），TeXworks 2026-02 仍在发版（0.6.11），均活跃维护。
 - **"LaTeX Workshop 有 open 多年的 issue"**：**不可直接观察**。2026-09 核实该仓库 `open_issues_count = 0`——所有 issue 均已关闭并锁定（`locked: true, active_lock_reason: "resolved"`），讨论疑似转移到 Discussions。因此凡涉及"长期未解决"的论断，本文改用官方 wiki 的明文声明或维护者标签作为依据，而非 issue 的 open 状态。
 - **"用户会为本地能力付费"**：**未验证**。找到的是"换工具"的意愿证据，不是付费证据；付费意愿仍需一手调研。
@@ -287,7 +287,7 @@
 - [microsoft/vscode #277137 性能/内存](https://github.com/microsoft/vscode/issues/277137) · [#279762 中文输入法](https://github.com/microsoft/vscode/issues/279762)
 - [SumatraPDF #5594 SyncTeX 回归](https://github.com/sumatrapdfreader/sumatrapdf/issues/5594)
 - [sharelatex #354 ref/cite 补全请求](https://github.com/sharelatex/sharelatex/issues/354)
-- [texstudio.org 发布记录](https://www.texstudio.org/) · [let-def/texpresso（同名项目）](https://github.com/let-def/texpresso)
+- [texstudio.org 发布记录](https://www.texstudio.org/) · [let-def/TeXpresso（同名项目）](https://github.com/let-def/TeXpresso)
 
 桌面专项报告补充的 A 级来源（完整清单见 [desktop 报告 §5](./desktop-latex-editor-pain-points.md)）：
 - TeXstudio issue：[#50 错误解析](https://github.com/texstudio-org/texstudio/issues/50) · [#4410 大项目](https://github.com/texstudio-org/texstudio/issues/4410) · [#4642 SyncTeX 跳错](https://github.com/texstudio-org/texstudio/issues/4642) · [#3825 synctex(busy)](https://github.com/texstudio-org/texstudio/issues/3825) · [#4023 内置预览崩溃/丢字](https://github.com/texstudio-org/texstudio/issues/4023) · [#45 深色主题](https://github.com/texstudio-org/texstudio/issues/45) · [#2608 手册过时](https://github.com/texstudio-org/texstudio/issues/2608) · [#744 补全变慢](https://github.com/texstudio-org/texstudio/issues/744) · [#4622 cwl 路径](https://github.com/texstudio-org/texstudio/issues/4622) · [#3637 macOS 窗口](https://github.com/texstudio-org/texstudio/issues/3637) · [#54 宏不随项目走](https://github.com/texstudio-org/texstudio/issues/54)

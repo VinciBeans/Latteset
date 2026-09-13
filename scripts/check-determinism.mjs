@@ -108,7 +108,7 @@ for (const project of PROJECTS) {
       continue;
     }
     // 第一份产物要存到 tmp/ 之外——第二次编译可能清空 tmp/
-    const first = path.join(os.tmpdir(), `texpresso-determinism-${path.basename(project)}-${pathName}-1.pdf`);
+    const first = path.join(os.tmpdir(), `latteset-determinism-${path.basename(project)}-${pathName}-1.pdf`);
     copyFileSync(r1.pdf, first);
     await sleep(GAP_MS);
     const r2 = runOnce(project, stem, pathName, { clean });
@@ -127,7 +127,7 @@ for (const project of PROJECTS) {
       detail = d.lengthDiff
         ? `（长度 ${d.lengthDiff[0]} vs ${d.lengthDiff[1]}）`
         : `（首个差异 @${d.first}，共 ${d.count} 字节不同）`;
-      copyFileSync(r2.pdf, path.join(os.tmpdir(), `texpresso-determinism-${path.basename(project)}-${pathName}-2.pdf`));
+      copyFileSync(r2.pdf, path.join(os.tmpdir(), `latteset-determinism-${path.basename(project)}-${pathName}-2.pdf`));
     }
     console.log(
       `${same ? "✓" : "✗"} ${path.relative(ROOT, project)} [${pathName}]：${same ? "逐字节一致" : "不一致"}${detail}` +

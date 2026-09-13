@@ -1,4 +1,4 @@
-// TeXPresso 应用壳（ADR-0006：仅接线，业务逻辑在 texpresso-core）。
+// Latteset 应用壳（ADR-0006：仅接线，业务逻辑在 latteset-core）。
 
 mod commands;
 mod events;
@@ -11,9 +11,9 @@ use events::{
 };
 use std::sync::Arc;
 use tauri::Manager;
-use texpresso_core::scheduler::Scheduler;
-use texpresso_core::settings::Settings;
-use texpresso_infra::{
+use latteset_core::scheduler::Scheduler;
+use latteset_core::settings::Settings;
+use latteset_infra::{
     fs::TokioFs, runner::LatexmkRunner, storage::SettingsStorage, synctex::SyncTexCli,
     watch::{spawn_watcher, WatchState},
 };
@@ -60,9 +60,9 @@ pub fn run() {
                 .with_target(false)
                 .init();
 
-            // ---- 基础设施装配（ADR-0010：具体实现在 texpresso-infra，本层只注入 trait 位）----
-            let fs: Arc<dyn texpresso_core::project::FileSystem> = Arc::new(TokioFs);
-            let sync: Arc<dyn texpresso_core::synctex::SyncTexProvider> = Arc::new(SyncTexCli);
+            // ---- 基础设施装配（ADR-0010：具体实现在 latteset-infra，本层只注入 trait 位）----
+            let fs: Arc<dyn latteset_core::project::FileSystem> = Arc::new(TokioFs);
+            let sync: Arc<dyn latteset_core::synctex::SyncTexProvider> = Arc::new(SyncTexCli);
 
             // 全局设置目录（app_config_dir）
             let config_dir = app
@@ -76,23 +76,23 @@ pub fn run() {
             // 调度器（D1：actor，状态收容 task 内；emitter 接 tauri 事件）
             let emitter = build_emitter(app.handle());
             // 编译进行中的流式反馈（阶段 2）：页进度 + 编译中的错误，直接走 tauri 事件
-            let progress: Arc<dyn texpresso_core::scheduler::CompileProgress> =
+            let progress: Arc<dyn latteset_core::scheduler::CompileProgress> =
                 Arc::new(TauriProgress {
                     app: app.handle().clone(),
                 });
-            let runner: Arc<dyn texpresso_core::scheduler::CompileRunner> =
+            let runner: Arc<dyn latteset_core::scheduler::CompileRunner> =
                 Arc::new(LatexmkRunner::new(fs.clone(), progress));
             // setup 闭包不是 tokio 上下文：用 tauri 的 runtime（任何线程可用）
             let (scheduler, scheduler_task) = Scheduler::create(runner, emitter);
             tauri::async_runtime::spawn(scheduler_task.run());
 
             // 共享状态
-            let project: Arc<RwLock<Option<texpresso_core::project::ProjectState>>> =
+            let project: Arc<RwLock<Option<latteset_core::project::ProjectState>>> =
                 Arc::new(RwLock::new(None));
             let settings: Arc<RwLock<Settings>> = Arc::new(RwLock::new(
                 tauri::async_runtime::block_on(storage.load_global(fs.as_ref())),
             ));
-            let overrides: Arc<RwLock<texpresso_core::settings::ProjectOverrides>> =
+            let overrides: Arc<RwLock<latteset_core::settings::ProjectOverrides>> =
                 Arc::new(RwLock::new(Default::default()));
 
             // 监视任务（事件出口与运行时句柄由本层注入，infra 不认识 Tauri）
@@ -121,7 +121,7 @@ pub fn run() {
                 storage,
                 watch: watch_handle,
                 app: app.handle().clone(),
-                outline: tokio::sync::Mutex::new(texpresso_core::outline::OutlineCache::new()),
+                outline: tokio::sync::Mutex::new(latteset_core::outline::OutlineCache::new()),
             });
             Ok(())
         })
@@ -159,7 +159,7 @@ fn build_specta_builder() -> tauri_specta::Builder<tauri::Wry> {
 
 #[cfg(test)]
 mod tests {
-    /// 手动运行导出前端绑定：`cargo test -p texpresso -- --ignored export_bindings`
+    /// 手动运行导出前端绑定：`cargo test -p latteset -- --ignored export_bindings`
     #[test]
     #[ignore]
     fn export_bindings() {

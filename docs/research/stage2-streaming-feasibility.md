@@ -30,7 +30,7 @@
 
 ### 2.1 引擎子进程 —— 早有，但输出被丢掉
 
-`crates/texpresso-infra/src/runner.rs` 已经是"子进程 + 超时 + 树杀"的形态（Quick 直调引擎、Full 走 latexmk；`kill_tree` 用 `taskkill /T /F`）。**唯一的缺口是输出**：
+`crates/latteset-infra/src/runner.rs` 已经是"子进程 + 超时 + 树杀"的形态（Quick 直调引擎、Full 走 latexmk；`kill_tree` 用 `taskkill /T /F`）。**唯一的缺口是输出**：
 
 ```rust
 .stdout(std::process::Stdio::null())
@@ -165,7 +165,7 @@ node <lab>/s2-cost.mjs <file.xdv> <outDir>                     # 10/25/50/75/100
 3. **`xelatex` 之外的引擎未测**：`pdflatex` 直接出 PDF（没有中间 XDV，这条路不适用）；`lualatex --output-format=dvi` 未走通。
 4. **未测 Windows 上并发 `xdvipdfmx` 与引擎写同一 `tmp/` 的相互影响**（部分 PDF 通常写到另一个临时文件名，但字体缓存/`xdvipdfmx` 的临时文件行为未核）。
 5. **进度通道的"日志尾随"实现细节**（**2026-09 已落地，见 §8**）：原设想需要显式的"编译起点重置偏移"，否则会读到上一轮内容（本实验已复现这个坑）；落地时把 offset 随编译实例生灭（`FileSystem::read_appended`），天然不跨轮。
-6. **实验脚本是一次性产物**：本轮为研究写的 `s2-*.mjs` 未入库（结论与命令已在 §6 复述）；若要做正式功能，应把"页前缀 + 合成 postamble"实现进 `texpresso-infra`（进程侧）并在 core 里补单测。
+6. **实验脚本是一次性产物**：本轮为研究写的 `s2-*.mjs` 未入库（结论与命令已在 §6 复述）；若要做正式功能，应把"页前缀 + 合成 postamble"实现进 `latteset-infra`（进程侧）并在 core 里补单测。
 
 ## 8. 落地结果（2026-09：建议 1 已实现）
 

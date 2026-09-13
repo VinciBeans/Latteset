@@ -160,7 +160,7 @@
 
 ## 7. 验证计划（DoD 与口径固化）
 
-- **⑦a 的回归**（已完成部分）：`cargo test -p texpresso-core`（增量=全量对拍、缓存不钉住磁盘改动、入口归一、缓存淘汰）+ `cargo test -p texpresso-server`（`outline_cache_never_pins_stale_content`）+ `npx vitest run src/stores/__tests__/outline.spec.ts`（差分、标签关闭、项目根切换、刷新合并）。
+- **⑦a 的回归**（已完成部分）：`cargo test -p latteset-core`（增量=全量对拍、缓存不钉住磁盘改动、入口归一、缓存淘汰）+ `cargo test -p latteset-server`（`outline_cache_never_pins_stale_content`）+ `npx vitest run src/stores/__tests__/outline.spec.ts`（差分、标签关闭、项目根切换、刷新合并）。
 - **待做：新增脚本** `scripts/editor-report.mjs`（MCP 驱动真机，复用 §2 的探针）：打开项目 → 载入 fixture → 依次测「同步每击键 A/B」「折叠提供者」「大纲往返」「打开/建 model」→ 出 JSON + Markdown 表；超门槛退出码 1（与 `bench.mjs` 同风格）。**⑦a 之后大纲往返的门槛已可达**（实测 8–10ms @436KB，门槛定 ≤20ms@1MB）。
   → ✅ **已落地（⑦c，2026-09）**：脚本是 **WS 直驱真机**（Node 内置 `WebSocket` 连 MCP Bridge 的 `9223`，零第三方依赖、不需要 MCP 会话在场），一条命令跑 8 个探针并判门槛（`--json` 落盘、超门槛退出码 1、`--eval-file` 调试入口），夹具由 `scripts/gen-large-project.mjs` 生成三档。数据与结论见 [p1c 报告](./p1c-multifile-large-project.md)。
 - **门槛（建议）**：`每击键净开销 ≤0.5ms@1MB`、`折叠重算 ≤2ms@1MB`、`大纲往返 ≤20ms@1MB`、`无 >50ms longtask`、`20 个 1MB model 创建 ≤100ms`。

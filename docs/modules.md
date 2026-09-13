@@ -1,4 +1,4 @@
-# TeXPresso 模块详细设计（函数级）
+# Latteset 模块详细设计（函数级）
 
 > 上层设计见 [architecture.md](./architecture.md)，产品语义见 [design.md](./design.md)。
 > 本文件把 architecture.md 的每个大模块拆到**小模块 → 函数**，给出每个函数的签名、算法与信息局部性，以及大模块之间的通信契约。
@@ -45,7 +45,7 @@ scheduler（core）
 ├── runner.rs       —— CompileRunner trait + CompileRequest/CompileOutcome（core 定义）
 └── scheduler.rs    —— actor 主循环（唯一写者，状态全在 task 内）
 
-texpresso-infra
+latteset-infra
 └── runner.rs       —— LatexmkRunner：CompileRunner 实现（tokio 进程、超时、树杀、PDF 拷贝）
 ```
 
@@ -210,7 +210,7 @@ pub enum FailureKind { Timeout, ContentError, Aborted }
 // 不重发：同一请求只跑一遍（超时即失败，不重试）
 ```
 
-### 2.6 LatexmkRunner 实现（texpresso-infra）
+### 2.6 LatexmkRunner 实现（latteset-infra）
 
 ```rust
 pub struct LatexmkRunner { fs: Arc<dyn FileSystem>, progress: Arc<dyn CompileProgress> }
@@ -288,7 +288,7 @@ project（core）
 └── outline.rs     —— 文档大纲解析 + load 编排（§3.5）
 ```
 
-### 3.2 FileSystem trait（core 定义，texpresso-infra 实现）
+### 3.2 FileSystem trait（core 定义，latteset-infra 实现）
 
 ```rust
 /// core 唯一的 IO 抽象（"文件与进程的唯一入口"）。
@@ -304,7 +304,7 @@ pub trait FileSystem: Send + Sync {
 }
 ```
 
-**设计决策 D4**：探测、日志解析、设置存储、命令面的文件读写全部经此 trait，core 因此无任何文件依赖；实现集中在 texpresso-infra（tokio::fs，ADR-0010）。
+**设计决策 D4**：探测、日志解析、设置存储、命令面的文件读写全部经此 trait，core 因此无任何文件依赖；实现集中在 latteset-infra（tokio::fs，ADR-0010）。
 
 ### 3.2.1 paths.rs — 路径策略（D8）
 
@@ -472,7 +472,7 @@ pub fn diagnose(msg: &LogMessage) -> Option<Diagnosis>;
 ## 5. SyncTeX（synctex 大模块）
 
 ```
-synctex（core）              synctex（texpresso-infra）
+synctex（core）              synctex（latteset-infra）
 ├── model.rs                 └── synctex.rs —— SyncTexProvider 实现（含竞争重试）
 ├── provider.rs
 └── classify.rs —— 反向命中目标分类（roadmap ㉒，纯逻辑）
@@ -495,7 +495,7 @@ pub trait SyncTexProvider: Send + Sync {
 pub enum InverseTarget { Source(PathBuf), Generated(PathBuf), OutsideProject(PathBuf) }
 pub fn classify_inverse_target(root: &Path, hit: &Path) -> InverseTarget;
 
-// texpresso-infra synctex.rs：spawn synctex 二进制（tokio::process），解析 stdout
+// latteset-infra synctex.rs：spawn synctex 二进制（tokio::process），解析 stdout
 pub fn parse_forward_output(text: &str) -> Result<SyncTexPosition>;  // 纯函数，可单测
 pub fn parse_inverse_output(text: &str) -> Result<SourcePosition>;   // 纯函数，可单测
 // 失败按 100/200/300ms 退避重试（`with_retry`，退避时长可注入 → 单测传全零）
@@ -512,7 +512,7 @@ pub fn parse_inverse_output(text: &str) -> Result<SourcePosition>;   // 纯函�
 ## 6. 设置（settings 大模块）
 
 ```
-settings（core）              texpresso-infra
+settings（core）              latteset-infra
 ├── model.rs                  ├── storage.rs —— 读写盘、原子写、自写盘 hash 过滤（is_self_write）
 ├── merge.rs                  └── (watch.rs handle_settings_change —— 监视 → 重载 → 广播)
 └── validate.rs
@@ -543,15 +543,15 @@ pub async fn save_overrides(&self, project_root: &Path, o: &ProjectOverrides);
 pub fn is_self_write(&self, path: &Path, content: &str) -> bool;  // 自写盘 hash 过滤（D6，消费一次）
 ```
 
-**算法（merge）**：字段级 Option 语义——全局 `settings.json` 与项目 `.texpresso/settings.json` 同 schema（含 `schema_version`）；项目文件只写它覆盖的键，其余继承。
+**算法（merge）**：字段级 Option 语义——全局 `settings.json` 与项目 `.latteset/settings.json` 同 schema（含 `schema_version`）；项目文件只写它覆盖的键，其余继承。
 
-**热更新（设计决策 D6）**：watch 识别 `.texpresso/settings.json` 变化 → 重载 → 广播 `settings-changed`。**自写盘过滤**：`update_settings` 写盘时记录 `(path, content_hash)`；watch 事件到达时比对 hash，相同则跳过（防"自己写 → 自己重载 → 重复广播"）。hash 存在 `storage.last_write` 内，不跨模块。
+**热更新（设计决策 D6）**：watch 识别 `.latteset/settings.json` 变化 → 重载 → 广播 `settings-changed`。**自写盘过滤**：`update_settings` 写盘时记录 `(path, content_hash)`；watch 事件到达时比对 hash，相同则跳过（防"自己写 → 自己重载 → 重复广播"）。hash 存在 `storage.last_write` 内，不跨模块。
 
 **覆盖清洗（`sanitize_overrides`，core `settings/validate.rs`）**：读回项目覆盖时**逐字段**校验——越界/非法的 `root_file` 置 `None`（回退全局探测），合法的 compile 覆盖保留。整包丢弃会连带丢掉同一文件里合法的 compile 覆盖，不可取。
 
 **信息局部性**：core 的合并/校验是纯函数；全局设置快照是 §1 清单里唯一的 `RwLock` 共享态——写者只有 storage 模块，读方（组合层构造 CompileRequest 时）只取一次性快照拷贝，不持有引用。
 
-## 7. 监视与触发组合（texpresso-infra）
+## 7. 监视与触发组合（latteset-infra）
 
 ```
 watch.rs          —— notify 8.2 接线：事件规范化 + 过滤
@@ -605,15 +605,15 @@ pub fn compile_request_manual(ctx: ComposeContext<'_>) -> Option<CompileRequest>
 | synctex_forward / inverse | 调 provider（失败按 100/200/300ms 退避重试）；`inverse` 输出 `InverseResultDto{source,note}`：命中生成产物/项目外文件时就近回落，落空则只给提示（㉒） |
 | get_settings / update_settings | 读快照 / apply_patch → 校验 → 写盘（记录 hash，供 watch 自写盘过滤）→ 广播 settings-changed。**root_file 分支**：`Some(rel)` 先按 D8 解析为项目内绝对路径（失败即拒绝、**不落盘**）；`null` → 回到自动探测（复用 `detect_root`）；随后**同步内存 `ProjectState.root_file`**——漏掉这一步的症状是「选了根文件仍报未确定根文件，必须重开项目」 |
 
-### 8.1 无 GUI 交互层（crates/texpresso-server，roadmap ⑥）
+### 8.1 无 GUI 交互层（crates/latteset-server，roadmap ⑥）
 
 与命令面**并列的第二个入口**：CLI 与 MCP 都不经 Tauri，直接复用 core + infra（ADR-0010 的红利）。使用者是 harness / Agent，形态是「一条命令跑一次、拿一个 JSON」。用法、工具表、实测证据与偏差见 [cli-mcp-plan.md](./cli-mcp-plan.md)（本文件只写实现契约）。
 
 ```
-crates/texpresso-server
+crates/latteset-server
 ├── lib.rs              Session：项目会话（打开 / 编译 / 大纲 / 文件 / SyncTeX / 设置）
 ├── mcp.rs              MCP（stdio JSON-RPC：initialize / tools/list / tools/call / ping）
-└── bin/{texpresso-cli,texpresso-mcp}.rs
+└── bin/{latteset-cli,latteset-mcp}.rs
 ```
 
 | 部件 | 实现要点 |
@@ -623,7 +623,7 @@ crates/texpresso-server
 | 会话内快照 | `status` / `errors` 返回**本进程最近一次**结果（`Session` 字段持有）。*不是* GUI 状态的镜像：CLI 是独立进程，读不到 GUI 内存（偏差见 cli-mcp-plan §4） |
 | `outline` / `tree` / `read` / `write` | 调 core：`outline::load`（与 GUI 同源）、`project::scan`、`FileSystem`。`write` **不代建父目录**（与 GUI `save_all` 同契约），错误消息直接说清 |
 | SyncTeX | 调 `core::synctex::{pdf_path_for_root, resolve_inverse}`——与 GUI 命令面同一份实现（㉒ 的生成产物回落一起继承），不会漂移 |
-| `settings` | 读同一份全局设置（默认 Tauri `app_config_dir`，`TEXPRESSO_CONFIG_DIR` / `--config-dir` 可覆盖）→ **CLI/MCP 与 GUI 共享设置**，Agent 看到的 mode/engine/timeout 就是 GUI 会用的 |
+| `settings` | 读同一份全局设置（默认 Tauri `app_config_dir`，`LATTESET_CONFIG_DIR` / `--config-dir` 可覆盖）→ **CLI/MCP 与 GUI 共享设置**，Agent 看到的 mode/engine/timeout 就是 GUI 会用的 |
 | MCP 协议面 | `mcp.rs` 手写最小 JSON-RPC 子集：11 个 tool，`initialize` 回显受支持版本，未知方法回 `-32601`，**工具内错误按 MCP 约定回 `isError: true` + `structuredContent{code,message}`**（Agent 读得到"为什么失败"，不是裸协议错误） |
 | 退出码 | `0` 成功（`compile` 仅当 `status == "success"`）/ `1` 编译未通过 / `2` 用法·路径类 / `3` 内部错误；JSON 内同时有 `{ok, error:{code,message}}` |
 | 依赖约束 | 本 crate **零新增第三方依赖**（CLI 手写解析，不用 clap）——离线/沙箱内可构建 |
@@ -634,9 +634,9 @@ crates/texpresso-server
 
 | 要验的东西 | 入口 |
 |---|---|
-| Session 逻辑（打开 / 读写 / 树 / 大纲 / 非 UTF-8 / 编译拒绝 / 配置目录） | `cargo test -p texpresso-server`（9 个用例，默认不跑真编译） |
-| 真实编译（multifile 三轮：成功 → 失败诊断 → 修好） | `cargo test -p texpresso-server -- --ignored` |
-| MCP 协议链路（**真实二进制 + stdio 管道**：握手 / tools.list / 工具往返 / 错误语义 / 切换项目） | `cargo test -p texpresso-server --test mcp_stdio`（5 个用例 + 1 个 `#[ignore]` 编译用例） |
+| Session 逻辑（打开 / 读写 / 树 / 大纲 / 非 UTF-8 / 编译拒绝 / 配置目录） | `cargo test -p latteset-server`（9 个用例，默认不跑真编译） |
+| 真实编译（multifile 三轮：成功 → 失败诊断 → 修好） | `cargo test -p latteset-server -- --ignored` |
+| MCP 协议链路（**真实二进制 + stdio 管道**：握手 / tools.list / 工具往返 / 错误语义 / 切换项目） | `cargo test -p latteset-server --test mcp_stdio`（5 个用例 + 1 个 `#[ignore]` 编译用例） |
 | 端到端人工闭环（open → 改 → 编 → 验） | 见 [cli-mcp-plan.md](./cli-mcp-plan.md) §3 实测记录 |
 
 ## 9. 前端模块（函数级）
@@ -804,8 +804,8 @@ settings-changed: Settings
 | 6 | 真实论文模板（hithesis） | 阻塞点未定位：模板自带 latexmkrc × `-outdir=tmp` 约定下 `\include{子目录/...}` 写不出中间文件、报错后 latexmk 挂住；**调高超时也编不过**（roadmap ㉖，最小复现见 [troubleshooting.md](./troubleshooting.md)） |
 | 7 | beamer 往返偏差 2–4 行 | 已定性、不修：换用「最小 H」「首个 H≤40」取块规则后往返结果**逐一相同** → 属 beamer/主题的 synctex 记录粒度；`\only<n>` 覆盖层内容在非本层页面上的反向映射天然不确定（基线数字见 [design.md](./design.md) §预览） |
 | 8 | 非 Windows 平台 | 未验证：进程组 kill 与平台相关路径处理均为 v1 后置 |
-| 9 | `cargo test -p texpresso`（src-tauri） | 本机因 WebView2 限制无法运行，见 [troubleshooting.md](./troubleshooting.md) |
-| 10 | 文档欠账（roadmap ㉔） | 已核对：`crates/texpresso-infra/...` 的引用无残留（`src-tauri/src/{commands,events}.rs` 的引用本就正确）；当时核对的 cli-mcp-plan 现状盘点章节已随 ⑥ 改写为使用说明 |
+| 9 | `cargo test -p latteset`（src-tauri） | 本机因 WebView2 限制无法运行，见 [troubleshooting.md](./troubleshooting.md) |
+| 10 | 文档欠账（roadmap ㉔） | 已核对：`crates/latteset-infra/...` 的引用无残留（`src-tauri/src/{commands,events}.rs` 的引用本就正确）；当时核对的 cli-mcp-plan 现状盘点章节已随 ⑥ 改写为使用说明 |
 | 11 | headless 与 GUI 并发编译同项目 | **未加锁**：约定 headless 独占（§8.1 并发契约）。要让两者并存需给 watch 加一次性 `IgnorePaths` 通道或项目锁，均未做 |
 | 12 | MCP 状态订阅（notifications） | 未做（P1-5）：一期用「`compile` 同步返回 + `status`/`errors` 快照」覆盖，订阅式推送等真实需求 |
 | 13 | headless `file_write` 不代建目录 | **设计取舍**（与 GUI `save_all` 同契约）：父目录必须已存在，错误消息明说。Agent 新建子目录需先建目录 |
@@ -813,7 +813,7 @@ settings-changed: Settings
 | 15 | 折叠提供者全量扫描（编辑器侧） | `latexSuggest.ts` 的 `provideFoldingRanges` 忽略区间、`getValue().split()` 扫全文；**实测** 2.2ms@462KB、3.7ms@1.36MB，折叠模型失效后重算一次（防抖 ≥200ms）。60Hz 帧预算内，144Hz + 多 MB 才明显（[分析](./research/p1-large-doc-editor-analysis.md) §3.2，roadmap ⑦b 缓做） |
 | 16 | ~~编辑器侧"大文档"只测过单文件~~ **已补（⑦c，2026-09）** | 三档夹具（9 / 21 / 41 文件 × 2.2–5.5 MB，后两档同总量双倍文件数）：五项门槛全过——每击键净 **0.077–0.097 ms（绝对值恒定，与文件数/总量无关）**、打开全部标签 252/507/675 ms、大纲往返 14.1/28/27.9 ms、关标签后 model 25→4 且缓冲归零（**无泄漏**）。**结论：不需要优化**（[p1c 报告](./research/p1c-multifile-large-project.md)）。遗留：多文件项目的**编译期**表现、`Ctrl+F`/大范围替换、可信堆读数（dev 下 `performance.memory` 抖动到出负值） |
 | 17 | 大纲只在**编译成功**时刷新 | 编译一直失败时大纲停在旧结构（旧行为保留）。⑦a 的缓存已让"按保存触发刷新"变便宜（8–10ms/次），但有失败编译时的刷新时机/节流策略需要单独定（未做） |
-| 18 | `texpresso-mcp.exe` 被常驻进程占用 | 接了 DSH 的 `mcp-texpresso` 之后，该进程会**锁住二进制**：`cargo build -p texpresso-server` 报「failed to remove file … 拒绝访问」(os error 5)。绕行：只跑 lib（`--lib`）或用独立 `CARGO_TARGET_DIR`（见 [troubleshooting.md](./troubleshooting.md)） |
+| 18 | `latteset-mcp.exe` 被常驻进程占用 | 接了 DSH 的 `mcp-latteset` 之后，该进程会**锁住二进制**：`cargo build -p latteset-server` 报「failed to remove file … 拒绝访问」(os error 5)。绕行：只跑 lib（`--lib`）或用独立 `CARGO_TARGET_DIR`（见 [troubleshooting.md](./troubleshooting.md)） |
 
 | 19 | 编译期页进度的 **XDV 版**未接线（需求已由阶段 2 的日志通道满足） | `tmp/<stem>.xdv` 每次编译都在，页索引只算指令长度：截断到任意位置解出的页与完整文件逐字节相同、全量 4.41MB = 2.7ms。工具见 `scripts/xdv-report.mjs`。**2026-09 起「已排版 N 页」已由流式通道（引擎 `[N]` 标记）给出**（见 #20），XDV 版剩下的价值是页级差分与增量解析（[G2 报告](./research/g2-byte-offset-resync.md)、roadmap §5.7 与 §10-B.8） |
 
@@ -852,15 +852,15 @@ settings-changed: Settings
 | 编译性能与预算回归 | `node scripts/bench.mjs`（fixture 由 `node scripts/gen-bench-projects.mjs` 生成；超预算退出码 1） |
 | 构建确定性（逐字节） | `node scripts/check-determinism.mjs`（三档 × Full/Quick 各两次；`--without-epoch` 可复现非确定性） |
 | SyncTeX 往返精度 | `node scripts/synctex-report.mjs`（三组样本；基线见 design.md §预览） |
-| core 逻辑（调度 / 解析 / 诊断 / 大纲） | `cargo test -p texpresso-core` |
-| 真实 latexmk / synctex 集成 | `cargo test -p texpresso-infra -- --ignored`（含两条流式用例：`-- --ignored streaming` / `-- --ignored live_errors`，断言"进度/错误在编译结束前 ≥100ms 就到了"） |
-| 流式反馈真机时间线（页进度 / 实时错误 / 终态不被覆盖） | `node scripts/gen-stream-fixture.mjs test_file/projects/_stream-lab [--error]` 生成 400KB / 162 页夹具 → `VITE_TEXPRESSO_PROJECT=<夹具> npm run tauri dev` → 用 tauri server 注入 `window.__TAURI__.event.listen` 记录四个编译事件的时间线（脚本见提交说明；夹具目录已被 .gitignore 覆盖） |
-| headless 服务层（CLI/MCP 共用） | `cargo test -p texpresso-server`（`-- --ignored` 跑真编译；`--test mcp_stdio` 跑真实二进制的 MCP 管道链路；见 §8.1.1） |
-| 前端 store 与 composable | `npm run test`（大纲增量/合并见 `src/stores/__tests__/outline.spec.ts`；core 侧见 `cargo test -p texpresso-core outline`） |
+| core 逻辑（调度 / 解析 / 诊断 / 大纲） | `cargo test -p latteset-core` |
+| 真实 latexmk / synctex 集成 | `cargo test -p latteset-infra -- --ignored`（含两条流式用例：`-- --ignored streaming` / `-- --ignored live_errors`，断言"进度/错误在编译结束前 ≥100ms 就到了"） |
+| 流式反馈真机时间线（页进度 / 实时错误 / 终态不被覆盖） | `node scripts/gen-stream-fixture.mjs test_file/projects/_stream-lab [--error]` 生成 400KB / 162 页夹具 → `VITE_LATTESET_PROJECT=<夹具> npm run tauri dev` → 用 tauri server 注入 `window.__TAURI__.event.listen` 记录四个编译事件的时间线（脚本见提交说明；夹具目录已被 .gitignore 覆盖） |
+| headless 服务层（CLI/MCP 共用） | `cargo test -p latteset-server`（`-- --ignored` 跑真编译；`--test mcp_stdio` 跑真实二进制的 MCP 管道链路；见 §8.1.1） |
+| 前端 store 与 composable | `npm run test`（大纲增量/合并见 `src/stores/__tests__/outline.spec.ts`；core 侧见 `cargo test -p latteset-core outline`） |
 | 类型检查与构建 | `npm run build` |
 | 只有真实窗口能验的部分 | [troubleshooting.md](./troubleshooting.md) §真机验收清单（tauri server MCP 驱动） |
 | 产品级实测数字与结论 | [design.md](./design.md)（延迟预算、预览重载、编辑期单趟收益、SyncTeX 精度、构建确定性） |
-| 编辑器侧大文档性能（每击键 / 折叠 / 大纲往返 / 多文件大项目） | [research/p1-large-doc-editor-analysis.md](./research/p1-large-doc-editor-analysis.md)（单文件探针方法与数据）+ [research/p1c-multifile-large-project.md](./research/p1c-multifile-large-project.md)（多文件夹具/口径/门槛）。口径已固化：`node scripts/gen-large-project.mjs`（三档夹具）→ `VITE_TEXPRESSO_PROJECT=<...> npm run tauri dev` → `node scripts/editor-report.mjs --tier multi20 --json out.json`（WS 直驱真机、零第三方依赖、超门槛退出码 1；`--eval-file` 可当调试入口） |
+| 编辑器侧大文档性能（每击键 / 折叠 / 大纲往返 / 多文件大项目） | [research/p1-large-doc-editor-analysis.md](./research/p1-large-doc-editor-analysis.md)（单文件探针方法与数据）+ [research/p1c-multifile-large-project.md](./research/p1c-multifile-large-project.md)（多文件夹具/口径/门槛）。口径已固化：`node scripts/gen-large-project.mjs`（三档夹具）→ `VITE_LATTESET_PROJECT=<...> npm run tauri dev` → `node scripts/editor-report.mjs --tier multi20 --json out.json`（WS 直驱真机、零第三方依赖、超门槛退出码 1；`--eval-file` 可当调试入口） |
 | DVI/XDV 产物本身（页索引 / 页级差分 / 截断可读性） | `node scripts/xdv-report.mjs <tmp/*.xdv>`（页数可与 `pdfinfo` 对拍；`--diff` 页级差分、`--truncate-at` 半成品、`--watch` 编译期可用性）；结论见 [research/g2-byte-offset-resync.md](./research/g2-byte-offset-resync.md) |
 | 引擎到底读了什么（依赖集合 / 为什么找不到文件） | `node scripts/fls-report.mjs <tmp/main.fls> --fdb <tmp/main.fdb_latexmk>`（`.fls`=引擎实际打开；`.fdb_latexmk`=latexmk 依赖图含 md5 与 bibtex 步骤；差集=只在后者的输入）；失败的查找尝试用 `KPATHSEA_DEBUG=32`；结论见 [research/g1-read-interception-feasibility.md](./research/g1-read-interception-feasibility.md) |
 | 已完成项及其证据 | [roadmap §1 基线](./research/tex-ide-roadmap-priority.md) |

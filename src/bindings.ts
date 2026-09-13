@@ -33,7 +33,7 @@ export const commands = {
 	/**
 	 *  PDF 点击 → 源码（roadmap ⑤/㉒）：**只回落到项目内真实源码**。
 	 * 
-	 *  策略本身（就近探测 + 生成产物分类 + 提示文案）在 core [`texpresso_core::synctex::resolve_inverse`]，
+	 *  策略本身（就近探测 + 生成产物分类 + 提示文案）在 core [`latteset_core::synctex::resolve_inverse`]，
 	 *  与 headless CLI/MCP 共用一份（roadmap ⑥-P0-3：避免 GUI 与 CLI 行为漂移）；
 	 *  这里只做 DTO 映射，并在"完全拿不到映射"时结合文件系统状态补一句更准确的话。
 	 */

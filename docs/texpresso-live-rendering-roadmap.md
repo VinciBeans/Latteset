@@ -2,7 +2,7 @@
 
 > 本文档是一份可直接参考的实施路线图，用于在**自己的项目**中复刻 TeXpresso 式的"边改边出图"能力。
 >
-> 分析对象：[TeXpresso](https://github.com/let-def/texpresso) —— 一个 LaTeX 实时预览器。
+> 分析对象：[TeXpresso](https://github.com/let-def/TeXpresso) —— 一个 LaTeX 实时预览器。
 > 本文基于对其源码的实际通读（`src/frontend/`、`src/dvi/`、`src/engine/`）。
 
 ---
@@ -15,7 +15,7 @@
 - [3. 分阶段实施路线](#3-分阶段实施路线)
 - [4. 阶段验收清单](#4-阶段验收清单)
 - [5. 调试方法论：把决策过程打出来](#5-调试方法论把决策过程打出来)
-- [6. 附录：TeXpresso 源码索引](#6-附录texpresso-源码索引)
+- [6. 附录：TeXpresso 源码索引](#6-附录TeXpresso-源码索引)
 
 ---
 
@@ -511,7 +511,7 @@ A_OPEN  A_READ  A_PASS  A_DONE  A_SIZE  A_MTIM  A_GPIC  A_FORK
 - 项目内的 `src/frontend/README.md`：模块划分说明
 - `EDITOR-PROTOCOL.md`：编辑器 ↔ TeXpresso 的完整协议（VFS、`register`/`pause`/`resume`、`rerun` 收敛控制）
 - `CHANGELOG.md`：多数条目的修复说明都能反推出这套机制的脆弱点
-- 上游仓库：<https://github.com/let-def/texpresso>
+- 上游仓库：<https://github.com/let-def/TeXpresso>
 
 ---
 

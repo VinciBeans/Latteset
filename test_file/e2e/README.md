@@ -1,4 +1,4 @@
-# TeXPresso 端到端 GUI 测试（WebDriver）
+# Latteset 端到端 GUI 测试（WebDriver）
 
 > 本链路为**备选**：项目的 e2e 以 **tauri server MCP 驱动真实窗口**为主（见 [docs/troubleshooting.md](../../docs/troubleshooting.md)「真机验收清单」），WebDriver 方案为半配置状态。
 
@@ -37,7 +37,7 @@ cd ../..
 #    冒烟即可：
 npm run dev
 #    —— 若要“自动打开项目 + 测量重载耗时”，用绝对路径启动 vite：
-$env:VITE_TEXPRESSO_PROJECT="C:\path\to\某个tex项目"   # 例如 ...\tex-presso\test_file\projects\multifile
+$env:VITE_LATTESET_PROJECT="C:\path\to\某个tex项目"   # 例如 ...\tex-presso\test_file\projects\multifile
 npm run dev
 
 # 6. 跑测试
@@ -47,8 +47,8 @@ npm test
 
 ## 说明
 
-- `tauri:options.application` 指向 `src-tauri/target/debug/texpresso.exe`（由 `wdio.conf.js` 相对自身解析为 `../../src-tauri/...`；debug 构建从 `http://localhost:1420` 加载前端，**一定要先起 vite dev**）。
-- `VITE_TEXPRESSO_PROJECT`：仅 dev/测试钩子（`src/App.vue` 里读取），设置了就自动打开该项目、绕过原生目录弹窗（原生弹窗 WebDriver 无法驱动）。生产不设置，行为不变。
+- `tauri:options.application` 指向 `src-tauri/target/debug/latteset.exe`（由 `wdio.conf.js` 相对自身解析为 `../../src-tauri/...`；debug 构建从 `http://localhost:1420` 加载前端，**一定要先起 vite dev**）。
+- `VITE_LATTESET_PROJECT`：仅 dev/测试钩子（`src/App.vue` 里读取），设置了就自动打开该项目、绕过原生目录弹窗（原生弹窗 WebDriver 无法驱动）。生产不设置，行为不变。
 - 测试 3 会点「编译」，等待 `window.__previewLastReload` 出现并打印每次重载耗时 JSON，输出形如：
   `PDF_RELOAD {"reload":3,"file":"main.pdf","pages":12,"bytes":182340,"fetch":8,"parse":142,"render":612,"total":762,"pagesRendered":5}`
 - 若 `msedgedriver` 版本与 Edge 不匹配，`tauri-driver` 连接会超时（`WebDriver connection timeout`）——安装匹配版本即可。

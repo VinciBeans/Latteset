@@ -1,6 +1,6 @@
 // texParse.ts：LaTeX 文本行解析辅助（纯函数，不依赖 Monaco/Tauri），
 // 供折叠 / 代码片段补全共用，便于单测（modules.md §6、design.md §测试）。
-// 注：文档大纲的同类剥离逻辑已下沉 Rust（crates/texpresso-core/src/outline.rs，
+// 注：文档大纲的同类剥离逻辑已下沉 Rust（crates/latteset-core/src/outline.rs，
 // 2026-09-03，cli-mcp-plan.md P1-4），本文件不再服务于大纲。
 //
 // 背景：Monaco 片段引擎把 `\` 当转义（`\$`/`\}`/`\\`），而折叠/大纲要正确区分

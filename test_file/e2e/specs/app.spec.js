@@ -1,10 +1,10 @@
-// TeXPresso 端到端 GUI 测试（Windows）
+// Latteset 端到端 GUI 测试（Windows）
 // 依赖：应用 debug 二进制 + vite dev + tauri-driver + msedgedriver（见 README.md）。
-// 若想测量 pdf.js 重载耗时，请以 VITE_TEXPRESSO_PROJECT 启动 vite dev 自动打开项目，
+// 若想测量 pdf.js 重载耗时，请以 VITE_LATTESET_PROJECT 启动 vite dev 自动打开项目，
 // 再点「编译」触发重载，本测试会从 window.__previewLastReload 读取并打印每次重载耗时。
 import { $, browser, expect } from "@wdio/globals";
 
-describe("TeXPresso GUI（Windows）", () => {
+describe("Latteset GUI（Windows）", () => {
   it("启动并渲染核心 UI（工具条 + 预览面板）", async () => {
     await browser.waitUntil(() => $("button.btn.primary").isExisting(), {
       timeout: 30000,

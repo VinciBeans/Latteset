@@ -83,7 +83,7 @@
 
 ### 4.2 完整学位论文首编 >90s → **默认超时 120s 存在风险**
 
-hithesis 与 hitszthesis 在 90s 超时前**都已产出 PDF**（不是死循环），说明是正常的大文档编译。TexPresso 默认 `timeout_secs = 120`，学位论文首编（多遍 latexmk + splitindex + bibtex）很容易顶到。
+hithesis 与 hitszthesis 在 90s 超时前**都已产出 PDF**（不是死循环），说明是正常的大文档编译。Latteset 默认 `timeout_secs = 120`，学位论文首编（多遍 latexmk + splitindex + bibtex）很容易顶到。
 → 建议：把这类模板纳入基准（配合 ③），并复核默认值与超时提示文案。
 
 ### 4.3 模板自带 `latexmkrc` 与我们的构建约定存在未验证的交互
@@ -98,7 +98,7 @@ $pdflatex = "xelatex -file-line-error --shell-escape -src-specials -synctex=1 -i
 $makeindex = 'internal splitindex';
 ```
 
-即：**模板自己把 `$pdflatex` 覆写成 xelatex、内建 `--shell-escape`、还自带 `cp` 把产物拷到源目录旁边**。而 TexPresso 固定传 `-outdir=tmp` 并**从 `tmp/<stem>.pdf` 拷贝**到项目根。
+即：**模板自己把 `$pdflatex` 覆写成 xelatex、内建 `--shell-escape`、还自带 `cp` 把产物拷到源目录旁边**。而 Latteset 固定传 `-outdir=tmp` 并**从 `tmp/<stem>.pdf` 拷贝**到项目根。
 
 → **未验证**：命令行 `-xelatex`/`-outdir=tmp` 与 rc 内 `$pdf_mode`/`$pdflatex`/`cp` 的**优先级与实际叠加行为**（本文两个样本都超时，没跑到终态）。这是"模板兼容"里最可能翻车的一处，值得单列验证。
 

@@ -1,42 +1,42 @@
 # CLI + MCP 交互接口（roadmap ⑥）
 
-> 状态：**已实现**（2026-09）。让 harness / Agent **不经 GUI** 直接调用 TexPresso 的编译/大纲/SyncTeX 能力，形成「读 → 改 → 编译验证 → 修」闭环。
-> 实现位置：`crates/texpresso-server`（headless 服务层 + 两个二进制）。设计依据与落地偏差见 §4。
+> 状态：**已实现**（2026-09）。让 harness / Agent **不经 GUI** 直接调用 Latteset 的编译/大纲/SyncTeX 能力，形成「读 → 改 → 编译验证 → 修」闭环。
+> 实现位置：`crates/latteset-server`（headless 服务层 + 两个二进制）。设计依据与落地偏差见 §4。
 > 标注约定：**已核实**=读过代码/实测确认；**分析结论**=设计推演（未实测）。
 
 ## 1. 形态与用法
 
 ```
-crates/texpresso-server
+crates/latteset-server
 ├── lib.rs             —— Session：headless 会话（打开项目/编译/大纲/文件/SyncTeX）
 ├── mcp.rs             —— MCP（stdio JSON-RPC + tools/list + tools/call）
 └── bin/
-    ├── texpresso-cli.rs —— 命令行（一条命令一个 JSON）
-    └── texpresso-mcp.rs —— MCP server（stdio）
+    ├── latteset-cli.rs —— 命令行（一条命令一个 JSON）
+    └── latteset-mcp.rs —— MCP server（stdio）
 ```
 
-构建：`cargo build -p texpresso-server` → `src-tauri/target/debug/texpresso-{cli,mcp}.exe`（**工作区产物，未打进安装包**）。
+构建：`cargo build -p latteset-server` → `src-tauri/target/debug/latteset-{cli,mcp}.exe`（**工作区产物，未打进安装包**）。
 
 ```bash
 # CLI：一条命令一个 JSON（stdout 只有 JSON，日志走 stderr）
-texpresso-cli --project <目录> open
-texpresso-cli --project <目录> tree
-texpresso-cli --project <目录> outline
-texpresso-cli --project <目录> read chapters/intro.tex
-texpresso-cli --project <目录> write chapters/intro.tex -      # 内容从 stdin 读（避免 shell 转义吃掉 $）
-texpresso-cli --project <目录> compile                        # 默认完整 latexmk；--quick 单趟
-texpresso-cli --project <目录> compile | jq .compile.errors    # 结构化错误 + 诊断
-texpresso-cli --project <目录> forward chapters/intro.tex 3    # 源码 → PDF 页码/坐标
-texpresso-cli --project <目录> inverse 5 --x 100 --y 600       # PDF → 源码
+latteset-cli --project <目录> open
+latteset-cli --project <目录> tree
+latteset-cli --project <目录> outline
+latteset-cli --project <目录> read chapters/intro.tex
+latteset-cli --project <目录> write chapters/intro.tex -      # 内容从 stdin 读（避免 shell 转义吃掉 $）
+latteset-cli --project <目录> compile                        # 默认完整 latexmk；--quick 单趟
+latteset-cli --project <目录> compile | jq .compile.errors    # 结构化错误 + 诊断
+latteset-cli --project <目录> forward chapters/intro.tex 3    # 源码 → PDF 页码/坐标
+latteset-cli --project <目录> inverse 5 --x 100 --y 600       # PDF → 源码
 
 # MCP：stdio server（harness 侧配置成本地 server 即可）
-texpresso-mcp --project <目录>
+latteset-mcp --project <目录>
 ```
 
 **退出码**：`0` 成功（`compile` 仅当 `status == "success"`）；`1` 编译未通过；`2` 用法/路径类错误；`3` 内部错误。
 JSON 里同时有 `{ok, error:{code,message}}`，两种判断方式都可用。
 
-**配置目录**：默认与 GUI 相同（Windows `%APPDATA%\com.texpresso.app`），因此 CLI/MCP 与 GUI **共享同一份设置**；`--config-dir` 或环境变量 `TEXPRESSO_CONFIG_DIR` 可覆盖（测试/CI 隔离用）。
+**配置目录**：默认与 GUI 相同（Windows `%APPDATA%\com.latteset.app`），因此 CLI/MCP 与 GUI **共享同一份设置**；`--config-dir` 或环境变量 `LATTESET_CONFIG_DIR` 可覆盖（测试/CI 隔离用）。
 
 ## 2. 工具/命令清单（全部已实现）
 
@@ -103,12 +103,12 @@ DSH 的 MCP server 由 profile 的 patch 层声明（**本地文件、不入库*
 
 ```yaml
 - insert:
-    - id: mcp-texpresso
+    - id: mcp-latteset
       name: '@deepseek-ai/dsh-mcp-client'
       config:
-        serverName: texpresso
+        serverName: latteset
         transport: stdio
-        command: 'E:/Works/tex-presso/src-tauri/target/debug/texpresso-mcp.exe'
+        command: 'E:/Works/tex-presso/src-tauri/target/debug/latteset-mcp.exe'
         args: []
         cwd: 'E:/Works/tex-presso'
         env: {}

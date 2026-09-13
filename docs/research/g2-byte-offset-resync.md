@@ -135,7 +135,7 @@ DefineNativeFont=252   SetGlyphs=253   SetTextAndGlyphs=254
 ### 3.6 页号映射：DVI 页号 = PDF 页号
 
 - `xdvipdfmx` 转换日志按 `[1][2]…[186]` 顺序输出 ✓
-- 交叉验证（用我们自己的 SyncTeX 链路）：`texpresso-cli forward chapters/c05.tex 1` → **PDF page 79**，而"等长替换 c05"实验里页哈希差分命中的**正是第 79 页** ✓✓
+- 交叉验证（用我们自己的 SyncTeX 链路）：`latteset-cli forward chapters/c05.tex 1` → **PDF page 79**，而"等长替换 c05"实验里页哈希差分命中的**正是第 79 页** ✓✓
 
 → 页哈希的差分结果可以直接当作"PDF 第 N 页要不要重画"的判据。
 
@@ -214,6 +214,6 @@ node scripts/xdv-report.mjs min.xdv --pages --opcodes
 2. **SPX（Tectonic 的语义化 XDV）未测**：我们不用它，但同一解析器改 1 个 ID 字节即可支持（未做）。
 3. **未做 SyncTeX 页级对拍**：§5 的"互补"是基于结构与成本的判断；要坐实"页哈希差分 vs synctex 派生页变化"的一致性，需要按 ⑪ 的真实用例做一轮对拍。
 4. **未在真实学位论文上验证**（hithesis 系被 ㉖ 阻塞）：真实模板的 XDV 会有更多 specials/图片，页包自包含性结论**预期**仍成立（不依赖 specials 内容），但未实测。
-5. **解析器是 JS 原型**：产品化要移进 Rust（`texpresso-core`，纯逻辑 + `FileSystem` 注入）并补边界/fuzz 测试（截断点随机、恶意长度字段、`set_glyphs` 计数异常）。本文的 1.6 GB/s 是 Node 的数字，Rust 只会更快。
+5. **解析器是 JS 原型**：产品化要移进 Rust（`latteset-core`，纯逻辑 + `FileSystem` 注入）并补边界/fuzz 测试（截断点随机、恶意长度字段、`set_glyphs` 计数异常）。本文的 1.6 GB/s 是 Node 的数字，Rust 只会更快。
 6. **"增量追加"尚未实现**：本文的成本下界（0.3ms/0.5MB）是按吞吐推算的；真正的追加式解析器需要维护"已扫描 offset + 跨 flush 的半页状态"（上游 `incdvi` 的做法），未实现。
 7. **页哈希是字节哈希**：内容相同但位置不同的页会被判为"变了"（这正是重排场景的诚实反映）；若 ⑪ 需要"视觉无变化"的判定，得在渲染层再做比较。

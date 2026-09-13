@@ -58,7 +58,7 @@ function buildTier(name, chapters, targetKB, seed) {
     "main.tex": String.raw`\documentclass[UTF8,a4paper,12pt]{ctexbook}
 \usepackage{amsmath,amssymb}
 \title{多文件大项目夹具（${name}）}
-\author{TeXPresso}
+\author{Latteset}
 \begin{document}
 \maketitle
 \tableofcontents

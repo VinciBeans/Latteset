@@ -1,5 +1,5 @@
 // outlineStore（modules.md §9.2）：LaTeX 文档结构树（大纲）。
-// 解析逻辑已下沉 Rust（2026-09-03：crates/texpresso-core/src/outline.rs + get_outline 命令，
+// 解析逻辑已下沉 Rust（2026-09-03：crates/latteset-core/src/outline.rs + get_outline 命令，
 // cli-mcp-plan.md P1-4）——本 store 只负责触发时机、传参（实时缓冲/兜底文件列表）
 // 与结果呈现；点击大纲项 → editor.openFile + SyncTeX 正向定位见 goTo。
 // 刷新时机：项目打开、编译成功、结构变化（files-changed structural）——由 App/events 触发。

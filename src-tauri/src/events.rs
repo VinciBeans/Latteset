@@ -4,12 +4,12 @@ use serde::{Deserialize, Serialize};
 use tauri_specta::Event;
 use specta::Type;
 use tauri::AppHandle;
-use texpresso_core::scheduler::{CompileProgress, Emitter};
-use texpresso_core::settings::Settings;
-use texpresso_core::types::{
+use latteset_core::scheduler::{CompileProgress, Emitter};
+use latteset_core::settings::Settings;
+use latteset_core::types::{
     CompileStatusDto, ErrorEntry, FilesChanged, PdfUpdated,
 };
-use texpresso_infra::watch::WatchSink;
+use latteset_infra::watch::WatchSink;
 use std::sync::Arc;
 
 #[derive(Serialize, Deserialize, Clone, Type, tauri_specta::Event)]

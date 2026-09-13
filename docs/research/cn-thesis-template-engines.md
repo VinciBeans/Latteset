@@ -1,6 +1,6 @@
 # 中文高校学位论文 LaTeX 模板：官方引擎要求调研
 
-> 调研目的：为 TexPresso（Windows 首发、默认引擎 XeLaTeX）判断「默认 XeLaTeX 能否开箱即用编译用户下载的论文模板」，以及是否需要做引擎自动推断。
+> 调研目的：为 Latteset（Windows 首发、默认引擎 XeLaTeX）判断「默认 XeLaTeX 能否开箱即用编译用户下载的论文模板」，以及是否需要做引擎自动推断。
 >
 > 调研时间：2026-09（仓库状态以当时 master/main/dev 分支为准）
 > 取证方式：web_fetch 抓取 raw.githubusercontent.com 的 README / .dtx / .cls / Makefile / latexmkrc / CI workflow / main.tex 原文
@@ -364,7 +364,7 @@
 
 ---
 
-## 5. 比引擎更会翻车的四个点（对 TexPresso 的落地建议）
+## 5. 比引擎更会翻车的四个点（对 Latteset 的落地建议）
 
 按「用户下载模板后第一次编译失败」的实际概率排序：
 

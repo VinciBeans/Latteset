@@ -41,7 +41,7 @@ jobs:
       # core 纯逻辑（调度器合并/超时/重试/终止、日志解析快照、设置合并、根文件探测）。
       # 无 Tauri/无 GUI 依赖，Linux 可跑；不运行 #[ignore] 的真实 TeX 集成测试。
       - name: Core tests
-        run: cargo test -p texpresso-core
+        run: cargo test -p latteset-core
 
   build-windows:
     name: Windows build (NSIS smoke)

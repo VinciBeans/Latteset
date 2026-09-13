@@ -2084,6 +2084,74 @@ dependencies = [
 ]
 
 [[package]]
+name = "latteset"
+version = "0.1.0"
+dependencies = [
+ "latteset-core",
+ "latteset-infra",
+ "serde",
+ "specta",
+ "specta-typescript",
+ "tauri",
+ "tauri-build",
+ "tauri-plugin-dialog",
+ "tauri-plugin-log",
+ "tauri-plugin-mcp-bridge",
+ "tauri-plugin-opener",
+ "tauri-plugin-window-state",
+ "tauri-specta",
+ "thiserror 2.0.20",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
+name = "latteset-core"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "insta",
+ "regex",
+ "serde",
+ "serde_json",
+ "specta",
+ "thiserror 2.0.20",
+ "tokio",
+ "tokio-util",
+ "tracing",
+]
+
+[[package]]
+name = "latteset-infra"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "latteset-core",
+ "notify",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tokio-util",
+ "tracing",
+]
+
+[[package]]
+name = "latteset-server"
+version = "0.1.0"
+dependencies = [
+ "latteset-core",
+ "latteset-infra",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.20",
+ "tokio",
+ "tokio-util",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
 name = "lazy_static"
 version = "1.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4366,74 +4434,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5fed54709c5b3a53d09bb1c113ea4f5ceafd1e772ddcb0030a82e1d56c087b08"
 dependencies = [
  "new_debug_unreachable",
-]
-
-[[package]]
-name = "texpresso"
-version = "0.1.0"
-dependencies = [
- "serde",
- "specta",
- "specta-typescript",
- "tauri",
- "tauri-build",
- "tauri-plugin-dialog",
- "tauri-plugin-log",
- "tauri-plugin-mcp-bridge",
- "tauri-plugin-opener",
- "tauri-plugin-window-state",
- "tauri-specta",
- "texpresso-core",
- "texpresso-infra",
- "thiserror 2.0.20",
- "tokio",
- "tracing",
- "tracing-subscriber",
-]
-
-[[package]]
-name = "texpresso-core"
-version = "0.1.0"
-dependencies = [
- "async-trait",
- "insta",
- "regex",
- "serde",
- "serde_json",
- "specta",
- "thiserror 2.0.20",
- "tokio",
- "tokio-util",
- "tracing",
-]
-
-[[package]]
-name = "texpresso-infra"
-version = "0.1.0"
-dependencies = [
- "async-trait",
- "notify",
- "serde",
- "serde_json",
- "texpresso-core",
- "tokio",
- "tokio-util",
- "tracing",
-]
-
-[[package]]
-name = "texpresso-server"
-version = "0.1.0"
-dependencies = [
- "serde",
- "serde_json",
- "texpresso-core",
- "texpresso-infra",
- "thiserror 2.0.20",
- "tokio",
- "tokio-util",
- "tracing",
- "tracing-subscriber",
 ]
 
 [[package]]

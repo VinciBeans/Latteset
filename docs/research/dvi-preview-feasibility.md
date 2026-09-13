@@ -17,7 +17,7 @@
 
 ## 1. 为什么会有这个想法（以及它想解决什么）
 
-上游 [let-def/texpresso](https://github.com/let-def/texpresso) 的实时预览**建立在 DVI 上**：改造过的 XeTeX 把 DVI 流式吐出来，它自己增量解析（`src/dvi/` 解释器 + `incdvi.c` 页索引）、按页重放给 MuPDF 渲染。于是自然会问：**我们不走 fork/改引擎那条路，只把"预览格式"从 PDF 换成 DVI，能不能便宜地拿到"边编边看 + 只更新变化页"？**
+上游 [let-def/TeXpresso](https://github.com/let-def/TeXpresso) 的实时预览**建立在 DVI 上**：改造过的 XeTeX 把 DVI 流式吐出来，它自己增量解析（`src/dvi/` 解释器 + `incdvi.c` 页索引）、按页重放给 MuPDF 渲染。于是自然会问：**我们不走 fork/改引擎那条路，只把"预览格式"从 PDF 换成 DVI，能不能便宜地拿到"边编边看 + 只更新变化页"？**
 
 本文把这个想法拆成三个可独立证伪的问题：
 

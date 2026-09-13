@@ -20,7 +20,7 @@
 
 ## 1. 问题定义：什么叫"首次打开即用"
 
-场景：用户下载一个学校/期刊模板 zip → 解压 → 在 TexPresso 里「打开项目」→ **期望不配任何东西就看到 PDF**。
+场景：用户下载一个学校/期刊模板 zip → 解压 → 在 Latteset 里「打开项目」→ **期望不配任何东西就看到 PDF**。
 
 这条链上有 5 个可能断掉的点（对应上表 A–E）。断在哪一环，用户都得自己去当"工具链工程师"——而调研里绝大多数用户不会：
 
@@ -36,7 +36,7 @@
 | 打开项目 | `resolve_project_root` → 读项目覆盖 → 读全局 → `effective` 合并 → 根文件探测 | `src-tauri/src/commands.rs:91-158` |
 | 根文件探测 | 候选 = 含 `\documentclass` 且未被引用；`Unique` 采用，`Multiple`/`None` 返回 `None` | `root_detect.rs`、ADR-0009 |
 | **多候选去向** | `RootResolution::Multiple(_)` 的 `Vec` **被直接丢弃**（`Multiple(_) \| None => None`） | `commands.rs:140-141` |
-| 契约 | `ProjectInfo { root, root_file }` —— **没有候选字段，前端拿不到候选列表** | `crates/texpresso-core/src/types.rs:111-116` |
+| 契约 | `ProjectInfo { root, root_file }` —— **没有候选字段，前端拿不到候选列表** | `crates/latteset-core/src/types.rs:111-116` |
 | 前端反馈 | `if (!info.root_file) console.warn("未探测到唯一根文件，请在设置中手动指定 root_file")`——**只有控制台警告，界面上没有任何提示** | `src/App.vue:94-97` |
 | 引擎 | 取 `settings.compile.engine`（默认 `XeLaTeX`，可全局改或项目覆盖） | `compose.rs:37`、`settings/model.rs:40` |
 | 引擎探测 | **无**。没有任何代码读取文档内容来判断该用哪个引擎 | 全仓无相关实现 |
@@ -68,13 +68,13 @@
 | 普通文档（含 `\tableofcontents`） | latexmk 日志出现 `Latexmk: Using bibtex to make bibliography file(s).`——**自动跑 bibtex** |
 | `biblatex` + `backend=biber` | 日志出现 `=== biblatex/biber in use` / `Latexmk: Using biber to make bibliography file(s).` → **exit 0**，pdflatex → biber → pdflatex×2 全自动 |
 
-**含义**：`bibtex`/`biber`/多次 pass 这些"编译链知识"，latexmk 自己就处理了，**TexPresso 不需要推断，也不需要让用户配**。原路线图里"编译链推断"的清单可以砍掉一大半。
+**含义**：`bibtex`/`biber`/多次 pass 这些"编译链知识"，latexmk 自己就处理了，**Latteset 不需要推断，也不需要让用户配**。原路线图里"编译链推断"的清单可以砍掉一大半。
 
 > 记录一条**被证伪的假设**：biber 探针 exit 12，一度归因为 PowerShell `Set-Content -Encoding UTF8` 写了 UTF-8 BOM。**实测证伪**——本机为 pwsh 7.6.5，`-Encoding UTF8` 默认无 BOM（头字节 `5C 64`），与 `UTF8Encoding($false)` 写法一致，两者都 exit 0。真正原因是**探针含中文正文却用 pdflatex 编译**（与 §3.1 同一现象）。BOM 一条的完整账目见 [troubleshooting.md](../troubleshooting.md)。
 
 ### 3.3 仍未验证的部分
 
-- **`-shell-escape`（minted 等）**：本机 **无 `minted`/`pygmentize`**，未实测。latexmk 默认不加 `-shell-escape`，`[推断]` 这是编译链里**唯一真正需要 TexPresso 介入**的一项。
+- **`-shell-escape`（minted 等）**：本机 **无 `minted`/`pygmentize`**，未实测。latexmk 默认不加 `-shell-escape`，`[推断]` 这是编译链里**唯一真正需要 Latteset 介入**的一项。
 - **`makeindex`/`glossaries`**：工具在（`makeindex.exe` 存在），但未实测 latexmk 是否全自动接管。
 - **缺字体**：未构造缺字体的环境。
 
@@ -130,7 +130,7 @@
 
 ### 决策 1：探测结果**不落盘**（推荐）
 
-落盘（写进 `.texpresso/settings.json`）有三个问题：
+落盘（写进 `.latteset/settings.json`）有三个问题：
 1. 该文件是**用户可手写、可进 git** 的覆盖文件，混入自动值会**污染版本库**、且用户无法区分"我设的"与"它猜的"；
 2. 它会触发 watch → `is_self_write` 过滤链路（虽然能拦住，但每次打开项目都写盘是坏味道）；
 3. **一旦落盘，"探测错了"就变成持久错误**。
@@ -172,8 +172,8 @@
    - IEEEtran（pdflatex 更常见）
    - `biblatex` 论文（biber，验证"不推断编译链"是对的）
 2. 单测锁规则表：`infer_engine` 的每个信号 + "无信号 → None"；
-3. 真机：`VITE_TEXPRESSO_PROJECT=<模板>` + `npm run tauri dev` → 观察 stdout（`打开项目` / 引擎取值）+ 真窗口出 PDF；
-4. `npm run build` + `cargo test -p texpresso-core` 全绿。
+3. 真机：`VITE_LATTESET_PROJECT=<模板>` + `npm run tauri dev` → 观察 stdout（`打开项目` / 引擎取值）+ 真窗口出 PDF；
+4. `npm run build` + `cargo test -p latteset-core` 全绿。
 
 ## 8. 建议的增量切分（3 个可独立提交的单元）
 

@@ -1,7 +1,7 @@
 # VS Code + LaTeX Workshop 生态调研报告
 
 > 调研日期：2026-09（数据抓取时点见各条）
-> 调研人：产品调研分析（受 TexPresso 项目委托）
+> 调研人：产品调研分析（受 Latteset 项目委托）
 > 抓取方式：GitHub REST API v3、VS Code Marketplace、Stack Exchange API、Hacker News Algolia API、PullPush（Reddit 归档）、官方 wiki raw 页
 > 说明：本文件是**调研产物**，不是设计文档；未改动 `docs/README.md` 索引，是否纳入文档体系由项目方决定。
 
@@ -77,7 +77,7 @@
 - 用户 `GreatLich`（3 分）：「Having to (hunt for and) install extensions and configuring them **_is_ 'fighting the IDE' to me**」。来源：[r/LaTeX rkvq56/hpjisyh](https://www.reddit.com/r/LaTeX/comments/rkvq56/which_latex_ide_do_you_prefer/hpjisyh/)。
 - **最新证据（2026-09）**：issue [#4976](https://github.com/James-Yu/LaTeX-Workshop/issues/4976) 报告 `%!TEX options = -lualatex -synctex=1 ...` 被整体加引号传给 latexmk，导致 `Latexmk: Bad options specified`——即「魔法注释 + 参数解析」这条配置路径至今脆弱。
 
-**【推断】** 这是「通用编辑器 + 插件」模型的直接代价：编译链路不是扩展的原生概念，而是用户用 JSON 拼出来的。对 TexPresso 而言，「开箱即用的编译配置」是明确的可差异化点。
+**【推断】** 这是「通用编辑器 + 插件」模型的直接代价：编译链路不是扩展的原生概念，而是用户用 JSON 拼出来的。对 Latteset 而言，「开箱即用的编译配置」是明确的可差异化点。
 
 ---
 
@@ -143,7 +143,7 @@
 - [#4713](https://github.com/James-Yu/LaTeX-Workshop/issues/4713)（子调研经 GitHub 取得）：`ctexart` + xelatex「Still 0 error, but **RED 'x' symbol**」。
 - 中文社区教程同样要求把默认 latexmk 改为 xelatex（如[知乎《使用VSCode编写LaTeX》](https://zhuanlan.zhihu.com/p/38178015)）。
 
-**【推断】** 对中文用户，VS Code + LW 不是开箱即用：默认走 pdflatex 路线，中文必须自行改 recipe 换 xelatex；且存在编码截断、错误不上报等真实缺陷。**这是 TexPresso（中文友好）最直接的差异化空间。**
+**【推断】** 对中文用户，VS Code + LW 不是开箱即用：默认走 pdflatex 路线，中文必须自行改 recipe 换 xelatex；且存在编码截断、错误不上报等真实缺陷。**这是 Latteset（中文友好）最直接的差异化空间。**
 
 ---
 
@@ -379,8 +379,8 @@
 
 ### 附：不算「结构性不可能」但现实未解决的差异化机会（[推断]）
 
-- **中文/CJK 开箱即用**：默认走 pdflatex、需手改 JSON 切 xelatex，且存在编码截断（[PR #4433](https://github.com/James-Yu/LaTeX-Workshop/pull/4433)）、错误不上报（[#4317](https://github.com/James-Yu/LaTeX-Workshop/issues/4317)）等真实缺陷。这在技术上**可以被扩展解决**，只是现实中没解决——对 Windows 首发、中文友好的 TexPresso 是直接卖点。
-- **实时/连续编译**：LW 是 save/build 触发（`latex.autoBuild.run` = never/onSave/onFileChange），没有 Overleaf/TexPresso 式连续排版。这同样属于「扩展可以做得更好」而非「VS Code 做不到」。
+- **中文/CJK 开箱即用**：默认走 pdflatex、需手改 JSON 切 xelatex，且存在编码截断（[PR #4433](https://github.com/James-Yu/LaTeX-Workshop/pull/4433)）、错误不上报（[#4317](https://github.com/James-Yu/LaTeX-Workshop/issues/4317)）等真实缺陷。这在技术上**可以被扩展解决**，只是现实中没解决——对 Windows 首发、中文友好的 Latteset 是直接卖点。
+- **实时/连续编译**：LW 是 save/build 触发（`latex.autoBuild.run` = never/onSave/onFileChange），没有 Overleaf/Latteset 式连续排版。这同样属于「扩展可以做得更好」而非「VS Code 做不到」。
 
 ---
 

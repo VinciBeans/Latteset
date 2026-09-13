@@ -24,7 +24,7 @@ public/pdfjs/
 src-tauri/target/
 src-tauri/gen/
 
-# ============ TeXPresso 编译中间文件（见 docs/design.md：统一收纳于 tmp/） ============
+# ============ Latteset 编译中间文件（见 docs/design.md：统一收纳于 tmp/） ============
 tmp/
 
 # ============ 日志 ============

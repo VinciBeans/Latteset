@@ -45,7 +45,7 @@ export const config = {
     {
       browserName: "wry",
       "tauri:options": {
-        application: path.resolve(__dirname, "../../src-tauri/target/debug/texpresso.exe"),
+        application: path.resolve(__dirname, "../../src-tauri/target/debug/latteset.exe"),
       },
     },
   ],

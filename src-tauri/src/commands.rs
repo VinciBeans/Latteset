@@ -5,24 +5,24 @@
 
 use crate::events::SettingsChangedEvent;
 use tauri_specta::Event;
-use texpresso_infra::storage::SettingsStorage;
+use latteset_infra::storage::SettingsStorage;
 use serde::Serialize;
 use specta::Type;
 use std::path::{Path, PathBuf};
 use tauri::State;
-use texpresso_core::compose::compile_request_manual;
-use texpresso_core::project::{
+use latteset_core::compose::compile_request_manual;
+use latteset_core::project::{
     is_tex_file, resolve_creatable_in_project, resolve_in_project, resolve_project_root, PathError,
     ProjectState, RootResolution,
 };
-use texpresso_core::settings::{apply_patch, validate_overrides, ProjectOverrides, Settings, SettingsPatch};
-use texpresso_core::synctex::SourcePosition;
-use texpresso_core::types::{
+use latteset_core::settings::{apply_patch, validate_overrides, ProjectOverrides, Settings, SettingsPatch};
+use latteset_core::synctex::SourcePosition;
+use latteset_core::types::{
     DirEntryInfo, FileContent, InverseResultDto, OutlineNode, ProjectInfo, SourcePositionDto,
     SyncTexTarget,
 };
-use texpresso_core::project::FileSystem;
-use texpresso_core::scheduler::SchedulerHandle;
+use latteset_core::project::FileSystem;
+use latteset_core::scheduler::SchedulerHandle;
 use std::collections::HashMap;
 use std::sync::Arc;
 use thiserror::Error;
@@ -51,16 +51,16 @@ impl From<std::io::Error> for CmdError {
 pub struct AppState {
     pub fs: Arc<dyn FileSystem>,
     pub scheduler: SchedulerHandle,
-    pub sync: Arc<dyn texpresso_core::synctex::SyncTexProvider>,
+    pub sync: Arc<dyn latteset_core::synctex::SyncTexProvider>,
     pub project: Arc<RwLock<Option<ProjectState>>>,
     pub settings: Arc<RwLock<Settings>>,
     pub overrides: Arc<RwLock<ProjectOverrides>>,
     pub storage: Arc<SettingsStorage>,
-    pub watch: texpresso_infra::watch::WatchHandle,
+    pub watch: latteset_infra::watch::WatchHandle,
     pub app: tauri::AppHandle,
     /// 大纲增量缓存（roadmap ⑦a）：按内容指纹复用未变化文件的扫描结果 + 记住打开缓冲。
     /// 单写者（命令面）；项目根变化时 core 内部自动作废，无需外部清理。
-    pub outline: tokio::sync::Mutex<texpresso_core::outline::OutlineCache>,
+    pub outline: tokio::sync::Mutex<latteset_core::outline::OutlineCache>,
 }
 
 /// 路径策略（D8）在 core `project::paths`：命令面只负责把失败原因翻译成对外错误契约。
@@ -97,7 +97,7 @@ async fn detect_root(
     root: &Path,
 ) -> Result<RootResolution, CmdError> {
     // IO 编排在 core（`project::detect_root`），命令面只做错误翻译——watch 的热更新路径共用同一份实现
-    texpresso_core::project::detect_root(state.fs.as_ref(), root)
+    latteset_core::project::detect_root(state.fs.as_ref(), root)
         .await
         .map_err(|e| CmdError::Internal(format!("扫描项目失败：{e}")))
 }
@@ -211,7 +211,7 @@ pub async fn list_dir(path: String, state: State<'_, AppState>) -> Result<Vec<Di
     let mut stack = vec![path];
     while let Some(dir) = stack.pop() {
         for entry in state.fs.read_dir(&dir).await? {
-            if texpresso_core::project::is_tree_excluded(&entry.path, &root) {
+            if latteset_core::project::is_tree_excluded(&entry.path, &root) {
                 continue;
             }
             out.push(DirEntryInfo {
@@ -309,12 +309,12 @@ pub async fn get_outline(
         .ok_or_else(|| CmdError::Invalid("尚未打开项目".into()))?;
     let mut map = HashMap::with_capacity(buffers.len());
     for fc in &buffers {
-        map.insert(texpresso_core::outline::normalize_path(&fc.path), fc.content.clone());
+        map.insert(latteset_core::outline::normalize_path(&fc.path), fc.content.clone());
     }
     let fallback = files.map(|v| v.into_iter().map(PathBuf::from).collect::<Vec<_>>());
     let mut cache = state.outline.lock().await;
-    Ok(texpresso_core::outline::load_cached(
-        &texpresso_core::outline::OutlineInput {
+    Ok(latteset_core::outline::load_cached(
+        &latteset_core::outline::OutlineInput {
             root: &project.root,
             root_file: project.root_file.as_deref(),
             changed_buffers: &map,
@@ -339,7 +339,7 @@ pub async fn compile_now(state: State<'_, AppState>) -> Result<(), CmdError> {
         .clone()
         .ok_or_else(|| CmdError::Invalid("尚未打开项目".into()))?;
     let settings = state.settings.read().await.clone();
-    let ctx = texpresso_core::compose::ComposeContext {
+    let ctx = latteset_core::compose::ComposeContext {
         project: &project,
         settings: &settings,
     };
@@ -385,7 +385,7 @@ pub async fn synctex_forward(
         .sync
         .forward(
             &src,
-            &texpresso_core::synctex::pdf_path_for_root(&project.root, project.root_file.as_deref()),
+            &latteset_core::synctex::pdf_path_for_root(&project.root, project.root_file.as_deref()),
         )
         .await
         .map(|p| SyncTexTarget {
@@ -398,7 +398,7 @@ pub async fn synctex_forward(
 
 /// PDF 点击 → 源码（roadmap ⑤/㉒）：**只回落到项目内真实源码**。
 ///
-/// 策略本身（就近探测 + 生成产物分类 + 提示文案）在 core [`texpresso_core::synctex::resolve_inverse`]，
+/// 策略本身（就近探测 + 生成产物分类 + 提示文案）在 core [`latteset_core::synctex::resolve_inverse`]，
 /// 与 headless CLI/MCP 共用一份（roadmap ⑥-P0-3：避免 GUI 与 CLI 行为漂移）；
 /// 这里只做 DTO 映射，并在"完全拿不到映射"时结合文件系统状态补一句更准确的话。
 #[tauri::command]
@@ -415,9 +415,9 @@ pub async fn synctex_inverse(
         .await
         .clone()
         .ok_or_else(|| CmdError::Invalid("尚未打开项目".into()))?;
-    let pdf = texpresso_core::synctex::pdf_path_for_root(&project.root, project.root_file.as_deref());
+    let pdf = latteset_core::synctex::pdf_path_for_root(&project.root, project.root_file.as_deref());
     let resolved =
-        texpresso_core::synctex::resolve_inverse(state.sync.as_ref(), &project.root, &pdf, page, x, y)
+        latteset_core::synctex::resolve_inverse(state.sync.as_ref(), &project.root, &pdf, page, x, y)
             .await;
 
     Ok(match resolved.source {
@@ -450,7 +450,7 @@ async fn sync_unavailable_note(
     err: &str,
 ) -> String {
     let synctex =
-        texpresso_core::synctex::synctex_data_path(&project.root, project.root_file.as_deref());
+        latteset_core::synctex::synctex_data_path(&project.root, project.root_file.as_deref());
     if !state.fs.exists(pdf).await.unwrap_or(false) {
         return "同步失败：还没有编译产物，先点「编译」".to_string();
     }
@@ -564,7 +564,7 @@ mod tests {
 
     /// 便捷包装：`(root, root_file)` → PDF 路径。逻辑本体在 core（与 headless CLI/MCP 共用）。
     fn pdf_path_for_root(p: &ProjectState) -> PathBuf {
-        texpresso_core::synctex::pdf_path_for_root(&p.root, p.root_file.as_deref())
+        latteset_core::synctex::pdf_path_for_root(&p.root, p.root_file.as_deref())
     }
 
     #[test]

@@ -1,4 +1,4 @@
-# TeXPresso 架构设计（分层、接口、模块、技术栈）
+# Latteset 架构设计（分层、接口、模块、技术栈）
 
 > 项目状态：**已实现并迭代中**（Windows 首发 MVP）。
 > 上层设计见 [design.md](./design.md)，术语见根目录 [CONTEXT.md](../CONTEXT.md)，决策记录见 [adr/](./adr/)。
@@ -23,18 +23,18 @@
                │ 经 core trait 调用：FileSystem / CompileRunner / SyncTexProvider
                │ 监视结果经 WatchSink 回调（事件形态在 src-tauri 定型）
 ┌──────────────▼────────────────────────────────────┐
-│  texpresso-infra：进程、文件、监视、设置存储        │
+│  latteset-infra：进程、文件、监视、设置存储        │
 │            （外部依赖与文件系统唯一落点，无 Tauri） │
 └──────────────┬────────────────────────────────────┘
                │ core 定义接口与策略（core 不依赖 infra）
 ┌──────────────▼────────────────────────────────────┐
-│  texpresso-core：队列语义、探测规则、解析 — 纯逻辑  │
+│  latteset-core：队列语义、探测规则、解析 — 纯逻辑  │
 └───────────────────────────────────────────────────┘
 ```
 
 原则：
 
-- 依赖单向：`前端 → IPC 契约 → src-tauri → texpresso-infra → texpresso-core`（接口在 core、实现在 infra、注入在 src-tauri；ADR-0010）。**第二条入口**：`CLI / MCP → texpresso-server → texpresso-infra → texpresso-core`（同样不碰 Tauri，见 §2 末）
+- 依赖单向：`前端 → IPC 契约 → src-tauri → latteset-infra → latteset-core`（接口在 core、实现在 infra、注入在 src-tauri；ADR-0010）。**第二条入口**：`CLI / MCP → latteset-server → latteset-infra → latteset-core`（同样不碰 Tauri，见 §2 末）
 - 上层（src-tauri）不直接调用 OS API：文件与进程一律经 core trait，路径安全策略（D8）在 core `project::paths`
 - 领域层不依赖 Tauri、不做 IO；IO 经基础设施，测试经 trait 注入
 - 不做 ports & adapters 式 trait 泛滥；只有真正需要替换/注入的边界才抽象（CompileRunner、SyncTexProvider）
@@ -43,20 +43,20 @@
 
 Cargo workspace 四 crate：ADR-0006 拆出 core，ADR-0010 再拆出 infra（基础设施层与 core 同级）；⑥ 新增 headless 交互层 server（与 src-tauri 同级，两条入口共用 core + infra）。
 
-**texpresso-core**（无 Tauri 依赖、无 IO，全量可单测）
+**latteset-core**（无 Tauri 依赖、无 IO，全量可单测）
 
 | 模块 | 职责 |
 |---|---|
 | `scheduler` | 合并队列 + 超时/重试/终止语义状态机。**只有事件输入与指令输出，不 spawn 进程**；经 `CompileRunner` trait 执行编译（单测用 fake runner） |
 | `project` | 项目模型、根文件探测规则（见 §5.4）、文件集合过滤 |
 | `log_parser` | .log 解析 → ErrorEntry（快照测试） |
-| `synctex` | `SyncTexProvider` 接口 + 输出解析（进程调用在 texpresso-infra） |
+| `synctex` | `SyncTexProvider` 接口 + 输出解析（进程调用在 latteset-infra） |
 | `settings` | 设置模型、默认值、全局/项目合并、校验 |
 | `compose` | 组合层翻译：文件事件/手动编译 → `CompileRequest`（D3，infra watch 调用） |
 | `paths` | 项目内路径解析（D8）：canonicalize + 根内校验 + `PathError`（IO 经 FileSystem） |
 | `types` | 跨边界 DTO（CompileStatus / ErrorEntry / ProjectInfo / Settings…，specta 导出） |
 
-**texpresso-infra**（基础设施层：外部依赖与文件系统的唯一落点，ADR-0010）
+**latteset-infra**（基础设施层：外部依赖与文件系统的唯一落点，ADR-0010）
 
 | 模块 | 职责 |
 |---|---|
@@ -74,14 +74,14 @@ Cargo workspace 四 crate：ADR-0006 拆出 core，ADR-0010 再拆出 infra（�
 | `events` | 事件契约（specta 生成）+ `TauriSink`（监视结果 → tauri 事件）+ 调度器 Emitter 适配 |
 | `lib` | 装配：构造 infra 实现注入 core trait 位；持有 AppState（调度器、设置、项目状态） |
 
-**texpresso-server**（无 GUI 交互层：headless 服务 + CLI + MCP，roadmap ⑥）
+**latteset-server**（无 GUI 交互层：headless 服务 + CLI + MCP，roadmap ⑥）
 
 | 模块 | 职责 |
 |---|---|
 | `lib` | `Session`：项目会话（打开项目、编译并同步返回结果、大纲、文件读写、SyncTeX、设置读取）；直接实例化 infra 的 fs/runner/synctex/storage，不经 scheduler、无 watch、无 Tauri |
 | `mcp` | MCP over stdio：手写最小 JSON-RPC（initialize / tools/list / tools/call / ping），11 个 tool；工具内错误回 `isError: true` |
-| `bin/texpresso-cli` | 一条命令一个 JSON（stdout 只有 JSON，日志走 stderr）；退出码：0 成功 / 1 编译未通过 / 2 用法·路径 / 3 内部 |
-| `bin/texpresso-mcp` | 常驻 stdio server（harness 侧本地拉起） |
+| `bin/latteset-cli` | 一条命令一个 JSON（stdout 只有 JSON，日志走 stderr）；退出码：0 成功 / 1 编译未通过 / 2 用法·路径 / 3 内部 |
+| `bin/latteset-mcp` | 常驻 stdio server（harness 侧本地拉起） |
 
 契约与限制见 [modules.md](./modules.md) §8.1，用法与实测见 [cli-mcp-plan.md](./cli-mcp-plan.md)。
 
@@ -175,7 +175,7 @@ Ctrl+点击 → `synctex_forward` → { page, x, y } → PDF 高亮；PDF 点击
 |---|---|---|
 | tauri 2 | — | 应用框架 |
 | tauri-specta | 锁定 RC（如 rc.25） | 类型化 IPC |
-| notify | 8.2.x（9.x 是 RC 不碰） | 文件监视（texpresso-infra） |
+| notify | 8.2.x（9.x 是 RC 不碰） | 文件监视（latteset-infra） |
 | tokio | — | 进程/超时（infra）、异步锁与通道（core / src-tauri） |
 | thiserror | — | 领域错误枚举 |
 | serde | — | 序列化 |
@@ -205,7 +205,7 @@ Ctrl+点击 → `synctex_forward` → { page, x, y } → PDF 高亮；PDF 点击
 
 ## 8. 工程基建
 
-- **Rust 测试**：cargo test——scheduler 用 fake CompileRunner 单测（队列合并/超时/重试/终止语义）；insta 快照——log_parser 用真实 latexmk 日志固化为用例；texpresso-infra 另有 `#[ignore]` 集成用例（真实 latexmk/synctex：成功、内容错误、超时树杀、取消、中文路径），跑法 `cargo test -p texpresso-infra -- --ignored`
+- **Rust 测试**：cargo test——scheduler 用 fake CompileRunner 单测（队列合并/超时/重试/终止语义）；insta 快照——log_parser 用真实 latexmk 日志固化为用例；latteset-infra 另有 `#[ignore]` 集成用例（真实 latexmk/synctex：成功、内容错误、超时树杀、取消、中文路径），跑法 `cargo test -p latteset-infra -- --ignored`
 - **前端**：vitest（+ @vue/test-utils）——stores 与 composables（project 路径归一化、editor 自保存过滤/冲突、useAutoSave 防抖、useIdleConvergence、useSyncTex）与 `RootFilePicker` 组件单测，`npm run test`；其余组件测后续补
 - **CI（GitHub Actions，MVP 前即搭）**：cargo test + `vue-tsc --noEmit` + `npm run test`（前端单测）+ Windows runner `tauri build` 冒烟（顺带验证 NSIS 打包链路，覆盖 ADR-3）
 

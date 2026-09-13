@@ -12,7 +12,7 @@ self.MonacoEnvironment = {
   },
 };
 // 与全局设计系统一致的浅色 Monaco 主题（Candy Desk，App.vue :root 色板）
-monaco.editor.defineTheme("texpresso", {
+monaco.editor.defineTheme("latteset", {
   base: "vs",
   inherit: true,
   rules: [
@@ -50,7 +50,7 @@ monaco.editor.defineTheme("texpresso", {
     "editorGutter.background": "#fbfaff",
   },
 });
-monaco.editor.setTheme("texpresso");
+monaco.editor.setTheme("latteset");
 
 // ---- LaTeX 语法注册：关键字色彩高亮（自研 Monarch 语法，替代内置 grammar）----
 import { latexLanguage, latexConfiguration } from "./latexSyntax";

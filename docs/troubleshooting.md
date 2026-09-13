@@ -34,14 +34,14 @@
 
 **处置**：按上两步修复后 `npm run tauri:dev` 正常显示。若仍异常，改用 Windows 真机（WebView2）验证——目标平台不受此问题影响。
 
-**附：WSLg 多显示器窗口跑到外接屏**：window-state 插件会保存并恢复跨屏位置；窗口“消失”时先 `rm ~/.config/com.texpresso.app/.window-state.json`。真机多显示器拔出后同样可能出现，后续可加“位置越界则居中”保护。
+**附：WSLg 多显示器窗口跑到外接屏**：window-state 插件会保存并恢复跨屏位置；窗口“消失”时先 `rm ~/.config/com.latteset.app/.window-state.json`。真机多显示器拔出后同样可能出现，后续可加“位置越界则居中”保护。
 
 ## GUI/端到端测试链路（WebDriver + pc-control，2026-08）
 
-**方案**：`test_file/e2e/` 用 **WebdriverIO**（`browserName:'wry'` + `tauri:options.application`）驱动 `tauri-driver`（中介）+ `msedgedriver`（Windows，需 `msedgedriver-tool` 安装并匹配 Edge 版本，`--native-driver` 指路径）。`src/App.vue` 提供 `VITE_TEXPRESSO_PROJECT` 钩子自动打开项目（绕过原生目录弹窗，WebDriver 无法驱动）；`PreviewPane.vue` 带重载耗时插桩。
+**方案**：`test_file/e2e/` 用 **WebdriverIO**（`browserName:'wry'` + `tauri:options.application`）驱动 `tauri-driver`（中介）+ `msedgedriver`（Windows，需 `msedgedriver-tool` 安装并匹配 Edge 版本，`--native-driver` 指路径）。`src/App.vue` 提供 `VITE_LATTESET_PROJECT` 钩子自动打开项目（绕过原生目录弹窗，WebDriver 无法驱动）；`PreviewPane.vue` 带重载耗时插桩。
 
 **关键教训（均实测）**：
-- **手动拉起 debug 二进制 ≠ 可用**：`npm run dev`（只起 vite）+ 手动 `target/debug/texpresso.exe`，前端**不渲染**（`button.btn.primary` 找不到）。必须 **`npm run tauri dev`**（正确构建 Rust + 起 vite + 真正调起 Tauri 窗口），问题即消失。
+- **手动拉起 debug 二进制 ≠ 可用**：`npm run dev`（只起 vite）+ 手动 `target/debug/latteset.exe`，前端**不渲染**（`button.btn.primary` 找不到）。必须 **`npm run tauri dev`**（正确构建 Rust + 起 vite + 真正调起 Tauri 窗口），问题即消失。
 - **tauri-driver 不打印 "listening"**：`beforeSession` 靠字符串匹配会永久卡住；改成**轮询 127.0.0.1:4444 是否可连**（`net.connect`）。
 - **只读沙箱限制**：vite/esbuild 的 worker 子进程需创建命名管道，`workspace-write` 下会 `EPERM`；需 `danger-full-access` 才能跑 `vite dev`/WebDriver/调起 WebView2 窗口。npm 缓存写 `%LocalAppData%` 也被拒，需把 `NPM_CONFIG_CACHE` 指到工作区。
 - **读取前端控制台**：pc-control 的 `screenshot` 返回 base64，需解码成图片再读；devtools 快捷键（F12/Ctrl+Shift+I）需窗口聚焦才生效。窗口标题不随 `document.title` 改变（Tauri 不同步），**不要**用它做观测通道。
@@ -75,7 +75,7 @@
 | 12 | 正向 SyncTeX 高亮（⑳，`webview_interact` 无修饰键） | 用 Vite 预打包 URL 动态 import Monaco → `ed.setPosition(...)` → 对编辑器 DOM 派发 `mousedown/mouseup/click`（带 `ctrlKey: true`）→ 读 `.highlight` 的 `display/left/top` | 恰好一个 `.highlight` 为 `display: block` 且落在目标页；编辑器 `onMouseDown(ctrlKey)` 是真实入口，派发等价于用户 Ctrl+点击 |
 | 13 | 非 UTF-8 源文件提示（㉓） | 夹具 `中文GBK工程` → 展开 `子目录` → 点 `gbk.tex` → 读 `.open-error` 与标签页 | 状态栏出现中文提示「…不是 UTF-8 编码…另存为 UTF-8…」；**不开新标签**（此前是无人接的 rejection） |
 | 14 | 源码版模板提示（㉗） | 夹具 `源码版模板工程`（`\documentclass{nosuchthesis}` + `nosuchthesis.ins/.dtx`）→ 点「编译」→ 读第一条错误 | 「缺少文档类文件 nosuchthesis.cls」+「项目里有源码版模板文件 `nosuchthesis.ins`：先执行 `xelatex nosuchthesis.ins`…」（**必须是 `.ins`**，不能是 `.dtx`） |
-| 15 | 外部改 settings.json 生效（㉑） | 夹具 `多候选工程`（先把 `.texpresso/settings.json` 置为 `{}` 并让它生效）→ 从**外部**写入 `{"root_file":"main.tex"}` → 看状态栏；随后改回 `{}` | 第一次：日志 `设置热更新：内存 root_file 已同步 from=None to=Some(…)` 且「未确定根文件」消失；改回：`from=Some(…) to=None` 且提示**回来**。**必须用非原子写法**（PowerShell `Set-Content` 就会"截断 → 写入"，正好覆盖竞态），原子替换测不出这条 |
+| 15 | 外部改 settings.json 生效（㉑） | 夹具 `多候选工程`（先把 `.latteset/settings.json` 置为 `{}` 并让它生效）→ 从**外部**写入 `{"root_file":"main.tex"}` → 看状态栏；随后改回 `{}` | 第一次：日志 `设置热更新：内存 root_file 已同步 from=None to=Some(…)` 且「未确定根文件」消失；改回：`from=Some(…) to=None` 且提示**回来**。**必须用非原子写法**（PowerShell `Set-Content` 就会"截断 → 写入"，正好覆盖竞态），原子替换测不出这条 |
 
 **取预览耗时的一行命令**（第 6 步的具体形态）：
 
@@ -139,21 +139,21 @@ node scripts/synctex-report.mjs --projects=<dir> --recompile
 **失败面排查顺序**：① dev stdout 有无 `打开项目` / `触发编译` / `构造编译请求`（后端链路）；
 ② `read_logs(console)` 有无前端异常；③ `ipc_get_backend_state` 确认连接的是本应用。
 
-## Rust 单测：`cargo test -p texpresso`（src-tauri）在 Windows 启动即失败
+## Rust 单测：`cargo test -p latteset`（src-tauri）在 Windows 启动即失败
 
-**现象**：`cargo test -p texpresso --lib` 编译成功，但测试二进制**加载即退出**——`STATUS_ENTRYPOINT_NOT_FOUND (0xc0000139)`，任何测试都未运行。
+**现象**：`cargo test -p latteset --lib` 编译成功，但测试二进制**加载即退出**——`STATUS_ENTRYPOINT_NOT_FOUND (0xc0000139)`，任何测试都未运行。
 
-**根因**：`texpresso_lib` 链接了 tauri/wry 的 `webview2-com`。`cargo test` 的测试二进制不做 GUI 初始化，加载阶段解析 WebView2/webview2-com 失败（`STATUS_ENTRYPOINT_NOT_FOUND`，发生在任何测试运行前）。**与业务代码无关**；`cargo check -p texpresso --tests` 能正常通过（测试代码编译无误）；本机 WebView2 Runtime 已安装（151.0.4129.107），排除运行时缺失。
+**根因**：`latteset_lib` 链接了 tauri/wry 的 `webview2-com`。`cargo test` 的测试二进制不做 GUI 初始化，加载阶段解析 WebView2/webview2-com 失败（`STATUS_ENTRYPOINT_NOT_FOUND`，发生在任何测试运行前）。**与业务代码无关**；`cargo check -p latteset --tests` 能正常通过（测试代码编译无误）；本机 WebView2 Runtime 已安装（151.0.4129.107），排除运行时缺失。
 
 **处置**：
 
-- 纯逻辑单测走 `cargo test -p texpresso-core`（无 Tauri 依赖，运行正常，CI 用这个验证纯逻辑）。
+- 纯逻辑单测走 `cargo test -p latteset-core`（无 Tauri 依赖，运行正常，CI 用这个验证纯逻辑）。
 - 前端单测走 `npm run test`（vitest，需提权 `danger-full-access` 跑 esbuild worker）。
-- 基础设施层的用例（`fs` / `runner` / `watch` / `storage`）随 ADR-0010 迁到 `texpresso-infra` 后**本机可正常运行**：`cargo test -p texpresso-infra`（单测）+ `cargo test -p texpresso-infra -- --ignored`（真实 latexmk/synctex 集成用例：成功、内容错误、超时树杀、取消、中文路径双向）。仍留在 src-tauri 的只剩 `commands::pdf_path_for_root`（纯函数，受同一 WebView2 链接限制）。
-- **已穷尽尝试仍失败**：把 `webview2-com-sys-*/out/{arch}/WebView2Loader.dll` 拷到 `target/debug` **及 `target/debug/deps`（测试 exe 同目录）** 并加入 PATH；`dumpbin /imports` 显示静态导入均为系统 DLL、延迟导入仅 `VCRUNTIME140.dll`；`danger-full-access` 提权运行——均仍 `STATUS_ENTRYPOINT_NOT_FOUND`。**非沙箱权限、非 PATH、非运行时缺失**，是 Tauri v2 shell crate 测试二进制的已知 Windows 工具链限制。把 `cargo test -p texpresso -- --ignored export_bindings` 当"无 GUI 生成 bindings"的捷径同样不可行（`0xc0000139`）。
+- 基础设施层的用例（`fs` / `runner` / `watch` / `storage`）随 ADR-0010 迁到 `latteset-infra` 后**本机可正常运行**：`cargo test -p latteset-infra`（单测）+ `cargo test -p latteset-infra -- --ignored`（真实 latexmk/synctex 集成用例：成功、内容错误、超时树杀、取消、中文路径双向）。仍留在 src-tauri 的只剩 `commands::pdf_path_for_root`（纯函数，受同一 WebView2 链接限制）。
+- **已穷尽尝试仍失败**：把 `webview2-com-sys-*/out/{arch}/WebView2Loader.dll` 拷到 `target/debug` **及 `target/debug/deps`（测试 exe 同目录）** 并加入 PATH；`dumpbin /imports` 显示静态导入均为系统 DLL、延迟导入仅 `VCRUNTIME140.dll`；`danger-full-access` 提权运行——均仍 `STATUS_ENTRYPOINT_NOT_FOUND`。**非沙箱权限、非 PATH、非运行时缺失**，是 Tauri v2 shell crate 测试二进制的已知 Windows 工具链限制。把 `cargo test -p latteset -- --ignored export_bindings` 当"无 GUI 生成 bindings"的捷径同样不可行（`0xc0000139`）。
 - **推论（DTO 改动后怎么刷新 `src/bindings.ts`）**：`export_bindings` 这条捷径在本机不可用 → **起一次 `npm run tauri dev`**：debug 构建启动时会自动重新导出 `src/bindings.ts`（`lib.rs` 里 `#[cfg(debug_assertions)]` 的 export）。新增 DTO 字段时实测即如此，导出结果与手写预期一致。
 
-## Linux CI 上 `cargo test -p texpresso-core` 红：Windows 路径语义被写进了跨平台用例（2026-09）
+## Linux CI 上 `cargo test -p latteset-core` 红：Windows 路径语义被写进了跨平台用例（2026-09）
 
 **现象**：本机（Windows）173 项全绿，GitHub Actions 的 `ubuntu-latest` 上 `synctex::classify::tests::windows_separators_and_case` 失败，172 passed / 1 failed：
 
@@ -164,14 +164,14 @@ right: Source("E:\\proj\\chapters\\intro.tex")
 
 **根因**：`normalize_lexically` / `classify_inverse_target` 的路径比较是**词法级**的，吃的是 `std::path::Path` 的**平台原生**分隔符语义——Windows 上 `\` 是分隔符（`E:\proj\chapters\intro.tex` 能剥出项目内相对路径），Unix 上 `\` 只是普通字符，整串是**一个文件名**，`starts_with(root)` 为假 → 判 `OutsideProject`。**产品逻辑无误**（Windows 首发，synctex 返回的就是 Windows 路径），红的是把 Windows 专属结论写成跨平台契约的用例。
 
-**处置**（`crates/texpresso-core/src/synctex/classify.rs`）：
+**处置**（`crates/latteset-core/src/synctex/classify.rs`）：
 
 - 跨平台部分改用 `std::path::MAIN_SEPARATOR` 拼路径，「项目内源码」与「盘符大小写不 case-fold」在两端都被断言到；
 - 反斜杠形态按平台分叉：`#[cfg(windows)]` 断言 `Source`，`#[cfg(not(windows))]` 断言 `OutsideProject`（锁死"Linux 上绝不误判成可打开的源码"）。
 
-**验证**：本机 `cargo test -p texpresso-core` → 173 passed；`rustup target add x86_64-unknown-linux-gnu` 后 `cargo check -p texpresso-core --target x86_64-unknown-linux-gnu --tests` 通过（非 Windows 分支可编译）。沙箱内首次 `rustup target add` 与 crates 下载均被 TLS 拦（`SEC_E_NO_CREDENTIALS`），按 §4 边界提权一次后成功。
+**验证**：本机 `cargo test -p latteset-core` → 173 passed；`rustup target add x86_64-unknown-linux-gnu` 后 `cargo check -p latteset-core --target x86_64-unknown-linux-gnu --tests` 通过（非 Windows 分支可编译）。沙箱内首次 `rustup target add` 与 crates 下载均被 TLS 拦（`SEC_E_NO_CREDENTIALS`），按 §4 边界提权一次后成功。
 
-**规则**：core 单测要能在 Linux CI 上跑，**别把 Windows 路径形态（`\`、`E:\`）当跨平台契约**——要么用 `MAIN_SEPARATOR` 拼，要么 `#[cfg]` 分叉并显式写出两端期望值。（`texpresso-infra` 的 `runner` / `storage` 用例含同类 Windows 字面量：读实现可判定 `root_stem` / `latexmk_input` 在 Unix 上会因"整串只当一个文件名"而走回退分支、断言必失败（**未在 Linux 实跑，仅读码判定**）；CI 目前不跑 infra，纳入前需先按此规则过一遍。）
+**规则**：core 单测要能在 Linux CI 上跑，**别把 Windows 路径形态（`\`、`E:\`）当跨平台契约**——要么用 `MAIN_SEPARATOR` 拼，要么 `#[cfg]` 分叉并显式写出两端期望值。（`latteset-infra` 的 `runner` / `storage` 用例含同类 Windows 字面量：读实现可判定 `root_stem` / `latexmk_input` 在 Unix 上会因"整串只当一个文件名"而走回退分支、断言必失败（**未在 Linux 实跑，仅读码判定**）；CI 目前不跑 infra，纳入前需先按此规则过一遍。）
 
 ## 中文文件名/路径兼容性实测
 
@@ -188,12 +188,12 @@ right: Source("E:\\proj\\chapters\\intro.tex")
 |---|---|---|
 | `latexmk` 编译 | ✅ exit 0 | `latexmk -xelatex -outdir=tmp -synctex=1 -interaction=nonstopmode 中文主文件.tex`，CP65001 与 CP936 均成功 |
 | 中间产物 | ✅ 中文名正确 | `tmp/中文主文件.{log,aux,fls,toc,xdv,synctex.gz}` 全部产出 |
-| **App 真机链路** | ✅ 全通 | `npm run tauri dev` + `VITE_TEXPRESSO_PROJECT` 打开中文工程 → 日志实见 `打开项目：…\中文测试工程`、`开始监视项目：…`（notify 注册成功）、`手动编译: root=…\中文主文件.tex` → 项目根产出 **`中文主文件.pdf` (40,648 B)**；`tmp/` 事件被正确忽略 |
+| **App 真机链路** | ✅ 全通 | `npm run tauri dev` + `VITE_LATTESET_PROJECT` 打开中文工程 → 日志实见 `打开项目：…\中文测试工程`、`开始监视项目：…`（notify 注册成功）、`手动编译: root=…\中文主文件.tex` → 项目根产出 **`中文主文件.pdf` (40,648 B)**；`tmp/` 事件被正确忽略 |
 | `synctex view`（正向） | ✅ | 中文绝对路径 `-i 5:1:E:/…/中文主文件.tex` → `Page:1` |
 | `synctex edit`（反向） | ✅ | 回传 `Input:E:/…/中文测试工程/./中文主文件.tex`（中文完好） |
 | `.log` 中文文件名 | ✅ | 日志内 `(./中文主文件.tex` 为 UTF-8；解析能带出中文文件名 + 行号（回归测试 `parse_log_keeps_chinese_file_name_and_line`） |
 | `canonicalize` + `\\?\` 剥离 | ✅ | `\\?\E:\项目\…` → `E:\项目\…`（既有 `strip_verbatim` 对中文安全） |
-| 中文应用配置目录 | ✅ | 模拟 `C:\Users\中文用户\AppData\…`：全局设置与项目覆盖 `.texpresso/settings.json` 均原子读写通过 |
+| 中文应用配置目录 | ✅ | 模拟 `C:\Users\中文用户\AppData\…`：全局设置与项目覆盖 `.latteset/settings.json` 均原子读写通过 |
 
 **关键编码事实（字节级实测，值得记住）**：`synctex` 的 stdout **恒为 UTF-8**（`中` = `E4 B8 AD`），**与代码页无关**——CP65001 与 CP936 下抓到的字节完全一致。故 `String::from_utf8_lossy(&out.stdout)` 的用法**正确**（曾怀疑它会按代码页输出——已证伪）。
 
@@ -208,13 +208,13 @@ right: Source("E:\\proj\\chapters\\intro.tex")
 | `xelatex` | ✅ 合法 | 引擎自己把非法字节替换为 U+FFFD 写进日志（`Invalid UTF-8 byte or sequence at line 3 replaced by U+FFFD.`） |
 | **`pdflatex`** | ❌ **非法** | 实测含 **73 个非法字节**（首个 `0xD6`，offset 1893）——原始 GBK 字节被直接回显 |
 
-**修复**：新增 `texpresso_core::log_parser::decode_log(bytes)`——能严格解就严格解，否则 lossy（非法字节 → U+FFFD）；`FileSystem` trait 增 `read_to_string_lossy`（默认退化为严格读取，`TokioFs` 覆盖为 lossy 解码），`runner` 读 `.log` 改走它。
+**修复**：新增 `latteset_core::log_parser::decode_log(bytes)`——能严格解就严格解，否则 lossy（非法字节 → U+FFFD）；`FileSystem` trait 增 `read_to_string_lossy`（默认退化为严格读取，`TokioFs` 覆盖为 lossy 解码），`runner` 读 `.log` 改走它。
 
 **修复后判据（实测）**：同一个非法日志 lossy 解码后，`! LaTeX Error: Invalid UTF-8 byte sequence.` 与 `l.3 ` 等 **ASCII 骨架完好**，`parse_log` 仍能给出消息 + 行号——诊断信息"有损"远好于"没有"。回归测试 `log_parser::decode_tests::invalid_bytes_do_not_lose_error_skeleton` 锁定该行为。
 
-**App 端到端复现与验证**：夹具 `test_file/projects/中文GBK工程/`（gitignore，需重建）——`主文件.tex`（纯 ASCII）+ `子目录/gbk.tex`（**GBK 编码**，含 `\undefinedcommandhere`）+ `.texpresso/settings.json` 覆盖 `{"compile":{"engine":"pdflatex"}}`。步骤：
+**App 端到端复现与验证**：夹具 `test_file/projects/中文GBK工程/`（gitignore，需重建）——`主文件.tex`（纯 ASCII）+ `子目录/gbk.tex`（**GBK 编码**，含 `\undefinedcommandhere`）+ `.latteset/settings.json` 覆盖 `{"compile":{"engine":"pdflatex"}}`。步骤：
 
-1. `VITE_TEXPRESSO_PROJECT=…\中文GBK工程 npm run tauri dev`；
+1. `VITE_LATTESET_PROJECT=…\中文GBK工程 npm run tauri dev`；
 2. 触碰 `主文件.tex`（改 mtime）经 watch 触发编译；
 3. 观察 dev stdout。
 
@@ -249,7 +249,7 @@ DEBUG 编译失败：已从 .log 解析出错误条目 count=9 log=…\tmp\主�
 | 项 | 结果 | 证据 |
 |---|---|---|
 | 编译 | ✅ | `cargo check` 通过（插件 0.13.0）；capability 无需改动——0.13 的 `permissions/default.toml` 与 0.12 权限项完全一致，新增的窗口命令走既有权限 | 
-| 插件初始化 | ✅ | dev stdout：`[MCP][PLUGIN][INFO] MCP Bridge plugin initialized for 'TeXPresso' (com.texpresso.app) on 0.0.0.0:9223` |
+| 插件初始化 | ✅ | dev stdout：`[MCP][PLUGIN][INFO] MCP Bridge plugin initialized for 'Latteset' (com.latteset.app) on 0.0.0.0:9223` |
 | 版本上报 | ✅ | `ipc_get_backend_state` → `bridge.pluginVersion = 0.13.0`；`driver_session status` → `pluginVersion 0.13.0` / `serverVersion 0.13.0` / **`versionWarning: null`**（升级前为 `pluginVersion: null` + 警告） |
 | `manage_window` | ✅ | `list` 返回 main 窗口；`resize 1440×900` → `info` 报 2182×1406 物理像素（×1.5 缩放 = 1440×900 逻辑，与 0.13「物理↔CSS 像素换算」修复一致）；新增的 `maximize` 可把最小化窗口恢复正常几何 |
 | 业务链路回归 | ✅ | 打开 `中文测试工程` → 「编译」→ stdout `手动编译: root=…中文主文件.tex` + PDF 生成 → 预览渲染 3 页（控制台 `[preview] reload#1 … pages=3 fetch=14 parse=45 render=60 total=118ms`） |
@@ -268,7 +268,7 @@ DEBUG 编译失败：已从 .log 解析出错误条目 count=9 log=…\tmp\主�
 
 - **正向 SyncTeX 高亮**（源码 Ctrl+点击 → PDF 高亮）：`webview_interact` 不支持带修饰键点击，做法是动态 import Monaco 实例后派发 `ctrlKey` 鼠标事件——见「真机验收清单」第 12 项。
 - **已知未修**：**编辑** GBK 源文件（`read_file` 严格 UTF-8）会失败并返回英文 IO 错误。若要支持"打开并转码显示 GBK 源文件"，需单独设计（含保存时的编码回写策略）。
-- 本机 `cargo test -p texpresso`（src-tauri）无法运行（见上一节），故 src-tauri 侧的中文用例只能以 `cargo check -p texpresso --tests` 编译校验；随 ADR-0010 迁移后，`fs` / `runner` / `storage` 的中文用例已在 `texpresso-infra` 下实际运行通过（含 2 个需 latexmk 的 `#[ignore]` 集成用例）。
+- 本机 `cargo test -p latteset`（src-tauri）无法运行（见上一节），故 src-tauri 侧的中文用例只能以 `cargo check -p latteset --tests` 编译校验；随 ADR-0010 迁移后，`fs` / `runner` / `storage` 的中文用例已在 `latteset-infra` 下实际运行通过（含 2 个需 latexmk 的 `#[ignore]` 集成用例）。
 
 ## `\include{子目录/文件}` + `-output-directory`：中间目录里必须先有同名子目录
 
@@ -317,7 +317,7 @@ xelatex -interaction=nonstopmode -synctex=1 -output-directory=tmp main.tex   # m
 
 **对策（已落地）**：实时通道以 `tmp/<stem>.log` 为主力——**`.log` 是按页 flush 的**，每 200ms 尾随一次即可稳定拿到"排到第几页""刚出现的致命错误"；管道只作补充（两条来源共用同一状态机做页码取最大 + 错误指纹去重）。结论：**"接个管道"不够**，短文档/早错场景下管道几乎给不出提前量。
 
-**验证入口**：`cargo test -p texpresso-infra -- --ignored live_errors`（断言首个流式错误距编译结束 ≥100ms；只接管道时这条会红）。
+**验证入口**：`cargo test -p latteset-infra -- --ignored live_errors`（断言首个流式错误距编译结束 ≥100ms；只接管道时这条会红）。
 
 ## 错误列表的文件名偶尔错一章：TeX 日志的 `)` 与 `(` 会打在同一行（2026-09 定位，未修）
 
@@ -333,12 +333,12 @@ xelatex -interaction=nonstopmode -synctex=1 -output-directory=tmp main.tex   # m
 
 ## 外部（非原子）写 settings.json：watcher 会读到半截文件（2026-09 实测，㉑ 顺带修）
 
-**现象**：用 PowerShell `Set-Content` / 记事本改 `.texpresso/settings.json`（或全局 `settings.json`），应用**有时不响应**——日志里能看到：
+**现象**：用 PowerShell `Set-Content` / 记事本改 `.latteset/settings.json`（或全局 `settings.json`），应用**有时不响应**——日志里能看到：
 
 ```
-DEBUG watch 原始事件: [".texpresso\settings.json"] kind=Modify(Any)
-WARN 项目设置解析失败，忽略外部修改：….texpresso\settings.json      ← 读到的是"截断后、写入前"的空文件
-DEBUG watch 原始事件: [".texpresso\settings.json"] kind=Modify(Any)  ← 第二次事件
+DEBUG watch 原始事件: [".latteset\settings.json"] kind=Modify(Any)
+WARN 项目设置解析失败，忽略外部修改：….latteset\settings.json      ← 读到的是"截断后、写入前"的空文件
+DEBUG watch 原始事件: [".latteset\settings.json"] kind=Modify(Any)  ← 第二次事件
 ```
 
 **根因**：这类写入是"**截断 → 写入 → 关闭**"三步，watcher 会收到**两个** Modify 事件，中间存在文件为空/被占用的窗口：第一次读拿到空内容（JSON 解析失败），第二次读可能撞上共享冲突（`read_to_string` 直接失败）。旧实现两种情况都只是"忽略这次修改"（后者连日志都没有），用户侧就是「改了没反应」。
@@ -347,28 +347,58 @@ DEBUG watch 原始事件: [".texpresso\settings.json"] kind=Modify(Any)  ← 第
 
 **另注**：应用自己写设置走的是原子写（`atomic_write` + 自写盘 hash 过滤），不受此影响。
 
-## `cargo build -p texpresso-server` 报「failed to remove file … 拒绝访问」(os error 5)
+## `cargo build -p latteset-server` 报「failed to remove file … 拒绝访问」(os error 5)
 
-**现象**：接了 DSH 的 `mcp-texpresso`（或任何常驻的 MCP 客户端）之后，重新构建 headless 会失败：
+**现象**：接了 DSH 的 `mcp-latteset`（或任何常驻的 MCP 客户端）之后，重新构建 headless 会失败：
 
 ```
-error: failed to remove file `E:\Works\tex-presso\src-tauri\target\debug\texpresso-mcp.exe`
+error: failed to remove file `E:\Works\tex-presso\src-tauri\target\debug\latteset-mcp.exe`
 Caused by: 拒绝访问。 (os error 5)
 ```
 
-**根因**：`texpresso-mcp.exe` 正**作为常驻进程运行**（stdio MCP server 由 harness 拉起后一直活着），Windows 锁定已加载的可执行文件 → 链接器无法替换它。与代码无关，`cargo build -p texpresso`（GUI 应用）不受影响，因为它不产这个二进制。
+**根因**：`latteset-mcp.exe` 正**作为常驻进程运行**（stdio MCP server 由 harness 拉起后一直活着），Windows 锁定已加载的可执行文件 → 链接器无法替换它。与代码无关，`cargo build -p latteset`（GUI 应用）不受影响，因为它不产这个二进制。
 
 **处置（按代价排序）**：
 
-1. **只验 lib / 不产二进制**：`cargo test -p texpresso-server --lib`（⑨ 之外的所有单测都在 lib 里）；
+1. **只验 lib / 不产二进制**：`cargo test -p latteset-server --lib`（⑨ 之外的所有单测都在 lib 里）；
 2. **换 target 目录构建一次**（本机实测可用，代价是依赖图重编一遍）：
    ```powershell
-   $env:CARGO_TARGET_DIR='<某个不在 src-tauri 下的目录>'; cargo test -p texpresso-server
+   $env:CARGO_TARGET_DIR='<某个不在 src-tauri 下的目录>'; cargo test -p latteset-server
    ```
    ⚠️ **别把它放在 `src-tauri/` 里面**——`tauri dev` 的文件监视会看到那些 `.fingerprint` 变化并触发重建（本机踩过），放工作区外或 `%TEMP%`；
-3. 在 DSH 里临时移除 `mcp-texpresso` 行（或重启 DSH）再构建。
+3. 在 DSH 里临时移除 `mcp-latteset` 行（或重启 DSH）再构建。
 
-> 这也是「⑥ + 接线」的副作用之一：headless server 一旦常驻，它的二进制就不可被替换——改 `crates/texpresso-server` 的代码后要记着这条。
+> 这也是「⑥ + 接线」的副作用之一：headless server 一旦常驻，它的二进制就不可被替换——改 `crates/latteset-server` 的代码后要记着这条。
+
+## 更名 TeXPresso → Latteset：配置目录与项目设置目录都变了（2026-09）
+
+**背景与决策**：原因、命名核查与完整标识符映射见 [ADR-0011](./adr/0011-rename-to-latteset.md)。这里只记操作层面的坑。
+
+**受影响的持久化位置**（改名**不**做自动迁移，见 ADR-0011「破坏性变更」）：
+
+| 位置 | 旧 | 新 |
+|---|---|---|
+| 应用配置目录（Windows） | `%APPDATA%\com.texpresso.app` | `%APPDATA%\com.latteset.app` |
+| 项目内设置 | `.texpresso/settings.json` | `.latteset/settings.json` |
+| CLI/MCP 配置目录环境变量 | `TEXPRESSO_CONFIG_DIR` | `LATTESET_CONFIG_DIR` |
+| 前端自动打开项目钩子 | `VITE_TEXPRESSO_PROJECT` | `VITE_LATTESET_PROJECT` |
+
+**现象**：更名后启动应用，设置回到默认值、窗口位置丢失；旧项目里的 `.texpresso/settings.json` 不再被读取（相当于"根文件覆盖没了"）。
+
+**处理**：旧配置目录仍在磁盘上，可手动迁移（在项目/应用都停掉后执行）：
+
+```powershell
+# 全局设置与窗口位置
+Move-Item "$env:APPDATA\com.texpresso.app\*" "$env:APPDATA\com.latteset.app\" -Force
+# 某个项目的设置（在项目目录内）
+Rename-Item .texpresso .latteset
+```
+
+**本项目内的配套改动**（避免真机验证时踩空）：`test_file/projects/{multifile,中文GBK工程,多候选工程}/.texpresso/` 已随更名改到 `.latteset/`；这些目录被 `.gitignore` 覆盖，**不在版本库内**，重建夹具时要按新名创建。
+
+**验证证据（2026-09 真机）**：`npm run tauri dev` 启动日志 `MCP Bridge plugin initialized for 'Latteset' (com.latteset.app)`，运行的是 `target\debug\latteset.exe`，窗口标题 `Latteset`；启动后自动出现 `%APPDATA%\com.latteset.app\settings.json`（identifier 生效的直接证据）；`open_project` 后端日志 `打开项目：…\multifile（根文件 Some(…\main.tex)，候选 1 个）` + `开始监视项目`，即重命名后的设置/监视链路全通。
+
+**另一个坑：文档里不要跟着改「上游项目」的名字**。文档描述的上游 [let-def/texpresso](https://github.com/let-def/texpresso) **必须保持原拼写**——批量替换会造出不存在的 URL（`github.com/let-def/latteset`）和错误的源码符号名（上游真实符号是小写 `texpresso_protocol.c` / `texpresso_fork_with_channel`，不是 `TeXpresso_protocol.c`）。同理 [texpresso-live-rendering-roadmap.md](./texpresso-live-rendering-roadmap.md) 的**文件名保留原名**（它是"对上游的通读"）。
 
 ## 探针文档含中文时不能用 pdflatex（附一条被证伪的假设）
 
@@ -392,12 +422,12 @@ Caused by: 拒绝访问。 (os error 5)
 
 ## headless（CLI / MCP）怎么跑、怎么排障（2026-09，⑥ 落地记录）
 
-**跑起来**（二进制是工作区产物，`cargo build -p texpresso-server` 后位于 `src-tauri/target/debug/texpresso-{cli,mcp}.exe`）：
+**跑起来**（二进制是工作区产物，`cargo build -p latteset-server` 后位于 `src-tauri/target/debug/latteset-{cli,mcp}.exe`）：
 
 ```powershell
-texpresso-cli --project test_file\projects\multifile compile        # stdout 只有 JSON
-texpresso-cli --project <dir> compile | ConvertFrom-Json | % { $_.compile.status, $_.compile.errors }
-texpresso-mcp --project <dir>                                        # stdio server（harness 本地拉起）
+latteset-cli --project test_file\projects\multifile compile        # stdout 只有 JSON
+latteset-cli --project <dir> compile | ConvertFrom-Json | % { $_.compile.status, $_.compile.errors }
+latteset-mcp --project <dir>                                        # stdio server（harness 本地拉起）
 ```
 
 **四条踩过的坑**：
@@ -408,12 +438,12 @@ texpresso-mcp --project <dir>                                        # stdio ser
    \section{测试}
    能量 $E = mc^2$。
    '@
-   $body | texpresso-cli --project <dir> write chapters/intro.tex -
+   $body | latteset-cli --project <dir> write chapters/intro.tex -
    ```
    （单引号 here-string = 不求值；`-` 表示从 stdin 读内容。）
 2. **`write` 不会替你建目录**：父目录不存在 → 报 `NotFound` 并说明"父目录必须已存在"（与 GUI `save_all` 同契约）。先建目录，或先写已存在的目录下的文件。
 3. **退出码语义**：`compile` 的 `0` 只表示 **status=success**；编译未通过是 `1`（**不是**命令出错）。`2` = 用法/路径类错误，`3` = 内部错误。
-4. **配置目录**：默认与 GUI **同一份**（Windows `%APPDATA%\com.texpresso.app`），所以 CLI 改了设置 GUI 也会看到；要隔离（测试/CI）用 `--config-dir <dir>` 或 `TEXPRESSO_CONFIG_DIR`。
+4. **配置目录**：默认与 GUI **同一份**（Windows `%APPDATA%\com.latteset.app`），所以 CLI 改了设置 GUI 也会看到；要隔离（测试/CI）用 `--config-dir <dir>` 或 `LATTESET_CONFIG_DIR`。
 
 **并发禁忌**：同一项目**不要**同时用 GUI 和 CLI 编译——两路 latexmk 抢同一个 `tmp/`（先到先写、后到覆盖）。当前约定 headless 独占，没有项目锁。
 
@@ -421,7 +451,7 @@ texpresso-mcp --project <dir>                                        # stdio ser
 
 ```powershell
 '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{}}}' |
-  texpresso-mcp --project <dir>
+  latteset-mcp --project <dir>
 ```
 
 应回 `result.protocolVersion` + `capabilities.tools` + `instructions`。日志（含每一次工具调用）走 **stderr**，stdout 只有协议报文——排查时别把两者混在一个管道里。

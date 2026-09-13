@@ -81,7 +81,7 @@ TIERS.tiny = {
     "main.tex": String.raw`\documentclass{article}
 \begin{document}
 \section{Tiny}
-Hello TeXPresso benchmark.
+Hello Latteset benchmark.
 \end{document}
 `,
   },
@@ -103,7 +103,7 @@ ${i === 2 ? tikzFigure(i) : ""}`).join("\n\n");
 \usepackage{booktabs}
 \begin{document}
 \title{Benchmark: journal-style article}
-\author{TeXPresso}
+\author{Latteset}
 \maketitle
 \begin{abstract}
 ${enParagraphs(rng, 2)}
@@ -143,7 +143,7 @@ TIERS.multifile = () => {
     "main.tex": String.raw`\documentclass[UTF8]{ctexbook}
 \usepackage{tikz}
 \title{多文件基准工程}
-\author{TeXPresso}
+\author{Latteset}
 \begin{document}
 \maketitle
 \tableofcontents
@@ -227,7 +227,7 @@ TIERS.thesis = () => {
 \usepackage{amsmath,amssymb}
 \usepackage{tikz}
 \title{学位论文基准（合成）}
-\author{TeXPresso}
+\author{Latteset}
 \begin{document}
 \maketitle
 \frontmatter

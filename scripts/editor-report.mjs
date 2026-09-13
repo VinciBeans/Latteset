@@ -2,7 +2,7 @@
 // 编辑器侧性能口径（roadmap ⑦c 的 DoD）：一条命令在**真实窗口**里跑完探针并判门槛。
 //
 // 用法（前置：`npm run tauri dev` 已起窗口，且项目 = 对应档夹具）：
-//   VITE_TEXPRESSO_PROJECT=<...>/editor/multi20 npm run tauri dev
+//   VITE_LATTESET_PROJECT=<...>/editor/multi20 npm run tauri dev
 //   node scripts/editor-report.mjs --tier multi20 [--port 9223] [--json out.json] [--quiet]
 // 退出码：0 = 全部门槛通过；1 = 有门槛未过（与 bench.mjs 同风格）。
 //
@@ -157,7 +157,7 @@ window.__perf = (() => {
 })();
 "ready"`;
 
-/** P0 让窗口切到本档夹具（不依赖 VITE_TEXPRESSO_PROJECT，一个会话里可连跑多档）。 */
+/** P0 让窗口切到本档夹具（不依赖 VITE_LATTESET_PROJECT，一个会话里可连跑多档）。 */
 const P0_SWITCH = String.raw`
 (async () => {
   const { mod } = window.__perf;

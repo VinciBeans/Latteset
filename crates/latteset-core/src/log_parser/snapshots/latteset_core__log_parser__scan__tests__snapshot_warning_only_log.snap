@@ -1,0 +1,33 @@
+---
+source: crates/latteset-core/src/log_parser/scan.rs
+expression: parse_log(log)
+---
+[
+    LogMessage {
+        kind: Warning,
+        message: "LaTeX Warning: Citation `bar' undefined on page 1.",
+        file: Some(
+            "./main.tex",
+        ),
+        line: None,
+        raw: "LaTeX Warning: Citation `bar' undefined on page 1.",
+    },
+    LogMessage {
+        kind: Warning,
+        message: "Overfull \\hbox (12.3pt too wide) in paragraph at lines 4--5",
+        file: Some(
+            "./main.tex",
+        ),
+        line: None,
+        raw: "Overfull \\hbox (12.3pt too wide) in paragraph at lines 4--5",
+    },
+    LogMessage {
+        kind: Warning,
+        message: "Package fancyhdr Warning: \\headheight is too small.",
+        file: Some(
+            "./chapters/intro.tex",
+        ),
+        line: None,
+        raw: "Package fancyhdr Warning: \\headheight is too small.",
+    },
+]

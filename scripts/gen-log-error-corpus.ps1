@@ -12,7 +12,7 @@
   向后扩到 `l.<n>` 之后两行——既保留真实结构，又不至于把 20–50KB 的整份 log 入库。
 
 .OUTPUT
-  crates/texpresso-core/src/log_parser/real_error_corpus.rs
+  crates/latteset-core/src/log_parser/real_error_corpus.rs
   （**自动生成，勿手改**；期望值由手写的 diagnosis_tests.rs 提供，避免自证循环）
 
 .EXAMPLE
@@ -22,7 +22,7 @@
 param(
   [string]$SurveyWork = "$PSScriptRoot\..\test_file\research\tl-compile",
   [string]$ScratchDir = "$PSScriptRoot\..\test_file\research\error-probes",
-  [string]$OutFile = "$PSScriptRoot\..\crates\texpresso-core\src\log_parser\real_error_corpus.rs"
+  [string]$OutFile = "$PSScriptRoot\..\crates\latteset-core\src\log_parser\real_error_corpus.rs"
 )
 
 $ErrorActionPreference = 'Continue'

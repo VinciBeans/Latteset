@@ -1,12 +1,12 @@
-# TeXPresso
+# Latteset
 
 本地运行的 TeX 完整 IDE（桌面 GUI 应用），核心设计因素是实时编译。
 
 ## Language
 
-**TeXPresso**:
-项目正式名称（前占位名 TeXEditerB 已废弃）。寓意意式浓缩咖啡的即时感，与实时编译的核心设计因素绑定。配置目录随名：`.texpresso/`。
-_Avoid_: TeXEditerB、TeX Editor B
+**Latteset**:
+项目正式名称。**Latte + Typeset**——"一杯拿铁的时间，排版已经跟上"，与实时编译的核心设计因素绑定。配置目录随名：`.latteset/`。
+_Avoid_: TeXEditerB、TeX Editor B（更早的占位名）、TeXPresso（**旧名，因与上游 [let-def/texpresso](https://github.com/let-def/texpresso) 撞名而弃用**）
 
 **实时编译 (Real-time compilation)**:
 本产品的核心设计因素：文档随用户编辑自动持续编译，无需手动触发构建命令。触发语义见下文两种编译模式。

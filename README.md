@@ -1,18 +1,20 @@
 <div align="center">
 
-# TeXPresso
+# Latteset
 
-**一杯浓缩咖啡的时间，实时编译出你的 LaTeX 成品**
+**一杯拿铁的时间，实时编译出你的 LaTeX 成品**
 
 打开含 `.tex` 的文件夹即可写作：编辑即编译，右侧 PDF 实时更新，并支持源码与 PDF 双向定位。
+
+`Latteset` = **Latte + Typeset**。
 
 </div>
 
 ## 界面预览
 
-TeXPresso 主界面：左侧文件树、中间编辑区、右侧 PDF 预览。
+Latteset 主界面：左侧文件树、中间编辑区、右侧 PDF 预览。
 
-<img src=".github/assets/TeXPresso运行主界面.png" alt="TeXPresso 主界面" width="800" />
+<img src=".github/assets/Latteset运行主界面.png" alt="Latteset 主界面" width="800" />
 
 ## 安装
 
@@ -51,21 +53,38 @@ npm install && npm run tauri dev
 
 - **文件夹即项目**：打开文件夹 → 文件树 → 多标签页；自动保存（防抖）+ 外部修改检测与冲突提示。
 - **根文件**：正则启发式自动探测（含 `\documentclass` 的顶层 .tex），可手动覆盖。
-- **设置**：引擎（XeLaTeX 默认，可切 LuaLaTeX/pdfLaTeX）、编译模式、防抖、超时、根文件覆盖；全局 + 项目（`.texpresso/settings.json`）两层，改即生效。
+- **设置**：引擎（XeLaTeX 默认，可切 LuaLaTeX/pdfLaTeX）、编译模式、防抖、超时、根文件覆盖；全局 + 项目（`.latteset/settings.json`）两层，改即生效。
 
 ## 命令行与 MCP（无 GUI，面向自动化）
 
-GUI 之外，同一套核心也能被脚本与 AI Agent 直接驱动：`crates/texpresso-server` 提供 `texpresso-cli`（一条命令一个 JSON）与 `texpresso-mcp`（MCP over stdio），可完成打开项目、编译并拿到结构化错误与诊断、读写文件、大纲、SyncTeX 双向定位。
+GUI 之外，同一套核心也能被脚本与 AI Agent 直接驱动：`crates/latteset-server` 提供 `latteset-cli`（一条命令一个 JSON）与 `latteset-mcp`（MCP over stdio），可完成打开项目、编译并拿到结构化错误与诊断、读写文件、大纲、SyncTeX 双向定位。
 
 ```bash
-cargo build -p texpresso-server            # 产物在工作区 target/debug（未打进安装包）
-texpresso-cli --project <项目目录> compile # 退出码 0=编译通过，1=编译未通过
-texpresso-mcp --project <项目目录>         # 供 harness / Agent 拉起（stdio）
+cargo build -p latteset-server            # 产物在工作区 target/debug（未打进安装包）
+latteset-cli --project <项目目录> compile # 退出码 0=编译通过，1=编译未通过
+latteset-mcp --project <项目目录>         # 供 harness / Agent 拉起（stdio）
 ```
 
 用法、工具清单与限制见 [docs/cli-mcp-plan.md](./docs/cli-mcp-plan.md)；注意同一项目**不要**同时用 GUI 和 CLI 编译（会抢 `tmp/`）。
 
 > 开发与设计细节（构建、测试、Roadmap 等）见 [docs/](./docs/) 与 [CONTEXT.md](./CONTEXT.md)。
+
+## 致谢与思路来源
+
+**Latteset 的若干设计思路，学习自 [TeXPresso](https://github.com/let-def/texpresso) 项目**（作者 [let-def](https://github.com/let-def)，OCaml 实现，改造 XeTeX 做 LaTeX live rendering）——它把"边改边出图"从概念做到了工程级，是本项目立项时最重要的参考对象。
+
+**已吸收并落地**（均为独立实现，未复用其源码）：
+
+- **空闲收敛**：编辑期跑轻的、停手后补一次全的 → 本项目的 Quick 单趟 + 2s 空闲收敛；
+- **把决策过程打出来**：调度/收敛决策留日志，排障时可视化；
+- **确定性验证**：连跑两次逐字节比对，作为一切输出优化的前提；
+- **引擎输出管道化**：把引擎输出从丢弃改为管道化，换来编译期进度与实时错误 → 状态栏「已排版 N 页」+ 错误列表在编译结束前就报致命错误。
+
+**评估后未采用**（其路线要求拥有引擎内部，与 ADR-0007 冲突）：fork 快照 / seen 水位、VFS 事务回滚、以 DVI/XDV 代替 PDF 作为预览格式。
+
+完整的源码通读与逐阶段复刻路线见 [docs/texpresso-live-rendering-roadmap.md](./docs/texpresso-live-rendering-roadmap.md)，本项目的取舍与吸收清单见 [docs/research/tex-ide-roadmap-priority.md](./docs/research/tex-ide-roadmap-priority.md) §5。
+
+> **更名的起因也是一次善意的提醒**：GitHub 用户 [@mathlab08](https://github.com/mathlab08) 指出了本项目与上游 TeXPresso 的重名问题。**特此感谢**——正因这条提醒才有了 TeXPresso → Latteset 的更名（见 [ADR-0011](./docs/adr/0011-rename-to-latteset.md)）。同名是误会，致敬是本意。
 
 ## 许可
 

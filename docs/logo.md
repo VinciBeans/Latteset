@@ -5,14 +5,14 @@
 
 ## 概念
 
-TeXPresso = TeX + espresso，本义是"浓缩咖啡的即时感"，与核心设计因素**实时编译**绑定（见 CONTEXT.md）。
+Latteset = **Latte + Typeset**，本义是"一杯拿铁的时间，排版已经跟上"，与核心设计因素**实时编译**绑定（见 CONTEXT.md）。
 
-Logo 是一只**刚从机器上出来的浓缩咖啡杯**：
+Logo 是一只**刚冲好、还冒着热气的拿铁杯**：
 
 - **翻边杯口 + 收窄杯身 + 加宽杯碟**：干净的实心几何，上宽下窄的矮杯剪影；
 - **四粒渐细的蒸汽**：从杯口向右上漂散、越来越小——不对称构图带来动势，尖端消失在"出杯的瞬间"。
 
-一句话：*刚冲好的意式，还冒着热气。* 与产品文案"编辑即编译，如同浓缩即冲"同构。
+一句话：*刚冲好的拿铁，还冒着热气。* 与产品文案"编辑即编译，如同现萃即饮"同构。
 
 > 迭代记录：经 logo-generator 工作流从 8 个方向（[logo-showcase.html](./logo-showcase.html)）选 3 强
 > （[logo-finalists.html](./logo-finalists.html)）后定案为 **V4 Hot Steam Cup**；融合版「Steam T」因线条质感
@@ -35,7 +35,7 @@ Logo 是一只**刚从机器上出来的浓缩咖啡杯**：
 | 文件 | 用途 |
 |---|---|
 | `public/logo.svg` | **mark**（100×100 viewBox，三色，透明底），任意浅/深底色、工具栏、页眉 |
-| `public/logo-full.svg` | 全称标志：mark + 字标 "TeXPresso"（横向 lockup） |
+| `public/logo-full.svg` | 全称标志：mark + 字标 "Latteset"（横向 lockup） |
 | `public/app-icon.svg` | 应用图标瓦片（圆角方块 + mark，1024×1024） |
 | `public/logo-mono.svg` | 单色版（`currentColor`），用于单色限制场景（托盘图标、水印） |
 | `docs/logo-export/*.png` | 已渲染的 PNG 导出（mark 512/1024、tile 1024、lockup、单色） |
@@ -44,7 +44,7 @@ Logo 是一只**刚从机器上出来的浓缩咖啡杯**：
 
 ## 字标
 
-"TeXPresso" 统一无衬线 800（`Segoe UI` / `Helvetica Neue` / `Arial`），墨色 Ink，字距 -0.5。
+"Latteset" 统一无衬线 800（`Segoe UI` / `Helvetica Neue` / `Arial`），墨色 Ink，字距 -0.5。
 不混排衬线——TeX 的暗号由蒸汽承担，字标只管干净利落。
 
 ## 使用规则
