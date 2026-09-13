@@ -14,6 +14,7 @@
 | 那有没有"不用 fork 也能拿到同样收益"的路 | ✅ 有几条，但要分清**收益是什么**：fork 省的是"**重排已排版部分**"，而实测显示这部分**只占小头** |
 | **编辑期单趟的成本结构**（本轮实测） | `bench/thesis`（28 页）**导言区占 71%**（964/1358ms）；`bench/multifile`（74 页）**占 89.5%**（1347/1505ms）→ 固定开销（引擎启动 + 导言区 + 字体加载）是主项 |
 | 推论 | **fork 就算能用也只省小头**；要加速编辑期编译，该做的是**砍固定开销**（导言区 fmt 化 / 字体预热），而这**不需要 fork** |
+| 但"砍固定开销"也被关死了吗 | ❌ **基本关死**（§3.1 成本分解）：**引擎启动 946 ms**（进程级，fmt 省不到）+ **ctex/字体 400 ms**（native font，**XeTeX 禁止 dump**）＝ 61%，fmt 一分钱省不到；唯一可 fmt 化的"宏包加载"只有 **150 ms**。而且 `xelatex -ini … \dump` 直接报 `! Can't \dump a format with native fonts or font-mappings.` |
 | 已落地的不需要 fork 的收益 | 页级复用三件（B/C/A，2026-09）：跳过预览重载、只重绘变化页（render 102→7ms）、跳过 PDF 转换 |
 
 ## 1. `fork` 到底换来什么（精确口径）
@@ -77,13 +78,33 @@
 
 ⚠️ 反向的诚实提醒：真实学位论文的正文远比合成夹具"重"（图表、公式、长表格、双栏），那时正文占比会上升，fork 的相对价值会变大。**这一点本机未测**（hithesis 档被 ㉖ 阻塞）。
 
+### 3.1 "砍固定开销"能不能砍？——成本分解（2026-09 追加实测）
+
+既然 §3 说大头是固定开销，下一步就是把它**拆开**看哪一块能省。方法：逐级加内容的空文档 + 完整文档（`bench/multifile` 的导言区），各跑 3 次取中位：
+
+| 档 | 内容 | 中位耗时 | 增量 |
+|---|---|---|---|
+| 1 | `\documentclass{article}` + 空文档 | **946 ms** | **引擎启动 + LaTeX 内核 = 946 ms** |
+| 2 | `\documentclass{ctexbook}` + 空文档 | 1346 ms | **ctex + 中文字体 = 400 ms** |
+| 3 | 完整导言区（+ amsmath/amssymb/tikz）+ 空文档 | 1496 ms | **其余宏包 = 150 ms** |
+| 4 | 完整文档（74 页正文） | 2207 ms | **正文排版 = 711 ms** |
+
+**结论（两重否决）**：
+
+1. **fmt 路线不可行**：`xelatex -ini … \dump` 直接报
+   `! Can't \dump a format with native fonts or font-mappings.`——而 `fontspec`（以及用它设置中文字体的 ctex/xeCJK）**必然**产生 native font / font-mapping，所以**中文文档无法 fmt 化**（这不是配置问题，是引擎硬限制）。
+   > 顺带修正：本文上一版把这条写成 [推断]（"format 可能保存不了字体，收益打折"）——实测比推断更严格：**不是打折，是直接禁止**。
+2. **即便 fmt 能用，收益也只有 ~7%**：可 fmt 化的只有"宏包加载"那 **150 ms**；占大头的**引擎启动 946 ms**（进程级，fmt 省不到）与 **ctex/字体 400 ms**（native font，禁止 dump）一共 **1346 ms（61%）** 完全不在它的能力范围内。
+
+⇒ "砍固定开销"这条路在 **stock 引擎 + Windows** 的约束下**基本被关死**。剩下的只能是产品层面的三件事：**减少编译次数**（合并队列/防抖/页级复用，已有）、**让单次编译不可见**（编译不阻塞 UI、只重绘变化页，已有）、以及**给用户的产品级建议**（精简导言区、少用重宏包——上面那 150ms 与用户文档的重宏包直接相关，但那是用户的取舍，不是我们能替他们做的优化）。
+
 ## 4. 不需要 `fork` 的替代路径（逐条判定）
 
 | # | 路径 | 换来什么 | 状态 |
 |---|---|---|---|
 | a | **页级复用**（页哈希差分 → 跳过预览重载 / 只重绘变化页 / 跳过 PDF 转换） | 省的是**下游**（预览重载、canvas 重绘、`xdvipdfmx` 转换 0.65–0.94s） | ✅ **已落地**（2026-09，B/C/A；见 [报告](./incremental-edit-x-dvi.md) §2.3） |
 | b | **Quick 单趟 + 空闲收敛**（㉘） | 编辑期整份重排但走轻路径（省 40% 中位），停手后补一次 Full | ✅ 已落地 |
-| c | **导言区 fmt 化**（把导言区 dump 成 `.fmt`，编译时跳过） | 直击上面 §3 的**大头**：理论上单趟可降到 ~10–30% | 🟡 **机制成立且不需要 fork**，但本机 `kpsewhich mylatexformat.sty` **为空**（未安装）；且 **XeTeX 的 format 不能保存字体**（[推断]）——字体加载那部分省不掉，实际收益要打折 |
+| c | **导言区 fmt 化**（把导言区 dump 成 `.fmt`，编译时跳过） | 期望直击 §3 的"大头" | ❌ **实测否决（双重）**：① **XeTeX 根本不允许** dump 含 native font / font-mapping 的 format（`! Can't \dump a format with native fonts or font-mappings.`）——而 fontspec/ctex 必然产生它，**中文文档这条路走不通**；② 即便可行，成本分解（§3.1）显示**可 fmt 化的部分只有 ~150ms**（其余是引擎启动与字体，fmt 都省不到） |
 | d | **编辑期只编当前章**（`\includeonly{ch}`） | 编辑期只排一章（页多时收益大） | 🟡 **产品取舍**：页码/章节号/目录全部不对（§[增量编辑 × DVI](./incremental-edit-x-dvi.md) §3 实测）→ 只能做"编辑期临时预览"，最终产物仍要全量编译 |
 | e | **局部重编译 + 页级拼接** | 期望"只重排改动章、拼回旧 PDF" | ❌ **已证伪**（同上 §3：74→33 页、章节号变"第一章"、页码从 5 起） |
 | f | **引擎常驻**（进程不退，反复喂新内容） | 省掉引擎启动 + 导言区（即 §3 的大头） | ❌ **TeX 引擎不提供这种接口**：没有"重跑一份新文档而不退出"的入口；`\dump` 是一次性的；唯一"部分常驻"的形式就是 fmt（c） |
@@ -94,9 +115,7 @@
 2. **但 `fork` 的收益里，我们真正需要的部分已经被覆盖**：
    - "编辑 → 看到新图"的跟手感 → 由 ㉘（Quick + 收敛）与 B/C/A（页级复用）承担；
    - 上游 fork 省的是"重排已排版部分"，而实测显示**重排只占编辑期单趟的 10–29%**（合成夹具）。
-3. **下一块该啃的骨头不是 fork，而是 §3 里的固定开销**：候选手段按性价比排序是
-   ① **导言区 fmt 化**（需要先补 `mylatexformat` 或自研等价宏包，并把"字体能否进 fmt"实测清楚）；
-   ② 字体预热/缓存的其它形式；③（产品取舍）编辑期只编当前章。
+3. ~~下一块该啃的骨头是"砍固定开销"（导言区 fmt 化）~~ ❌ **§3.1 的实测把这条路关死了**：引擎启动（946 ms，进程级）与 ctex/字体（400 ms，XeTeX 禁止 dump native font）合起来占 **61%**，fmt 一分钱省不到；唯一可 fmt 化的"宏包加载"只有 **150 ms**。⇒ 固定开销**不可压缩**，剩下能做的只有"**减少编译次数**"与"**让单次编译不可见**"（都已在做：合并队列、防抖、页级复用、非阻塞编译），以及给用户的产品级建议。
 4. 与 ④/⑤（seen 水位、追加式解析器）的关系不变：它们**依然没有消费方**——因为消费方（上游渲染闭环）我们本来就没有；本轮也没有改变这一点。
 
 ## 6. 复现方法
@@ -117,13 +136,32 @@ Remove-Item _pre.tex
 
 # 3) fmt 路线的前置检查（本机为空 = 未安装）
 kpsewhich mylatexformat.sty
+
+# 3b) 直接试 fmt（本机复现出的引擎硬限制）
+cd test_file/projects/bench/small-article
+$pre = ((Get-Content main.tex -Raw) -split '\\begin\{document\}',2)[0]
+Set-Content _p.tex -Value $pre -NoNewline -Encoding utf8
+xelatex -ini -jobname=labfmt "&xelatex _p.tex\dump"      # → ! Can't \dump a format with native fonts or font-mappings.
+Remove-Item _p.tex,labfmt* -Force
+
+# 4) 成本分解（§3.1）：逐级加内容的空文档 + 完整文档，各跑 3 次取中位
+cd test_file/projects/bench/multifile
+$pre = ((Get-Content main.tex -Raw) -split '\\begin\{document\}',2)[0]
+Set-Content _l1.tex -Value "\documentclass{article}`n\begin{document}`n\end{document}`n" -NoNewline -Encoding utf8
+Set-Content _l2.tex -Value "\documentclass[UTF8]{ctexbook}`n\begin{document}`n\end{document}`n" -NoNewline -Encoding utf8
+Set-Content _l3.tex -Value ($pre + "`n\begin{document}`n\end{document}`n") -NoNewline -Encoding utf8
+foreach ($f in @("_l1.tex","_l2.tex","_l3.tex","main.tex")) {
+  Measure-Command { xelatex -no-pdf -interaction=nonstopmode -output-directory=tmp $f }
+}
 ```
 
 ## 7. 未验证与局限
 
 1. **WSL 路径完全未验证**（本机服务拒绝访问）：字体、IO、分发三处代价都是**定性判断**，没有数字。
 2. **`PssCaptureSnapshot` 的"只读"结论来自 API 语义**（它面向 dump/调试），本文**没有写代码调用验证**。
-3. **fmt 化的收益没有实测**：本机未装 `mylatexformat`；"XeTeX 的 format 不能保存字体"是 [推断]（若成立，§3 的 71–89.5% 里只有非字体部分可省）。
+3. ~~**fmt 化的收益没有实测**~~ ✅ **已实测并否决**（§3.1）：`xelatex -ini … \dump` 报
+   `! Can't \dump a format with native fonts or font-mappings.`——中文文档（fontspec/ctex 必然引入 native font）**禁止** fmt 化；且成本分解显示可 fmt 化的部分仅 ~150 ms。
+   **仍未测**：`mylatexformat` 能不能靠"把字体设置挪到 `\endofdump` 之后"绕过这条限制（本机未装该宏包；且即便绕过，能省的也只是那 150 ms 里的一部分，不值得）。
 4. **成本结构只测了合成夹具**：两档都是"页多、每页内容少"的中文文档；真实学位论文（图表/公式密集）的正文占比会明显更高，fork 的相对价值随之上升——**未测**（hithesis 被 ㉖ 阻塞）。
 5. **只测了 `-no-pdf` 单趟**：没测多趟（latexmk 收敛）与 `xdvipdfmx` 的占比（后者已在 DVI 报告里测过：0.65–0.94s/次）。
 6. **没有验证"字体在 fmt 里能不能用"**：这决定 c 路线的实际收益，是下一步最该补的实测。

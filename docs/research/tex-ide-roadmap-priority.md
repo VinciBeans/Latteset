@@ -318,4 +318,4 @@ C/V 全表最高（5/4）：干净 Windows 机器零预装可用。属"环境引
 20. **`.fls` / `.fdb_latexmk` 当依赖源的边界未全测**（[G1 报告](./g1-read-interception-feasibility.md) §8）：多趟 xelatex 的 `.fls` 合并行为、biber/makeindex 等更多子步骤、编辑期写入时机，均未验证。
 21. **⑦c 的三条遗留**（[p1c 报告](./p1c-multifile-large-project.md) §8）：多文件大项目的**编译期**表现（watch 事件淹没）未测；`Ctrl+F`/大范围替换未测；堆内存没有可信读数（dev 下 `performance.memory` 抖动到出现负差值），且只测了 dev 模式、生产构建未测。
 22. **"无变化编辑"的频率未量化**（[增量编辑 × DVI](./incremental-edit-x-dvi.md) §7）：页哈希差分能精确判出"这次编译什么都没变"（实测只加注释 → 125 页 0 变化），但它决定的是"能省多少"——真实使用中这类编辑的占比未统计（需在编译后钩子上挂 `--diff` 记录一轮）。
-23. **导言区 fmt 化的收益未实测**（[无 fork 报告](./no-fork-alternatives.md) §3/§7）：实测**导言区占编辑期单趟的 71%（28 页）～ 89.5%（74 页）**，也就是固定开销才是大头；但"把导言区 dump 成 `.fmt` 到底能省多少"没测——本机未装 `mylatexformat`，且"XeTeX 的 format 能否保存字体"是 [推断]。**这是当前最值得补的一条实测**（它直击成本结构的大头，且不需要 `fork`）。
+23. ~~**导言区 fmt 化的收益未实测**~~ ✅ **已实测并否决（2026-09）**（[无 fork 报告](./no-fork-alternatives.md) §3.1）：① `xelatex -ini … \dump` 直接报 `! Can't \dump a format with native fonts or font-mappings.`——fontspec/ctex 必然引入 native font，**中文文档禁止 fmt 化**（引擎硬限制）；② 成本分解：**引擎启动 946ms** + **ctex/字体 400ms**（fmt 都省不到）＝ **61%**，可 fmt 化的"宏包加载"只有 **150ms**。⇒ **编辑期固定开销不可压缩**；能做的是"减少编译次数 / 让单次编译不可见"（都已在做）。
