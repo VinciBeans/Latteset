@@ -84,6 +84,14 @@ const layoutRev = ref(0);
 let lastDocPath = "";
 /** 本次 reload 实际完成绘制的页数（插桩统计：诊断重载渲染成本）。 */
 let pagesRenderedThisLoad = 0;
+/**
+ * 本次 reload **复用旧 canvas、跳过重绘**的页数（插桩）。
+ *
+ * 依据（docs/research/incremental-edit-x-dvi.md 的功能点 C）：XDV 的页是自包含字节区间，
+ * 页哈希相同 ⇔ 该页的排版结果逐字节未变；后端把"变化页集合"随 pdf-updated 一起发来，
+ * 未变化的页其 canvas 位图仍然有效 → 不必重画。
+ */
+let pagesReusedThisLoad = 0;
 
 // ---------- 页高缓存（scale=1）与前缀和：虚拟化占位 + 窗口计算 + 滚动保持 ----------
 /** 各页 scale=1 高度（下标 1..N，0 占位）。同文件内容重载保留 → 布局稳定。 */
@@ -412,6 +420,7 @@ async function load() {
   if (!path) return;
   const keepScroll = scrollTop;
   pagesRenderedThisLoad = 0;
+  pagesReusedThisLoad = 0;
   try {
     const t0 = performance.now();
     const resp = await fetch(convertFileSrc(path));
@@ -441,11 +450,23 @@ async function load() {
       prefixH1.length = 0;
       prefixH1[0] = 0;
     }
-    numPages.value = doc.numPages;
+    const totalPages = doc.numPages;
+    numPages.value = totalPages;
     // 页高数组补足到新总页数（同文件重载保留已有页高 → 布局/滚动稳定）
-    if (pageH1.length < doc.numPages + 1) pageH1.length = doc.numPages + 1;
-    // 内容已变 → 全部标记为需重绘；DOM 复用与否由 structuralEpoch 决定
-    renderedScale.clear();
+    if (pageH1.length < totalPages + 1) pageH1.length = totalPages + 1;
+    // 哪些页需要重绘？
+    //   - 换文档 / 页信息不可判定（pages == 0）/ 页数与上次不一致 → **全部重绘**（现状，保守）；
+    //   - 同文件 + 页数一致 + 有变化页集合 → **只让变化页失效**，其余页沿用旧 canvas 位图。
+    //     安全依据：页哈希相同 ⇒ 页字节等价 ⇒ 页尺寸与内容都不变（页数也一致时不可能错位）。
+    const changed = new Set(preview.changedPages ?? []);
+    const canReuse = isSameFile && preview.pagesTotal > 0 && preview.pagesTotal === totalPages;
+    if (canReuse) {
+      for (const n of changed) renderedScale.delete(n);
+      // 插桩：本次能复用的页数 = 原本已渲染、且不在变化集合里的页
+      pagesReusedThisLoad = [...renderedScale.keys()].filter((n) => n <= totalPages).length;
+    } else {
+      renderedScale.clear();
+    }
     currentPageIdx.value = Math.min(currentPageIdx.value, numPages.value);
     if (!fittedOnce) {
       fittedOnce = true;
@@ -476,14 +497,15 @@ async function load() {
       render: Math.round(tDone - tParse),
       total: Math.round(tDone - t0),
       pagesRendered: pagesRenderedThisLoad,
+      pagesReused: pagesReusedThisLoad,
     };
     (window as any).__previewLastReload = timing; // 端到端测试读取
     // 无 Rust 变更的观测通道：把耗时放进窗口标题，便于外部(如 pc-control list_windows)读取
-    document.title = `Latteset | reload ${timing.total}ms (fetch ${timing.fetch} parse ${timing.parse} render ${timing.render}) pages ${timing.pages} rendered ${timing.pagesRendered}`;
+    document.title = `Latteset | reload ${timing.total}ms (fetch ${timing.fetch} parse ${timing.parse} render ${timing.render}) pages ${timing.pages} rendered ${timing.pagesRendered} reused ${timing.pagesReused}`;
     console.log(
       `[preview] reload#${mySeq} ${timing.file} pages=${timing.pages} bytes=${timing.bytes} ` +
         `fetch=${timing.fetch}ms parse=${timing.parse}ms render=${timing.render}ms ` +
-        `total=${timing.total}ms pagesRendered=${timing.pagesRendered}`
+        `total=${timing.total}ms pagesRendered=${timing.pagesRendered} pagesReused=${timing.pagesReused}`
     );
   } catch (e) {
     if (unmounted || mySeq !== loadSeq) return; // 已卸载或被取代的加载忽略
