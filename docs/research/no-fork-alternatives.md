@@ -123,7 +123,8 @@
 - **对我们的主场景（中文 + XeLaTeX）收益为 0**：引擎层面就用不了（①），且中文必然依赖 native 字体（ctex/xeCJK）；
 - 引擎启动（946 ms）与字体加载（400 ms）依旧不在它的能力范围内。
 
-**仍未测**：LuaLaTeX（字体同样是 native，[推断] 同样受限，未验证）；pdflatex + CJK 宏包的中文路线（我们已不支持该路径）。
+**仍未测**：pdflatex + CJK 宏包的中文路线（我们已不支持该路径）。
+**已补测（2026-09，见 [现代引擎实测](./modern-engines-zh.md) §3.4）**：LuaLaTeX 侧**不受这条引擎硬限制**——`lualatex -ini … \dump` 对 `article` / `ctexart` / `thesis` 完整导言区**都 dump 成功**（3.7 / 11.3 / 12.5 MB，代价是一条非致命的 `lua-uni-algos` Lua 错误）。但**普通 ctex 文档的运行时挂接没做通**（那是 `mylatexformat` 的角色，本机未装；自写 shim 会破坏 ctex 的运行时状态）→ **收益仍未验证**；而且即便挂通，也补不回 LuaLaTeX 相对 XeLaTeX 的 3.2–3.5× 差距（同报告 §2）。
 
 ## 4. 不需要 `fork` 的替代路径（逐条判定）
 
@@ -188,7 +189,7 @@ foreach ($f in @("_l1.tex","_l2.tex","_l3.tex","main.tex")) {
 2. **`PssCaptureSnapshot` 的"只读"结论来自 API 语义**（它面向 dump/调试），本文**没有写代码调用验证**。
 3. ~~**fmt 化的收益没有实测**~~ ✅ **已实测并否决**（§3.1 / §3.2）：`xelatex -ini … \dump` 报
    `! Can't \dump a format with native fonts or font-mappings.`——而且**连最简导言区也如此**（根因在 XeLaTeX 基座自身，§3.2①）。**"把字体挪出 fmt"的绕过也已实测：无效**（§3.2）。pdflatex 侧则确实可行、产出逐字节等价，收益 2.6%（极简）→ 12.8%（重导言区）——但与中文 + XeLaTeX 的主场景无关。
-   **仍未测**：LuaLaTeX 是否同样受限（字体也是 native，[推断] 成立但未验证）。
+   **已补测**：LuaLaTeX **不**受这条限制（dump 成功），但运行时挂接未做通、收益未验证——见 [现代引擎实测](./modern-engines-zh.md) §3.4。
 4. **成本结构只测了合成夹具**：两档都是"页多、每页内容少"的中文文档；真实学位论文（图表/公式密集）的正文占比会明显更高，fork 的相对价值随之上升——**未测**（hithesis 被 ㉖ 阻塞）。
 5. **只测了 `-no-pdf` 单趟**：没测多趟（latexmk 收敛）与 `xdvipdfmx` 的占比（后者已在 DVI 报告里测过：0.65–0.94s/次）。
 6. **没有验证"字体在 fmt 里能不能用"**：这决定 c 路线的实际收益，是下一步最该补的实测。
