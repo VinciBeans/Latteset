@@ -57,7 +57,7 @@
 | ⑧ | 跨文件 LaTeX 语义操作 | 4 | 5 | 4 | 3 | **1.29** | P1 | P10：VS Code 明确缺失（§6.3） |
 | ⑩ | 深色主题（Candy Desk 暗色） | 3 | 2 | 2 | 2 | **1.25** | P1 | 配置类第一痛点：206 票 / 23 万浏览（§6.4） |
 | ㉖ | **模板自带 latexmkrc 与构建约定的交互**（硬证据已就位） | 3 | 4 | 3 | 3 | **1.17** | P1 | hithesis：rc 覆写 `$pdflatex` + `--shell-escape` + 尾部 `;cp`，在 `-outdir=tmp` 下 `\include{body/...}` 写不出 aux、报错后 latexmk 挂住；精简 rc 最小复现仍能恢复 → 触发条件待定位（§6.1） |
-| ⑪ | 预览滚动/缩放保持、只重排变更页 | 4 | 3 | 4 | 2 | **1.17** | P1 | 官方承认"丢失滚动位置"；判定输入候选见 §6.4 |
+| ⑪ | 预览滚动/缩放保持、只重排变更页 | 4 | 3 | 4 | 2 | **1.17** | P1 | 官方承认"丢失滚动位置"；判定输入**已就位**（页哈希差分，见 §6.4 与 [增量编辑 × DVI 专项](./incremental-edit-x-dvi.md)）；建议先做零风险的"全同则不刷新"（C1） |
 | ⑨ | LSP（texlab）集成 | 4 | 3 | 4 | 3 | **1.00** | P1 | P8：补全/引用是长期痛点；建议与 ⑧ 合并（§6.3） |
 | ⑫ | TinyTeX 捆绑与环境引导 | 5 | 4 | 5 | 4 | **1.00** | P2\* | C/V 全表最高；建议独立里程碑（§6.5） |
 | ⑬ | AI 集成 | 3 | 4 | 4 | 3 | **1.00** | P2 | 2026 竞争主轴；**仍无一手需求证据** |
@@ -176,6 +176,8 @@
 
 ⇒ **吸收两条**（编译期页进度、页级变更判定），**不吸收渲染**。工具：`scripts/xdv-report.mjs`；数据见 [g2-byte-offset-resync.md](./g2-byte-offset-resync.md)。
 
+**2026-09「增量编辑 × DVI/XDV」五点判定**（[专项报告](./incremental-edit-x-dvi.md)）：在"每次仍整份重编译"的前提下，页级信息能让**下游**少做重复工作——① **页哈希差分 → 复用旧 PDF / 跳过预览重载 / 只重绘变化页**：✅ 成立且值得做（实测只加一行注释 → **125 页逐页字节完全一致、0 页变化**；建议顺序 B 跳过重载 C1 → A 跳过 `xdvipdfmx` 0.65–0.94s C2 → C 只重绘变化页 = ⑪）；② **局部重编译（`\includeonly`）+ 页级拼接**：❌ 实测证伪（74 → 33 页、第 3 章显示成"第一章"、页码 5 起、目录重写）；③ XDV 渲染仍不做；④⑤ 无消费方。
+
 ### 5.8 阶段 2（引擎子进程 + 流式输出 + 时间片）—— 2026-09 专项（**流式输出 ✅ 已落地**）
 
 完整实测见 **[stage2-streaming-feasibility.md](./stage2-streaming-feasibility.md)**。要点：
@@ -223,7 +225,7 @@
 ### 6.4 ⑩ 深色主题 / ⑪ 预览状态保持
 
 - **⑩**：Monaco + 自研 Monarch 语法 + pdf.js 反色需要一起调（Candy Desk 语系的暗色版）；配置类第一痛点（206 票 / 23 万浏览）。
-- **⑪**：pdf.js 无增量更新文档的能力，现方案是"重载 + 恢复滚动/缩放"（design.md §预览）。**判定输入候选**：用 §5.7 的**页哈希差分**决定"哪些页需要重绘"——它能保证不漏，但 LaTeX 重排时（插入一段 → 其后 108 页变）覆盖面会很大，DoD 要按"视觉无跳动"而不是"只重绘一页"来定。建议与 ⑦c **共用夹具与口径**。
+- **⑪**：pdf.js 无增量更新文档的能力，现方案是"重载 + 恢复滚动/缩放"（design.md §预览）。**判定输入已就位**（2026-09）：§5.7 的**页哈希差分**（XDV 页字节哈希）已与 SyncTeX 对拍一致，且实测"不影响排版的编辑 → **0 页变化**"——于是可以先做零风险的"页哈希全同 → 不刷新预览"（C1），再把"变化页集合"接进 `PreviewPane` 做"只重绘变化页"（C2–3）。它能保证不漏，但 LaTeX 重排时会命中大量页（插入一段 → 其后 108 页变），故 DoD 按"**视觉无跳动**"而不是"只重绘一页"来定。**建议**：先量化真实编辑的命中率分布再投入；夹具与口径已由 ⑦c 备好。见 [增量编辑 × DVI 专项](./incremental-edit-x-dvi.md)。
 
 ### 6.5 ⑫ TinyTeX 捆绑（独立里程碑）
 
@@ -271,7 +273,7 @@ C/V 全表最高（5/4）：干净 Windows 机器零预装可用。属"环境引
 | ⑦a 大纲增量（**已完成**） | modules.md §3.5（缓存三不变量）/ §12.2 + `core::outline::{load_cached, OutlineCache}` + `src/stores/outline.ts` |
 | ⑦c / ⑦b（**已完成 / 缓做**） | [p1-large-doc-editor-analysis.md](./p1-large-doc-editor-analysis.md)（拆分依据）+ [p1c-multifile-large-project.md](./p1c-multifile-large-project.md)（夹具/口径/数据）+ `scripts/{gen-large-project,editor-report}.mjs` |
 | ㉖ latexmkrc 交互 | 本文件 §6.1 + troubleshooting.md「`\include{子目录/文件}` + `-output-directory`」 |
-| ⑪ 预览状态保持 | design.md §预览 + 本文件 §5.7（页哈希差分候选） |
+| ⑪ 预览状态保持 | design.md §预览 + 本文件 §5.7（页哈希差分候选）+ [incremental-edit-x-dvi.md](./incremental-edit-x-dvi.md)（判定输入已就位：差分 ⟷ SyncTeX 对拍 + "0 页变化"实测） |
 | DVI/XDV 预览（**否决**） | [dvi-preview-feasibility.md](./dvi-preview-feasibility.md) |
 | G2 字节偏移重同步（**索引吸收**） | [g2-byte-offset-resync.md](./g2-byte-offset-resync.md) + `scripts/xdv-report.mjs` |
 | G1 拦截每一次读（**降级为依赖记录**） | [g1-read-interception-feasibility.md](./g1-read-interception-feasibility.md) + `scripts/fls-report.mjs`（`.fls` / `.fdb_latexmk` 依赖报告） |
@@ -313,3 +315,4 @@ C/V 全表最高（5/4）：干净 Windows 机器零预装可用。属"环境引
 19. **精确失效的收益未在真实大文档上量化**（[G1 报告](./g1-read-interception-feasibility.md) §8.5）：只测到小探针"改无关文件 → 白编译一次"；真实收益 = 白编译频率 × 单次编译时长，两个因子都未统计。
 20. **`.fls` / `.fdb_latexmk` 当依赖源的边界未全测**（[G1 报告](./g1-read-interception-feasibility.md) §8）：多趟 xelatex 的 `.fls` 合并行为、biber/makeindex 等更多子步骤、编辑期写入时机，均未验证。
 21. **⑦c 的三条遗留**（[p1c 报告](./p1c-multifile-large-project.md) §8）：多文件大项目的**编译期**表现（watch 事件淹没）未测；`Ctrl+F`/大范围替换未测；堆内存没有可信读数（dev 下 `performance.memory` 抖动到出现负差值），且只测了 dev 模式、生产构建未测。
+22. **"无变化编辑"的频率未量化**（[增量编辑 × DVI](./incremental-edit-x-dvi.md) §7）：页哈希差分能精确判出"这次编译什么都没变"（实测只加注释 → 125 页 0 变化），但它决定的是"能省多少"——真实使用中这类编辑的占比未统计（需在编译后钩子上挂 `--diff` 记录一轮）。
