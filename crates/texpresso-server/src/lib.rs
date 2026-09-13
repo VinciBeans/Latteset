@@ -23,7 +23,7 @@ use serde::Serialize;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Instant;
-use texpresso_core::outline::{load as load_outline, normalize_path, OutlineContext};
+use texpresso_core::outline::{load_cached, normalize_path, OutlineInput};
 use texpresso_core::project::{
     detect_root, is_tree_excluded, resolve_creatable_in_project, resolve_in_project, resolve_project_root,
     FileSystem, ProjectState,
@@ -107,6 +107,9 @@ pub struct Session {
     last: Option<CompileReport>,
     /// 传给 runner 的超时（秒）；来自生效设置。
     timeout_secs: u64,
+    /// 大纲增量缓存（roadmap ⑦a）：MCP server 常驻时复用未变化文件的扫描结果；
+    /// 项目根变化由 core 内部自动作废。CLI 每进程一条命令，等于不复用（无害）。
+    outline_cache: texpresso_core::outline::OutlineCache,
 }
 
 impl Session {
@@ -122,6 +125,7 @@ impl Session {
             settings: Settings::default(),
             last: None,
             timeout_secs: 120,
+            outline_cache: texpresso_core::outline::OutlineCache::new(),
         }
     }
 
@@ -316,21 +320,26 @@ impl Session {
     }
 
     /// 文档大纲（源结构树）：与 GUI 同一实现（`core::outline`），headless 直接读盘、无缓冲。
-    pub async fn outline(&self) -> Result<Vec<OutlineNode>, ServerError> {
-        let project = self.project_or_err()?;
+    ///
+    /// 走**增量缓存**（roadmap ⑦a）：headless 没有编辑器缓冲，每次读盘取内容，但内容未变的文件
+    /// 复用上次的扫描结果——常驻的 MCP server 连续查询大纲时不再整张 include 图重扫。
+    pub async fn outline(&mut self) -> Result<Vec<OutlineNode>, ServerError> {
+        let project = self.project_or_err()?.clone();
         let buffers = std::collections::HashMap::new();
         let fallback = if project.root_file.is_none() {
             Some(self.list_tex_files().await?)
         } else {
             None
         };
-        Ok(load_outline(
-            &OutlineContext {
+        Ok(load_cached(
+            &OutlineInput {
                 root: &project.root,
                 root_file: project.root_file.as_deref(),
-                buffers: &buffers,
+                changed_buffers: &buffers,
+                open_paths: None,
                 fallback_files: fallback.as_deref(),
             },
+            &mut self.outline_cache,
             self.fs.as_ref(),
         )
         .await)

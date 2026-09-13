@@ -18,8 +18,10 @@ export const ipc = {
   listDir: (path: string) => unwrap(commands.listDir(path)),
   readFile: (path: string) => unwrap(commands.readFile(path)),
   saveAll: (files: { path: string; content: string }[]) => unwrap(commands.saveAll(files)),
-  getOutline: (buffers: FileContent[], files: string[] | null) =>
-    unwrap(commands.getOutline(buffers, files)),
+  // 大纲（roadmap ⑦a 起为增量语义）：buffers 只传**变化过**的缓冲，openPaths 传当前打开的标签
+  // （后端据此淘汰已关闭文件的缓冲；未变化的文件按内容指纹复用扫描结果）。
+  getOutline: (buffers: FileContent[], files: string[] | null, openPaths: string[]) =>
+    unwrap(commands.getOutline(buffers, files, openPaths)),
   compileNow: () => unwrap(commands.compileNow()),
   abortCompile: () => unwrap(commands.abortCompile()),
   synctexForward: (file: string, line: number, column: number) =>

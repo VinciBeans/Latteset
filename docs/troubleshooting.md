@@ -303,7 +303,31 @@ DEBUG watch 原始事件: [".texpresso\settings.json"] kind=Modify(Any)  ← 第
 
 **另注**：应用自己写设置走的是原子写（`atomic_write` + 自写盘 hash 过滤），不受此影响。
 
+## `cargo build -p texpresso-server` 报「failed to remove file … 拒绝访问」(os error 5)
+
+**现象**：接了 DSH 的 `mcp-texpresso`（或任何常驻的 MCP 客户端）之后，重新构建 headless 会失败：
+
+```
+error: failed to remove file `E:\Works\tex-presso\src-tauri\target\debug\texpresso-mcp.exe`
+Caused by: 拒绝访问。 (os error 5)
+```
+
+**根因**：`texpresso-mcp.exe` 正**作为常驻进程运行**（stdio MCP server 由 harness 拉起后一直活着），Windows 锁定已加载的可执行文件 → 链接器无法替换它。与代码无关，`cargo build -p texpresso`（GUI 应用）不受影响，因为它不产这个二进制。
+
+**处置（按代价排序）**：
+
+1. **只验 lib / 不产二进制**：`cargo test -p texpresso-server --lib`（⑨ 之外的所有单测都在 lib 里）；
+2. **换 target 目录构建一次**（本机实测可用，代价是依赖图重编一遍）：
+   ```powershell
+   $env:CARGO_TARGET_DIR='<某个不在 src-tauri 下的目录>'; cargo test -p texpresso-server
+   ```
+   ⚠️ **别把它放在 `src-tauri/` 里面**——`tauri dev` 的文件监视会看到那些 `.fingerprint` 变化并触发重建（本机踩过），放工作区外或 `%TEMP%`；
+3. 在 DSH 里临时移除 `mcp-texpresso` 行（或重启 DSH）再构建。
+
+> 这也是「⑥ + 接线」的副作用之一：headless server 一旦常驻，它的二进制就不可被替换——改 `crates/texpresso-server` 的代码后要记着这条。
+
 ## 探针文档含中文时不能用 pdflatex（附一条被证伪的假设）
+
 
 **现象**：用 PowerShell 生成探针 `.tex` 后 `latexmk -pdf` **exit 12**，文档内容看起来完全正常。
 

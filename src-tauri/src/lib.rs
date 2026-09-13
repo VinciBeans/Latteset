@@ -115,6 +115,7 @@ pub fn run() {
                 storage,
                 watch: watch_handle,
                 app: app.handle().clone(),
+                outline: tokio::sync::Mutex::new(texpresso_core::outline::OutlineCache::new()),
             });
             Ok(())
         })

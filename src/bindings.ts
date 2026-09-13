@@ -16,10 +16,17 @@ export const commands = {
 	saveAll: (files: FileContent[]) => typedError<null, CmdError>(__TAURI_INVOKE("save_all", { files })),
 	/**
 	 *  文档大纲（源结构树）：解析在 core `outline` 模块（2026-09-03 从前端下沉）。
-	 *  输入：打开标签的实时缓冲（**缓冲优先**，未落盘也反映）+ 无根文件时的兜底文件列表；
-	 *  项目根/根文件取当前项目状态。输出按文档顺序嵌套（file:line 定位用）。
+	 * 
+	 *  输入（roadmap ⑦a 起为增量语义）：
+	 *  - `buffers`：**本次新增/变更过**的打开缓冲（未列出的沿用上次上报的内容）——前端只发改动过的，
+	 *    避免每次编译成功都把全部打开文件的全文推一遍（实测 462KB 一档 ≈10ms/文件的往返成本）；
+	 *  - `open_paths`：当前打开的标签（后端据此淘汰已关闭文件的缓冲；不在此列的缓冲回到读盘）；
+	 *  - `files`：无根文件时的兜底文件列表；项目根/根文件取当前项目状态。
+	 * 
+	 *  未变化的文件由 core 的 `OutlineCache` 按内容指纹复用扫描结果——**每次仍重新取内容**
+	 *  （缓冲优先，否则读盘），所以外部改动不会被缓存钉住。
 	 */
-	getOutline: (buffers: FileContent[], files: string[] | null) => typedError<OutlineNode[], CmdError>(__TAURI_INVOKE("get_outline", { buffers, files })),
+	getOutline: (buffers: FileContent[], files: string[] | null, openPaths: string[]) => typedError<OutlineNode[], CmdError>(__TAURI_INVOKE("get_outline", { buffers, files, openPaths })),
 	compileNow: () => typedError<null, CmdError>(__TAURI_INVOKE("compile_now")),
 	abortCompile: () => typedError<null, CmdError>(__TAURI_INVOKE("abort_compile")),
 	synctexForward: (file: string, line: number, column: number) => typedError<SyncTexTarget, CmdError>(__TAURI_INVOKE("synctex_forward", { file, line, column })),

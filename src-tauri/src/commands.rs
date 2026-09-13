@@ -58,6 +58,9 @@ pub struct AppState {
     pub storage: Arc<SettingsStorage>,
     pub watch: texpresso_infra::watch::WatchHandle,
     pub app: tauri::AppHandle,
+    /// 大纲增量缓存（roadmap ⑦a）：按内容指纹复用未变化文件的扫描结果 + 记住打开缓冲。
+    /// 单写者（命令面）；项目根变化时 core 内部自动作废，无需外部清理。
+    pub outline: tokio::sync::Mutex<texpresso_core::outline::OutlineCache>,
 }
 
 /// 路径策略（D8）在 core `project::paths`：命令面只负责把失败原因翻译成对外错误契约。
@@ -281,13 +284,21 @@ async fn save_content(state: &AppState, path: &Path, content: &str) -> Result<()
 // ---------------------------------------------------------------- 大纲
 
 /// 文档大纲（源结构树）：解析在 core `outline` 模块（2026-09-03 从前端下沉）。
-/// 输入：打开标签的实时缓冲（**缓冲优先**，未落盘也反映）+ 无根文件时的兜底文件列表；
-/// 项目根/根文件取当前项目状态。输出按文档顺序嵌套（file:line 定位用）。
+///
+/// 输入（roadmap ⑦a 起为增量语义）：
+/// - `buffers`：**本次新增/变更过**的打开缓冲（未列出的沿用上次上报的内容）——前端只发改动过的，
+///   避免每次编译成功都把全部打开文件的全文推一遍（实测 462KB 一档 ≈10ms/文件的往返成本）；
+/// - `open_paths`：当前打开的标签（后端据此淘汰已关闭文件的缓冲；不在此列的缓冲回到读盘）；
+/// - `files`：无根文件时的兜底文件列表；项目根/根文件取当前项目状态。
+///
+/// 未变化的文件由 core 的 `OutlineCache` 按内容指纹复用扫描结果——**每次仍重新取内容**
+/// （缓冲优先，否则读盘），所以外部改动不会被缓存钉住。
 #[tauri::command]
 #[specta::specta]
 pub async fn get_outline(
     buffers: Vec<FileContent>,
     files: Option<Vec<String>>,
+    open_paths: Vec<String>,
     state: State<'_, AppState>,
 ) -> Result<Vec<OutlineNode>, CmdError> {
     let project = state
@@ -301,13 +312,16 @@ pub async fn get_outline(
         map.insert(texpresso_core::outline::normalize_path(&fc.path), fc.content.clone());
     }
     let fallback = files.map(|v| v.into_iter().map(PathBuf::from).collect::<Vec<_>>());
-    Ok(texpresso_core::outline::load(
-        &texpresso_core::outline::OutlineContext {
+    let mut cache = state.outline.lock().await;
+    Ok(texpresso_core::outline::load_cached(
+        &texpresso_core::outline::OutlineInput {
             root: &project.root,
             root_file: project.root_file.as_deref(),
-            buffers: &map,
+            changed_buffers: &map,
+            open_paths: Some(&open_paths),
             fallback_files: fallback.as_deref(),
         },
+        &mut cache,
         state.fs.as_ref(),
     )
     .await)

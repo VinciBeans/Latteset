@@ -14,6 +14,10 @@
 //! - 防环 visited；`\input` 相对**项目根**解析优先、回退当前文件目录；
 //! - 读集安全（D8 词法版）：磁盘读取须落在项目根内（与前端 `read_file` 命令
 //!   canonicalize 校验的行为差异仅剩「符号链接目标解析」，见 modules.md §12）。
+//!
+//! 增量（roadmap ⑦a，2026-09 实测后落地）：[`load_cached`] 跨调用复用**未变化文件的扫描结果**
+//! （按内容指纹），并缓存打开标签的实时缓冲（支持前端只上报**变更过**的缓冲）。
+//! 实测：未变化文件不再重扫；每次编译成功后的大纲刷新在"无编辑"时退化为读盘 + 指纹比对。
 
 use crate::project::FileSystem;
 use crate::types::OutlineNode;
@@ -21,6 +25,7 @@ use regex::Regex;
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
+use tracing::debug;
 
 // ---------------------------------------------------------------- 正则（等效 SECTION_RE/INCLUDE_RE）
 
@@ -283,47 +288,231 @@ struct Walk {
 }
 
 /// 构建大纲（等效前端 `refresh` + `parseFile` + `buildTree` 全链路）。
+///
+/// **无缓存**语义（每次全新扫描）——保留给一次性调用方与既有测试；
+/// 需要跨调用复用扫描结果的调用方用 [`load_cached`]（GUI 常驻 state / headless `Session`）。
 pub async fn load(ctx: &OutlineContext<'_>, fs: &dyn FileSystem) -> Vec<OutlineNode> {
-    // 项目根按正斜杠归一，作为磁盘读集的词法前缀（D8）
-    let root_str = ctx.root.to_string_lossy();
-    let root_prefix = format!("{}/", root_str.replace('\\', "/"));
-    let mut walk = Walk::default();
-    if let Some(root_file) = ctx.root_file {
-        parse_file(&root_str, &root_file.to_string_lossy(), &root_prefix, ctx, &mut walk, fs).await;
-    } else if let Some(files) = ctx.fallback_files {
-        for p in files {
-            parse_file(&root_str, &p.to_string_lossy(), &root_prefix, ctx, &mut walk, fs).await;
+    let mut cache = OutlineCache::new();
+    load_cached(
+        &OutlineInput {
+            root: ctx.root,
+            root_file: ctx.root_file,
+            changed_buffers: ctx.buffers,
+            open_paths: None,
+            fallback_files: ctx.fallback_files,
+        },
+        &mut cache,
+        fs,
+    )
+    .await
+}
+
+// ---------------------------------------------------------------- 增量（⑦a：不再每次全量重扫）
+
+/// 内容指纹（FNV-1a 64）：只用于「同一文件的内容是否变了」的判定，**不做安全用途**。
+fn fingerprint(s: &str) -> u64 {
+    let mut h: u64 = 0xcbf2_9ce4_8422_2325;
+    for b in s.as_bytes() {
+        h ^= *b as u64;
+        h = h.wrapping_mul(0x0000_0100_0000_01b3);
+    }
+    h
+}
+
+/// 单文件扫描事件（顺序 = 文档顺序；缓存复用的最小单位）。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ScanEvent {
+    /// 本文件内的一条结构项（file/line 已填好）
+    Item(OutlineItem),
+    /// 一次文件引用：**已解析出的候选绝对路径**（按优先级，递归时逐个尝试）
+    Include(Vec<String>),
+}
+
+/// 单文件扫描结果：内容指纹 + 事件序列。
+struct FileScan {
+    fingerprint: u64,
+    events: Vec<ScanEvent>,
+}
+
+/// 大纲增量缓存（GUI 常驻 state / headless `Session` 各持一份；**不跨项目复用**）。
+///
+/// 语义要点：
+/// - `files`：按内容指纹复用**扫描结果**（`strip_tex_comment` + 正则逐行扫描）——内容变了才重扫；
+/// - `buffers`：上次调用时打开标签的**实时内容**（未落盘的也要反映）。当前端只上报「变更过的缓冲」
+///   时，未变更的打开文件仍从这里取；`open_paths` 里没有的键即淘汰（标签已关 → 回到读盘）；
+/// - `root` 变了即整体作废（切项目/重开项目）。
+#[derive(Default)]
+pub struct OutlineCache {
+    root: Option<String>,
+    files: HashMap<String, FileScan>,
+    buffers: HashMap<String, String>,
+    last_scans: usize,
+    last_reused: usize,
+}
+
+impl OutlineCache {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// 整体作废（切项目、外部改了项目根等）。
+    pub fn clear(&mut self) {
+        self.root = None;
+        self.files.clear();
+        self.buffers.clear();
+        self.last_scans = 0;
+        self.last_reused = 0;
+    }
+
+    /// 已缓存的**文件扫描**条数（诊断/测试用）。
+    pub fn cached_files(&self) -> usize {
+        self.files.len()
+    }
+
+    /// 上一次 [`load_cached`] 真正重扫的文件数 / 命中复用的文件数。
+    pub fn last_stats(&self) -> (usize, usize) {
+        (self.last_scans, self.last_reused)
+    }
+}
+
+/// [`load_cached`] 的输入（语义与 [`OutlineContext`] 一致，另加增量信息）。
+pub struct OutlineInput<'a> {
+    pub root: &'a Path,
+    pub root_file: Option<&'a Path>,
+    /// 本次**新增/变更**的缓冲（键可未归一化；未列出的沿用缓存里上次的内容）
+    pub changed_buffers: &'a HashMap<String, String>,
+    /// 当前打开的标签路径；`Some` → 缓存中不在其中的缓冲被淘汰；`None` → 不淘汰（一次性语义）
+    pub open_paths: Option<&'a [String]>,
+    /// 无根文件时的兜底文件列表（语义同 [`OutlineContext::fallback_files`]）
+    pub fallback_files: Option<&'a [PathBuf]>,
+}
+
+/// 构建大纲（带增量缓存）：跨调用复用未变化文件的扫描结果。
+///
+/// 与 [`load`] 的**行为等价性**：同一份输入（磁盘 + 缓冲）下结果逐项相同——缓存只影响"是否重新扫描"，
+/// 内容每次都会重新取（缓冲优先，否则读盘），故磁盘上的外部改动不会被缓存钉住。
+pub async fn load_cached(
+    input: &OutlineInput<'_>,
+    cache: &mut OutlineCache,
+    fs: &dyn FileSystem,
+) -> Vec<OutlineNode> {
+    let root_str = input.root.to_string_lossy().to_string();
+    let root_norm = normalize_path(&root_str.replace('\\', "/"));
+    if cache.root.as_deref() != Some(root_norm.as_str()) {
+        cache.clear();
+        cache.root = Some(root_norm);
+    }
+    // 缓冲缓存：先淘汰已关闭的标签，再合并本次变更
+    if let Some(open) = input.open_paths {
+        let open_set: HashSet<String> = open.iter().map(|p| normalize_path(p)).collect();
+        cache.buffers.retain(|k, _| open_set.contains(k));
+    }
+    for (p, c) in input.changed_buffers {
+        let key = normalize_path(p);
+        if let Some(prev) = cache.buffers.get(&key) {
+            if prev == c {
+                continue;
+            }
         }
-    } else if let Ok(files) = crate::project::collect_tex_files(fs, ctx.root).await {
+        cache.buffers.insert(key, c.clone());
+    }
+
+    cache.last_scans = 0;
+    cache.last_reused = 0;
+    // 项目根按正斜杠归一，作为磁盘读集的词法前缀（D8）
+    let root_prefix = format!("{}/", root_str.replace('\\', "/"));
+    // 入口路径先归一（`types.rs` 的 `OutlineNode.file` 契约是"已归一化，与前端存储键一致"）：
+    // 否则同一文件在 `root_file`（后端给的 Windows 反斜杠路径）与 include 候选（正斜杠）两种拼写下
+    // 会成为两个不同的 key —— 既重复扫描，也让 visited 去重失效（同一文件被解析两遍 → 大纲出现重复项）。
+    // 注意 `normalize_path` 本身**不转换反斜杠**（旧前端语义），故此处先换成正斜杠再归一。
+    fn entry_key(p: &Path) -> String {
+        normalize_path(&p.to_string_lossy().replace('\\', "/"))
+    }
+    let mut walk = Walk::default();
+    if let Some(root_file) = input.root_file {
+        let entry = entry_key(root_file);
+        walk_file(input, &root_str, &root_prefix, cache, &mut walk, fs, &entry).await;
+    } else if let Some(files) = input.fallback_files {
+        for p in files {
+            let entry = entry_key(p);
+            walk_file(input, &root_str, &root_prefix, cache, &mut walk, fs, &entry).await;
+        }
+    } else if let Ok(files) = crate::project::collect_tex_files(fs, input.root).await {
         // CLI/MCP 复用路径：与 open_project 同源的收集规则（tmp/ 与隐藏项排除）
         for p in files {
-            parse_file(&root_str, &p.to_string_lossy(), &root_prefix, ctx, &mut walk, fs).await;
+            let entry = entry_key(&p);
+            walk_file(input, &root_str, &root_prefix, cache, &mut walk, fs, &entry).await;
         }
     }
+    let (scans, reused) = cache.last_stats();
+    debug!(scans, reused, files = cache.cached_files(), "大纲增量扫描");
+    // 只保留本轮访问过的文件：删除 / 取消引用的文件即淘汰（缓存不随时间膨胀）
+    let visited = std::mem::take(&mut walk.visited);
+    cache.files.retain(|k, _| visited.contains(k));
     build_tree(&walk.flat)
 }
 
-/// 递归解析单文件：按行扫描，结构命令入列，文件引用递归（文档顺序）。
-/// 递归 async fn 需 boxing（E0733）。
-#[allow(clippy::type_complexity)]
-fn parse_file<'a>(
+/// 扫描单文件内容 → 事件序列（纯函数，无 IO；`key` 为归一化路径，`root` 为项目根）。
+fn scan_content(key: &str, content: &str, root: &str) -> Vec<ScanEvent> {
+    let mut events = Vec::new();
+    let mut in_verbatim = false;
+    for (i, line) in content.split('\n').enumerate() {
+        let line = line.strip_suffix('\r').unwrap_or(line);
+        let trimmed = strip_tex_comment(line);
+        let trimmed = trimmed.trim_start();
+        if trimmed.is_empty() {
+            continue; // 空行 / 行首注释
+        }
+        // 跳过 verbatim 环境：其中的 \section/\include 是字面量
+        if begin_verbatim_re().is_match(trimmed) {
+            in_verbatim = true;
+            continue;
+        }
+        if end_verbatim_re().is_match(trimmed) {
+            in_verbatim = false;
+            continue;
+        }
+        if in_verbatim {
+            continue;
+        }
+        if let Some(cap) = include_re().captures(trimmed) {
+            let arg = cap.get(3).map(|m| m.as_str()).unwrap_or("");
+            events.push(ScanEvent::Include(resolve_include(arg, key, root)));
+            continue;
+        }
+        if let Some(cap) = section_re().captures(trimmed) {
+            let name = cap.get(1).map(|m| m.as_str()).unwrap_or("");
+            let title = cap.get(4).map(|m| m.as_str().trim()).unwrap_or("");
+            events.push(ScanEvent::Item(OutlineItem {
+                level: level_of(name),
+                title: title.to_string(),
+                file: key.to_string(),
+                line: (i + 1) as u32,
+            }));
+        }
+    }
+    events
+}
+
+/// 递归遍历单文件（内容每次重取，**扫描**结果按指纹复用）。递归 async fn 需 boxing（E0733）。
+fn walk_file<'a>(
+    input: &'a OutlineInput<'a>,
     root: &'a str,
-    raw: &'a str,
     root_prefix: &'a str,
-    ctx: &'a OutlineContext<'a>,
+    cache: &'a mut OutlineCache,
     walk: &'a mut Walk,
     fs: &'a dyn FileSystem,
+    raw: &'a str,
 ) -> std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send + 'a>> {
     Box::pin(async move {
         let key = normalize_path(raw);
         if !walk.visited.insert(key.clone()) {
             return; // 防环 / 重复包含
         }
-        let content = match ctx.buffers.get(&key) {
+        let content = match cache.buffers.get(&key) {
             Some(c) => c.clone(),
             None => {
                 // 读集安全（D8 词法版）：仅读项目根内路径；读失败（不存在/不可读）→ 跳过
-                // （旧实现经 read_file 的 canonicalize 校验 + catch 跳过，语义一致）
                 if !key.replace('\\', "/").starts_with(root_prefix) {
                     return;
                 }
@@ -333,42 +522,33 @@ fn parse_file<'a>(
                 }
             }
         };
-        let mut in_verbatim = false;
-        for (i, line) in content.split('\n').enumerate() {
-            let line = line.strip_suffix('\r').unwrap_or(line);
-            let trimmed = strip_tex_comment(line);
-            let trimmed = trimmed.trim_start();
-            if trimmed.is_empty() {
-                continue; // 空行 / 行首注释
+        let fp = fingerprint(&content);
+        let events = match cache.files.get(&key) {
+            Some(scan) if scan.fingerprint == fp => {
+                cache.last_reused += 1;
+                scan.events.clone()
             }
-            // 跳过 verbatim 环境：其中的 \section/\include 是字面量
-            if begin_verbatim_re().is_match(trimmed) {
-                in_verbatim = true;
-                continue;
+            _ => {
+                cache.last_scans += 1;
+                let events = scan_content(&key, &content, root);
+                cache.files.insert(
+                    key.clone(),
+                    FileScan {
+                        fingerprint: fp,
+                        events: events.clone(),
+                    },
+                );
+                events
             }
-            if end_verbatim_re().is_match(trimmed) {
-                in_verbatim = false;
-                continue;
-            }
-            if in_verbatim {
-                continue;
-            }
-            if let Some(cap) = include_re().captures(trimmed) {
-                let arg = cap.get(3).map(|m| m.as_str()).unwrap_or("");
-                for cand in resolve_include(arg, &key, root) {
-                    parse_file(root, &cand, root_prefix, ctx, &mut *walk, fs).await;
+        };
+        for ev in events {
+            match ev {
+                ScanEvent::Item(item) => walk.flat.push(item),
+                ScanEvent::Include(cands) => {
+                    for cand in cands {
+                        walk_file(input, root, root_prefix, &mut *cache, &mut *walk, fs, &cand).await;
+                    }
                 }
-                continue;
-            }
-            if let Some(cap) = section_re().captures(trimmed) {
-                let name = cap.get(1).map(|m| m.as_str()).unwrap_or("");
-                let title = cap.get(4).map(|m| m.as_str().trim()).unwrap_or("");
-                walk.flat.push(OutlineItem {
-                    level: level_of(name),
-                    title: title.to_string(),
-                    file: key.clone(),
-                    line: (i + 1) as u32,
-                });
             }
         }
     })
@@ -733,5 +913,178 @@ mod tests {
         let tree = block_on(load(&ctx_, &fs));
         let titles: Vec<&str> = tree.iter().map(|n| n.title.as_str()).collect();
         assert_eq!(titles, vec!["A", "Z"]); // 收集排序（a < z）
+    }
+
+    // ------------------------------------------------ load_cached（增量，⑦a）
+
+    /// 增量输入的简写（一次性语义：open_paths=None → 不淘汰缓冲）。
+    fn input<'a>(
+        root: &'a Path,
+        root_file: Option<&'a Path>,
+        changed: &'a HashMap<String, String>,
+        open: Option<&'a [String]>,
+    ) -> OutlineInput<'a> {
+        OutlineInput {
+            root,
+            root_file,
+            changed_buffers: changed,
+            open_paths: open,
+            fallback_files: None,
+        }
+    }
+
+    fn titles_of(tree: &[OutlineNode]) -> Vec<String> {
+        tree.iter().map(|n| n.title.clone()).collect()
+    }
+
+    /// 增量与全量**结果逐项相同**（磁盘路径 + 缓冲路径各一轮），且未变化文件不重扫。
+    #[test]
+    fn cached_matches_full_load_and_reuses_unchanged_files() {
+        let mut fs = multifile_fixture();
+        let root = Path::new("proj");
+        let root_file = Some(Path::new("proj/main.tex"));
+        let no_buffers = HashMap::new();
+        let mut cache = OutlineCache::new();
+
+        // 第一次：全部重扫（6 个文件）
+        let first = block_on(load_cached(&input(root, root_file, &no_buffers, None), &mut cache, &fs));
+        assert_eq!(first, block_on(load(&ctx(root, root_file, &no_buffers), &fs)));
+        assert_eq!(cache.last_stats(), (6, 0));
+        assert_eq!(cache.cached_files(), 6);
+
+        // 第二次（磁盘内容未变）：0 次重扫、6 次复用，结果相同
+        let second = block_on(load_cached(&input(root, root_file, &no_buffers, None), &mut cache, &fs));
+        assert_eq!(second, first);
+        assert_eq!(cache.last_stats(), (0, 6));
+
+        // 改一个磁盘文件：只重扫那一个（其余复用），结果 = 全量
+        fs.put_file("proj/chapters/math.tex", "\\chapter{数学改}\n\\section{新节}\n");
+        let third = block_on(load_cached(&input(root, root_file, &no_buffers, None), &mut cache, &fs));
+        assert_eq!(third, block_on(load(&ctx(root, root_file, &no_buffers), &fs)));
+        assert_eq!(cache.last_stats(), (1, 5));
+        assert_eq!(titles_of(&third), vec!["引言", "数学改", "表格", "总结与附录"]);
+
+        // 缓冲优先：未落盘的编辑也反映（缓冲变化 → 该文件重扫）
+        let mut changed = HashMap::new();
+        changed.insert(
+            "proj/chapters/math.tex".to_string(),
+            "\\chapter{缓冲标题}\n\\section{缓冲节}\n".to_string(),
+        );
+        let open = vec!["proj/chapters/math.tex".to_string()];
+        let fourth = block_on(load_cached(
+            &input(root, root_file, &changed, Some(&open)),
+            &mut cache,
+            &fs,
+        ));
+        assert_eq!(cache.last_stats(), (1, 5));
+        assert_eq!(titles_of(&fourth), vec!["引言", "缓冲标题", "表格", "总结与附录"]);
+    }
+
+    /// 只上报**变更过的**缓冲 + open_paths 淘汰：未变更的打开文件仍用缓存里的缓冲内容
+    /// （不得回落到磁盘——那样会丢掉未落盘的编辑）。
+    #[test]
+    fn cached_delta_buffers_stay_ahead_of_disk() {
+        let fs = multifile_fixture(); // 磁盘上是"数学"
+        let root = Path::new("proj");
+        let root_file = Some(Path::new("proj/main.tex"));
+        let mut cache = OutlineCache::new();
+
+        // 第一次：只报 intro（dirty，磁盘上还没有的新标题）
+        let mut first_changed = HashMap::new();
+        first_changed.insert("proj/chapters/intro.tex".to_string(), "\\chapter{未落盘新标题}\n".to_string());
+        let open = vec![
+            "proj/chapters/intro.tex".to_string(),
+            "proj/chapters/math.tex".to_string(),
+        ];
+        let tree = block_on(load_cached(
+            &input(root, root_file, &first_changed, Some(&open)),
+            &mut cache,
+            &fs,
+        ));
+        assert_eq!(titles_of(&tree), vec!["未落盘新标题", "数学", "表格", "总结与附录"]);
+
+        // 第二次：什么都没变（changed 空，open 不变）→ 仍用缓存缓冲，**不回落到磁盘**
+        let empty = HashMap::new();
+        let tree2 = block_on(load_cached(&input(root, root_file, &empty, Some(&open)), &mut cache, &fs));
+        assert_eq!(tree2, tree);
+        assert_eq!(cache.last_stats(), (0, 6));
+    }
+
+    /// 关闭标签 → 该缓冲淘汰，回到读盘；项目根变化 → 缓存整体作废。
+    #[test]
+    fn cached_evicts_on_tab_close_and_root_change() {
+        let fs = multifile_fixture();
+        let root = Path::new("proj");
+        let root_file = Some(Path::new("proj/main.tex"));
+        let mut cache = OutlineCache::new();
+
+        let mut changed = HashMap::new();
+        changed.insert("proj/chapters/intro.tex".to_string(), "\\chapter{未落盘新标题}\n".to_string());
+        let open_both = vec![
+            "proj/chapters/intro.tex".to_string(),
+            "proj/chapters/math.tex".to_string(),
+        ];
+        let tree = block_on(load_cached(
+            &input(root, root_file, &changed, Some(&open_both)),
+            &mut cache,
+            &fs,
+        ));
+        assert_eq!(titles_of(&tree)[0], "未落盘新标题");
+
+        // 关掉 intro 标签（open 里只剩 math），且不再上报它的缓冲 → 回落到磁盘内容
+        let open_math = vec!["proj/chapters/math.tex".to_string()];
+        let empty = HashMap::new();
+        let tree2 = block_on(load_cached(
+            &input(root, root_file, &empty, Some(&open_math)),
+            &mut cache,
+            &fs,
+        ));
+        assert_eq!(titles_of(&tree2)[0], "引言"); // 磁盘上的旧标题
+        // 关掉的文件同时从扫描缓存淘汰（下一轮不再复用）
+        assert_eq!(cache.cached_files(), 6);
+
+        // 项目根变化 → 整体作废
+        let other = Path::new("other");
+        let tree3 = block_on(load_cached(&input(other, root_file, &empty, None), &mut cache, &fs));
+        assert!(tree3.is_empty()); // other/ 下没有该文件（读集校验也拒绝）
+        assert_eq!(cache.cached_files(), 0);
+        assert_eq!(cache.last_stats(), (0, 0));
+    }
+
+    /// 入口路径归一：`root_file` 用反斜杠拼写、include 候选用正斜杠拼写时，同一文件只解析一次
+    /// （否则 visited 去重失效 → 大纲出现重复项，缓存也会存两份）。
+    #[test]
+    fn entry_path_normalized_so_same_file_is_visited_once() {
+        let mut fs = FakeFS::new();
+        fs.put_file("proj/main.tex", "\\section{Root}\n\\input{main}\n");
+        let root = Path::new(r"proj");
+        let root_file = Some(Path::new(r"proj\main.tex")); // 反斜杠拼写（Windows 后端路径形态）
+        let no_buffers = HashMap::new();
+        let mut cache = OutlineCache::new();
+        let tree = block_on(load_cached(&input(root, root_file, &no_buffers, None), &mut cache, &fs));
+        assert_eq!(titles_of(&tree), vec!["Root"]); // 只出现一次
+        assert_eq!(tree[0].file, "proj/main.tex"); // 归一化输出（DTO 契约）
+        assert_eq!(cache.cached_files(), 1);
+    }
+
+    /// 删除/取消引用的文件不再留在缓存里（缓存不随时间膨胀）。
+    #[test]
+    fn cached_drops_files_that_leave_the_graph() {
+        let mut fs = FakeFS::new();
+        fs.put_file("proj/main.tex", "\\section{Root}\n\\input{a}\n");
+        fs.put_file("proj/a.tex", "\\section{A}\n");
+        let root = Path::new("proj");
+        let root_file = Some(Path::new("proj/main.tex"));
+        let no_buffers = HashMap::new();
+        let mut cache = OutlineCache::new();
+        let tree = block_on(load_cached(&input(root, root_file, &no_buffers, None), &mut cache, &fs));
+        assert_eq!(titles_of(&tree), vec!["Root", "A"]);
+        assert_eq!(cache.cached_files(), 2);
+
+        // 去掉 \input{a} → 下一轮只剩 main.tex 在缓存
+        fs.put_file("proj/main.tex", "\\section{Root}\n");
+        let tree2 = block_on(load_cached(&input(root, root_file, &no_buffers, None), &mut cache, &fs));
+        assert_eq!(titles_of(&tree2), vec!["Root"]);
+        assert_eq!(cache.cached_files(), 1);
     }
 }

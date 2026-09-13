@@ -152,6 +152,35 @@ async fn outline_returns_document_structure() {
 }
 
 #[tokio::test]
+async fn outline_cache_never_pins_stale_content() {
+    // ⑦a 的缓存不变量：缓存只复用"扫描结果"，内容每次都重取 —— 连续调用之间改了磁盘文件，
+    // 第二次必须反映新内容（若把缓存做成"按路径命中就不再读盘"，这个用例会红）。
+    let p = TempProject::new("outline-cache");
+    p.put(
+        "main.tex",
+        "\\documentclass{article}\n\\begin{document}\n\\section{旧标题}\n\\include{chapters/a}\n\\end{document}\n",
+    );
+    p.put("chapters/a.tex", "\\section{子文件旧}\n");
+    let mut s = p.session();
+    s.open_project(&p.dir).await.unwrap();
+    let first = s.outline().await.unwrap();
+    // 结构项按层级建树：两个 \section 同级 → 平铺两项（include 不改变层级）
+    let titles: Vec<&str> = first.iter().map(|n| n.title.as_str()).collect();
+    assert_eq!(titles, vec!["旧标题", "子文件旧"]);
+    // 文件路径一律**归一化**（正斜杠），与前端存储键一致——含 root_file 本身
+    assert!(!first[0].file.contains('\\'), "{}", first[0].file);
+    // 第二次：内容未变（走缓存复用）→ 结果一致
+    let second = s.outline().await.unwrap();
+    assert_eq!(second, first);
+    // 改磁盘（含把 \include 换成新文件）→ 第三次必须反映
+    p.put("main.tex", "\\documentclass{article}\n\\begin{document}\n\\section{新标题}\n\\include{chapters/b}\n\\end{document}\n");
+    p.put("chapters/b.tex", "\\section{子文件新}\n");
+    let third = s.outline().await.unwrap();
+    let titles3: Vec<&str> = third.iter().map(|n| n.title.as_str()).collect();
+    assert_eq!(titles3, vec!["新标题", "子文件新"]);
+}
+
+#[tokio::test]
 async fn compile_without_project_is_rejected_clearly() {
     let p = TempProject::new("noproject");
     let mut s = p.session();

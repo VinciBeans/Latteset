@@ -324,23 +324,36 @@ resolve:           1 个 → Unique；>1 → Multiple（按路径排序，稳定
 ```rust
 pub struct OutlineItem { /* title / level / file / line / file_base */ }
 pub struct OutlineContext<'a> { /* root、root_file、打开标签的实时缓冲、文件树兜底列表 */ }
+pub enum ScanEvent { Item(OutlineItem), Include(Vec<String>) }        // 单文件扫描事件（顺序 = 文档顺序）
+pub struct OutlineCache { /* root + 每文件指纹/事件 + 打开缓冲 + 上次 scans/reused */ }
+pub struct OutlineInput<'a> { /* root、root_file、changed_buffers、open_paths、fallback_files */ }
 pub fn strip_tex_comment(line: &str) -> String;                                    // 行级剥离（语义见 §9.5）
 pub fn resolve_include(raw: &str, from_file: &str, project_root: &str) -> Vec<String>;
 pub fn build_tree(flat: &[OutlineItem]) -> Vec<OutlineNode>;
-pub fn load(ctx: &OutlineContext<'_>, fs: &dyn FileSystem) -> Vec<OutlineNode>;
+pub fn load(ctx: &OutlineContext<'_>, fs: &dyn FileSystem) -> Vec<OutlineNode>;    // 无缓存（一次性调用方/测试）
+pub fn load_cached(input: &OutlineInput<'_>, cache: &mut OutlineCache, fs: &dyn FileSystem) -> Vec<OutlineNode>;
 ```
 
-**语义**（GUI `get_outline` 与后续 CLI/MCP 共用同一实现，前端不留副本）：
+**语义**（GUI `get_outline`、headless `Session::outline` 共用同一实现，前端不留副本）：
 
 - 跟随根文件的 `\include`/`\input` 图逐文件解析 `\part/\chapter/\section/\subsection/\subsubsection/\paragraph/\subparagraph`（含 `\section*` 与 `[short]`），按**文档顺序**建嵌套树；
 - **缓冲优先**：打开标签的实时缓冲命中就用缓冲（未落盘也反映），否则读盘；读失败跳过；`visited` 防环；
 - 无根文件时用前端文件树提供的兜底 .tex 列表，后端不自行扫描；
 - `\input` 相对**项目根**解析优先、回退当前文件目录；`\begin{verbatim}` 环境内的行跳过；
-- **读集安全是 D8 的词法版**（core 无 canonicalize）：与 `read_file` 命令的差异仅剩「符号链接目标解析」与 8.3 短名（Windows 大小写不敏感 FS 下行为一致）。
+- **读集安全是 D8 的词法版**（core 无 canonicalize）：与 `read_file` 命令的差异仅剩「符号链接目标解析」与 8.3 短名（Windows 大小写不敏感 FS 下行为一致）；
+- **入口路径一律先归一**（反斜杠 → 正斜杠 + `normalize_path`）：否则同一文件在 `root_file`（后端给的 Windows 反斜杠路径）与 include 候选（正斜杠）两种拼写下是两个 key，`visited` 去重失效 → 大纲出现重复项、缓存存两份。
 
-**刷新与交互**：`events.ts` 在项目打开、编译成功、`files-changed(structural)` 时调 `outline.refresh()`；点击项 → `editor.openFile(file, line)` 揭示源码 + `useSyncTex.forward(file, line, 0)` 高亮 PDF 对应页（SyncTeX 不可用则只跳源码）。`OutlinePane` 用 `file:line` 作 key（稳定标识）。
+**增量缓存（`load_cached`，roadmap ⑦a）**——三条不变量：
 
-**已知成本**：每次编译成功都全量重扫 include 图（结构可能随编译变化，必要）。并发重扫由前端 `loadSeq` supersede 守卫收敛、不互相覆盖；若大项目出现 IO 压力，优化方向是「只刷新结构命令所在文件 / 按 mtime+hash 复用上次解析 / 低频节流」，缓存点应在 `load()`（见 §12）。
+1. **内容每次重取，只复用"扫描结果"**：文件内容要么取实时缓冲、要么读盘（外部改动不会被缓存钉住），仅在**内容指纹相同**时复用上次的 `ScanEvent` 序列（省掉逐行 `strip_tex_comment` + 正则）；
+2. **缓冲缓存按项目根作废**：`OutlineCache.root` 与本次 `root` 不一致即整体清空；`open_paths` 里没有的缓冲被淘汰（标签关闭 → 该文件回到读盘）；
+3. **只保留本轮访问过的文件**：删除 / 取消引用的文件从缓存移除（缓存不随时间膨胀）。
+
+**刷新与交互**：`events.ts` 在项目打开、编译成功、`files-changed(structural)` 时调 `outline.refresh()`；前端只提交**变化过的**缓冲 + 当前标签集合（`lastSent` 差分，项目根变化时清空重发），并**合并进行中的刷新**（结构事件风暴实测一次连发 11 次 → 现在最多「当前 + 补一次」）；点击项 → `editor.openFile(file, line)` 揭示源码 + `useSyncTex.forward(file, line, 0)` 高亮 PDF 对应页（SyncTeX 不可用则只跳源码）。`OutlinePane` 用 `file:line` 作 key（稳定标识）。
+
+**实测（11 文件 / 436KB 工程，真机）**：一次编译成功后的刷新 = 只重扫被改的 1 个文件（`scans=1 reused=10`），空闲收敛那次 = `scans=0 reused=11`；前端两次分别只推了 1 个缓冲与 0 个缓冲。成本从「全量重扫 + 全量提交」的 **55.5ms** 降到 **8.4–9.7ms**（详见 [research/p1-large-doc-editor-analysis.md](./research/p1-large-doc-editor-analysis.md) §3.3）。
+
+**已知成本**：仍只有「编译成功」与「结构变化」两个触发点——**编译失败期间大纲不更新**（旧行为保留；缓存已让"按保存触发"变得便宜，见 §12.1 #17）。
 
 ## 4. 日志解析（log_parser 大模块，core）
 
@@ -733,7 +746,7 @@ settings-changed: Settings
 | 1 | `LatexmkRunner` 命名偏窄 | 它同时驱动 latexmk（Full）与直调引擎（Quick）；改名牵动架构图 SVG 与三处文档，当前以注释说明 |
 | 2 | 编辑非 UTF-8 源文件 | **不支持编辑**（设计取舍）：`read_file` 严格 UTF-8，遇 `InvalidData` 返回中文提示 + 状态栏红色提示条（㉓ 已做"至少说清楚"）；不做 lossy 打开，否则保存会把 U+FFFD 写回磁盘 = 静默损坏用户文件。`.log` 侧仍是 lossy（见 §4） |
 | 3 | bib/biber 场景的编辑期单趟 | 未实测：现有 fixture 编辑期不触发 bibtex；空闲收敛兜底应能覆盖，但没有实测结论 |
-| 4 | 大纲全量重扫 | 每次编译成功都重扫 include 图（前端提交**全部**打开缓冲 → Rust 重解析）。**实测成本**：52ms@462KB、91ms@1.36MB，随打开缓冲总字节增长（[分析](./research/p1-large-doc-editor-analysis.md) §3.3）；优化方向见 §3.5 与 roadmap ⑦a |
+| 4 | ~~大纲全量重扫~~ **已修（⑦a，2026-09）** | 现为增量：只重扫内容变化的文件 + 前端只提交变化过的缓冲。实测（11 文件/436KB）每次编译成功后的刷新 `scans=1 reused=10`、空闲收敛 `scans=0 reused=11`，成本 55.5ms → 8.4–9.7ms；契约见 §3.5，数据见 [分析文档](./research/p1-large-doc-editor-analysis.md) §3.3 |
 | 5 | 延迟预算口径 | 本机三档小文档均超「小文档 2s 及格」（连 6 行的 `tiny` 冷编译也要 2.3s）→ 需复核是放宽口径还是改判「相对基线的回归容忍度」，见 [design.md](./design.md) §基准脚本 |
 | 6 | 真实论文模板（hithesis） | 阻塞点未定位：模板自带 latexmkrc × `-outdir=tmp` 约定下 `\include{子目录/...}` 写不出中间文件、报错后 latexmk 挂住；**调高超时也编不过**（roadmap ㉖，最小复现见 [troubleshooting.md](./troubleshooting.md)） |
 | 7 | beamer 往返偏差 2–4 行 | 已定性、不修：换用「最小 H」「首个 H≤40」取块规则后往返结果**逐一相同** → 属 beamer/主题的 synctex 记录粒度；`\only<n>` 覆盖层内容在非本层页面上的反向映射天然不确定（基线数字见 [design.md](./design.md) §预览） |
@@ -746,6 +759,8 @@ settings-changed: Settings
 | 14 | headless 根文件探测每次重扫 | 未做缓存：多数项目 <100ms；大项目再评估（缓存一致性成本 > 收益） |
 | 15 | 折叠提供者全量扫描（编辑器侧） | `latexSuggest.ts` 的 `provideFoldingRanges` 忽略区间、`getValue().split()` 扫全文；**实测** 2.2ms@462KB、3.7ms@1.36MB，折叠模型失效后重算一次（防抖 ≥200ms）。60Hz 帧预算内，144Hz + 多 MB 才明显（[分析](./research/p1-large-doc-editor-analysis.md) §3.2，roadmap ⑦b 缓做） |
 | 16 | 编辑器侧"大文档"只测过单文件 | 462KB/1.36MB 均为单文件项目；多文件大项目（≥20 文件）的打开/内存/树刷新未测（roadmap ⑦c 第一步：建夹具 + 口径） |
+| 17 | 大纲只在**编译成功**时刷新 | 编译一直失败时大纲停在旧结构（旧行为保留）。⑦a 的缓存已让"按保存触发刷新"变便宜（8–10ms/次），但有失败编译时的刷新时机/节流策略需要单独定（未做） |
+| 18 | `texpresso-mcp.exe` 被常驻进程占用 | 接了 DSH 的 `mcp-texpresso` 之后，该进程会**锁住二进制**：`cargo build -p texpresso-server` 报「failed to remove file … 拒绝访问」(os error 5)。绕行：只跑 lib（`--lib`）或用独立 `CARGO_TARGET_DIR`（见 [troubleshooting.md](./troubleshooting.md)） |
 
 ### 12.2 跨模块不变量（改回去即复发）
 
@@ -762,6 +777,9 @@ settings-changed: Settings
 - **路径与 SyncTeX 策略只有一份实现**：headless（§8.1）必须调 `core::synctex::{pdf_path_for_root, resolve_inverse}` 与 `core::project::paths`，不得自己拼 `tmp/` 路径或另写回落逻辑——两套实现迟早漂移（GUI 命令面与 CLI 的 PDF 路径必须永远一致）。
 - **CLI 的 stdout 只有 JSON**：日志一律走 stderr——否则 Agent 侧 `compile | jq` 这类管道立刻坏掉。
 - **`compile` 的退出码是"编译是否通过"**：`0` 仅当 `status == "success"`，失败即 `1`（未通过 ≠ 命令出错）。改坏这个语义会让 Agent 的「改 → 编 → 验」闭环静默失效。
+- **大纲增量的三条不变量**（§3.5，改回去即复发）：① 内容必须每次重取（缓冲优先，否则读盘），缓存只复用**扫描结果**——按路径命中就不再读盘会让外部改动永远不生效；② 缓冲缓存按**项目根**作废、并按 `open_paths` 淘汰——漏了会让"关掉标签"或"切回旧项目"读到磁盘旧内容（脏缓冲丢失）；③ 入口路径必须先归一——否则同一文件两种拼写 = 两个 key，`visited` 去重失效、大纲出现重复项。
+- **前端"只发改动缓冲"必须与后端的缓冲缓存配套**：`lastSent` 差分（值比较）只决定"这次推不推"，真正的内容真相仍在后端缓存里；因此**项目根变化时前端必须清 `lastSent` 全量重发**（后端此刻已清空缓存），否则未变化的脏缓冲不会被重发。
+- **大纲刷新要合并**：`refresh()` 进行中只记一个"待补一次"意图（结构事件风暴实测一次连发 11 次）——并发刷新会让差分失效（每次都赶在上一次写回 `lastSent` 之前发出），且后端缓冲缓存的写入顺序不再确定。
 
 前端的三处异步守卫与 PreviewPane 渲染契约见 §9.2 / §9.4，SyncTeX 相关约束见 §5。
 
@@ -775,7 +793,7 @@ settings-changed: Settings
 | core 逻辑（调度 / 解析 / 诊断 / 大纲） | `cargo test -p texpresso-core` |
 | 真实 latexmk / synctex 集成 | `cargo test -p texpresso-infra -- --ignored` |
 | headless 服务层（CLI/MCP 共用） | `cargo test -p texpresso-server`（`-- --ignored` 跑真编译；`--test mcp_stdio` 跑真实二进制的 MCP 管道链路；见 §8.1.1） |
-| 前端 store 与 composable | `npm run test` |
+| 前端 store 与 composable | `npm run test`（大纲增量/合并见 `src/stores/__tests__/outline.spec.ts`；core 侧见 `cargo test -p texpresso-core outline`） |
 | 类型检查与构建 | `npm run build` |
 | 只有真实窗口能验的部分 | [troubleshooting.md](./troubleshooting.md) §真机验收清单（tauri server MCP 驱动） |
 | 产品级实测数字与结论 | [design.md](./design.md)（延迟预算、预览重载、编辑期单趟收益、SyncTeX 精度、构建确定性） |
