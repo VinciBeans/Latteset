@@ -762,7 +762,7 @@ settings-changed: Settings
 | 17 | 大纲只在**编译成功**时刷新 | 编译一直失败时大纲停在旧结构（旧行为保留）。⑦a 的缓存已让"按保存触发刷新"变便宜（8–10ms/次），但有失败编译时的刷新时机/节流策略需要单独定（未做） |
 | 18 | `texpresso-mcp.exe` 被常驻进程占用 | 接了 DSH 的 `mcp-texpresso` 之后，该进程会**锁住二进制**：`cargo build -p texpresso-server` 报「failed to remove file … 拒绝访问」(os error 5)。绕行：只跑 lib（`--lib`）或用独立 `CARGO_TARGET_DIR`（见 [troubleshooting.md](./troubleshooting.md)） |
 
-| 19 | 编译期"已排版 N 页"进度未做（G2 已实测可行） | `tmp/<stem>.xdv` 每次编译都在，页索引只算指令长度：截断到任意位置解出的页与完整文件逐字节相同、全量 4.41MB = 2.7ms。工具见 `scripts/xdv-report.mjs`；**未接线到 UI**（[G2 报告](./research/g2-byte-offset-resync.md)、roadmap §11.16） |
+| 19 | 编译期"已排版 N 页"进度未做（G2 已实测可行） | `tmp/<stem>.xdv` 每次编译都在，页索引只算指令长度：截断到任意位置解出的页与完整文件逐字节相同、全量 4.41MB = 2.7ms。工具见 `scripts/xdv-report.mjs`；**未接线到 UI**（[G2 报告](./research/g2-byte-offset-resync.md)、roadmap §5.7 与 §10-B.8） |
 
 ### 12.2 跨模块不变量（改回去即复发）
 

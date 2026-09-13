@@ -1,7 +1,7 @@
 # P0-② 首次打开即用 —— 可行性分析
 
 > 状态：**分析快照（2026-09）**——文中"现状"列描述的是分析当时的实现；后续落地与证据见 [roadmap](./tex-ide-roadmap-priority.md) §1 基线（②-1 已落地、②-2 经 ⑲ 实测砍掉、④ 诊断已落地）与 [modules.md](../modules.md) §8。
-> 上游：[tex-ide-roadmap-priority.md](./tex-ide-roadmap-priority.md)（②-2 见 §5.2；②-1 见该文 §1 基线）、[tex-ide-pain-points.md](./tex-ide-pain-points.md) P9/P7
+> 上游：[tex-ide-roadmap-priority.md](./tex-ide-roadmap-priority.md)（②-2 已否决，见该文 §7；②-1 见该文 §1 基线）、[tex-ide-pain-points.md](./tex-ide-pain-points.md) P9/P7
 > 证据约定：**实测** = 本文在本机跑出的可复现结果；**[推断]** = 分析判断；**待验证** = 尚未实测
 > 结论一句话：**P0-② 目前只完成了一半的一半**——根文件探测有了，但「多候选/零候选」对用户不可见，且引擎/编译链/字体/缺包四类推断完全没有；其中**只有「引擎推断」是真正的刚需**（实测：引擎选错 = 首次打开直接失败且错误信息不可读）。
 
