@@ -425,3 +425,27 @@ texpresso-mcp --project <dir>                                        # stdio ser
 ```
 
 应回 `result.protocolVersion` + `capabilities.tools` + `instructions`。日志（含每一次工具调用）走 **stderr**，stdout 只有协议报文——排查时别把两者混在一个管道里。
+
+## 怎么查「引擎到底读了什么 / 为什么找不到文件」（2026-09，G1 研究配套）
+
+排"改了文件没生效""缺文件找不到"时，四个通道都是现成的（结论与实测见 [research/g1-read-interception-feasibility.md](./research/g1-read-interception-feasibility.md)）：
+
+| 想知道 | 用什么 | 开关 | 坑 |
+|---|---|---|---|
+| 引擎这次**实际打开了**哪些文件 | `tmp/<stem>.fls` | latexmk **默认**开 `-recorder`（**Quick 直调 `xelatex` 不带**，要用得补参数） | 只记**成功打开**的；**不含 `.bib`**（bibtex 是独立进程） |
+| 产物**依赖**哪些文件（含 mtime/size/**md5**、含 bibtex 步骤） | `tmp/<stem>.fdb_latexmk` | latexmk 默认写 | 只有 **Full** 才更新；首编之前不存在；依赖里**含系统字体**（如 `msyh.ttc` 19.7 MB） |
+| kpathsea **成功打开**了什么（**带秒级时间戳**） | `TEXMFLOG` | `$env:TEXMFLOG="$PWD\texmf.log"` 后编译 | 与 `.fls` 一样只记成功；覆盖到 `ls-r`/`texmf.cnf`/`.fmt` 层 |
+| **失败的查找尝试**（在哪些目录找过 X、结论是什么） | `KPATHSEA_DEBUG`（stderr） | `$env:KPATHSEA_DEBUG="32"`（实测：`32` 是"查找轨迹"的最小集合，147 行；`-1` 全开 798 行） | 输出进 **stderr**、**≈1 MB/趟**（真实论文档）；见下面那条耦合 |
+| 一条命令出依赖报告 | — | `node scripts/fls-report.mjs <tmp/main.fls> --fdb <tmp/main.fdb_latexmk>` | 会单独列出"只在 `.fdb_latexmk`、不在 `.fls` 的源依赖"（`.bib` 就在这类里） |
+
+```powershell
+# 缺包/缺文件探针：看它到底在哪些目录找过（$env:KPATHSEA_DEBUG 只对本次进程生效）
+$env:KPATHSEA_DEBUG = "32"
+xelatex -interaction=nonstopmode -output-directory=tmp a-missing-pkg.tex 2> kpse.err
+Select-String -Path kpse.err -Pattern 'searching for|returning from generic search' | Select-Object -First 6
+```
+
+**两条与产品行为直接相关的结论**（都实测过）：
+
+1. **"改了 `.bib` 没反应"是已知缺陷，不是操作问题**：`watch` 只对 `.tex` 触发（[modules.md](./modules.md) §7），被 `\bibliography` 引用的 `.bib` 改完，`tmp/` 全部产物 mtime 不变（roadmap ㉜）；反向也错——改**未被引用**的 `.tex` 会白编译一次（roadmap ㉝）。
+2. **别常开 `KPATHSEA_DEBUG`**：它的输出走 **stderr**，而应用的流式错误通道也在读 stderr（[modules.md](./modules.md) §2.6.1）——1 MB 的 `kdebug:` 行会灌进解析缓冲；只在做单次诊断性编译时开。

@@ -580,6 +580,13 @@ pub fn compile_request_manual(ctx: ComposeContext<'_>) -> Option<CompileRequest>
 
 **设计决策 D3（翻译层）**：scheduler 只认识 `CompileRequest`，不认识文件、项目、设置。文件事件 → 请求的翻译在组合层完成。否决"watch 直连 scheduler 传路径"：scheduler 被迫依赖项目状态与设置，违背最小外部依赖。手动编译 `compile_now` 走同一组合函数——**所有触发源收敛到同一个入口**。
 
+**触发面只有一个扩展名（2026-09 G1 研究实测到的两侧偏差）**：`watch.rs` 只对 `.tex` 触发，于是——
+
+- **改 `.bib`/图片等真输入 → 完全不触发**：实测 `\bibliography` 引用的 `refs.bib` 改动后，`tmp/` 全部产物 mtime 纹丝不动（用户以为改了没用）。记为 roadmap **㉜**（P1，C1）；
+- **改未被引用的 `.tex` → 白白触发一次全量编译**：实测 `main.aux` 被重写；一次白编译 = 小档 ~1s / 真实论文档 >120s。记为 roadmap **㉝**（P2）。
+
+判据**已经在磁盘上**（零新增依赖）：`tmp/<stem>.fls`（引擎**实际打开**的文件；latexmk 默认开 `-recorder`，**Quick 路径不带**、要用得补参数）与 `tmp/<stem>.fdb_latexmk`（latexmk 依赖图，含 mtime/size/md5 与 bibtex 等子步骤）——**`.bib` 只在后者**。工具：`node scripts/fls-report.mjs <tmp/main.fls> --fdb <tmp/main.fdb_latexmk>`；结论与保守原则见 [G1 报告](./research/g1-read-interception-feasibility.md)。
+
 **信息局部性**：组合层每次构造请求都取**快照拷贝**，不持有任何引用；请求发出后与触发源完全解耦。
 
 ## 8. 命令面实现（src-tauri commands.rs）
@@ -812,6 +819,8 @@ settings-changed: Settings
 
 | 20 | ~~引擎 stdout/stderr 被丢弃（编译期无进度、无实时错误）~~ **已修（阶段 2，2026-09）** | 管道已接 + `tmp/<stem>.log` 尾随（三条读任务 → `LiveFeedback`）：状态栏「已排版 N 页」、错误列表**编译还没结束**就出现致命错误。真机实测（400KB / 162 页 ctexbook 首编）：`1.7s running → 3.4–4.8s 页码 2→162 → 8.2s success`；插入 `\undefinedmacrohere` 后 `41.5s` 收到实时错误，该轮 `42.3s` 才出终态（37 条含警告）。契约见 §2.4 / §2.6.1，事件见 §10 |
 | 22 | 错误条目的**文件归属**会错一章（`parse_log` 文件栈） | 实测（2026-09，流式验证的夹具）：错误写在 `ch_05.tex:164`，列表报 `./ch_04.tex:164`。机制已定位：TeX 日志把"关闭上一个文件 + 打开下一个文件"写在**同一行**（`[64]) (./ch_05.tex`），而 `RE_OPEN` 要求行首是 `(`、弹栈只认行首 `)` → `ch_05` 没入栈、`ch_04` 被弹出。影响：错误列表显示的文件名与点击跳转目标（`ErrorList.jump(entry.file, entry.line)`）都错位；终态与流式共用同一解析器，两者皆然。修法要按字符顺序做括号匹配，属独立任务（**未修**，见 roadmap §10-D） |
+| 23 | **触发面只认 `.tex`**（两侧都错）＋ 依赖信息未接线 | 实测（2026-09，[G1 研究](./research/g1-read-interception-feasibility.md) §5.1）：改**被引用**的 `.bib` → 所有 tmp 产物 mtime 不变（该触发不触发，roadmap ㉜）；改**未被引用**的 `.tex` → 白编译一次（`main.aux` 被重写，roadmap ㉝）。判据已在磁盘上：`.fls`（引擎实际打开，Quick 路径需补 `-recorder`）+ `.fdb_latexmk`（依赖图 + md5 + 子步骤），工具 `scripts/fls-report.mjs` 已就绪（**未接线**） |
+| 24 | 字节级 I/O 拦截（上游 G1 原义）**不做** | 三条现成通道都只到文件级；字节偏移需改引擎 / 文件系统驱动 / API hook（与 ADR-0003 不签名分发冲突），且**没有消费方**——上游唯一用途 seen 水位要"引擎进程活着且状态可回退"（G4 fork，Windows 无 `fork()`）。见 [G1 研究](./research/g1-read-interception-feasibility.md) §4 |
 | 21 | 预览只能显示"编译完成的 PDF" | PDF 由 `xdvipdfmx` 在排版结束后产出（需完整 XDV + postamble）→ 编译期无图可显示。**可行性已验证**：页前缀 + 从零合成 postamble → `xdvipdfmx` 接受（页数正确、首页渲染一致），成本 0.65–0.94s/次；**未接线**（[阶段 2 报告](./research/stage2-streaming-feasibility.md) §3） |
 
 ### 12.2 跨模块不变量（改回去即复发）
@@ -853,6 +862,7 @@ settings-changed: Settings
 | 产品级实测数字与结论 | [design.md](./design.md)（延迟预算、预览重载、编辑期单趟收益、SyncTeX 精度、构建确定性） |
 | 编辑器侧大文档性能（每击键 / 折叠 / 大纲往返） | [research/p1-large-doc-editor-analysis.md](./research/p1-large-doc-editor-analysis.md)（真机探针方法 + 数据；口径待固化为 `scripts/editor-report.mjs`） |
 | DVI/XDV 产物本身（页索引 / 页级差分 / 截断可读性） | `node scripts/xdv-report.mjs <tmp/*.xdv>`（页数可与 `pdfinfo` 对拍；`--diff` 页级差分、`--truncate-at` 半成品、`--watch` 编译期可用性）；结论见 [research/g2-byte-offset-resync.md](./research/g2-byte-offset-resync.md) |
+| 引擎到底读了什么（依赖集合 / 为什么找不到文件） | `node scripts/fls-report.mjs <tmp/main.fls> --fdb <tmp/main.fdb_latexmk>`（`.fls`=引擎实际打开；`.fdb_latexmk`=latexmk 依赖图含 md5 与 bibtex 步骤；差集=只在后者的输入）；失败的查找尝试用 `KPATHSEA_DEBUG=32`；结论见 [research/g1-read-interception-feasibility.md](./research/g1-read-interception-feasibility.md) |
 | 已完成项及其证据 | [roadmap §1 基线](./research/tex-ide-roadmap-priority.md) |
 
 ### 12.4 与上层文档的关系

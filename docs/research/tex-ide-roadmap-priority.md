@@ -46,13 +46,14 @@
 
 **优先级分**：`P = (W + D) / (C + V)`；**分档**：P0 = `P ≥ 1.3 且 W ≥ 4`；P1 = `P ≥ 0.9`；P2 = `P ≥ 0.6`；`P < 0.6` 或定位冲突/已证伪 = 不做。
 
-**快速通道规则**：**成本 ≤2 且独立可交付**的小项随时可插队（不占批次位次）。当前通道为空——㉓㉚㉗㉑㉛ 五项已全部完成（见 §1）。
+**快速通道规则**：**成本 ≤2 且独立可交付**的小项随时可插队（不占批次位次）。当前通道：**㉜**（非 `.tex` 输入不触发编译，C1，G1 研究顺带发现）。
 
 ## 3. 待办总表（唯一排序来源；档内按 P 降序）
 
 | ID | 事项 | W | D | C | V | P | 档 | 依据与下一步 |
 |---|---|---|---|---|---|---|---|---|
 | ⑦c | 多文件大项目（编辑器侧）：**先建夹具与口径** | 5 | 4 | 1 | 2 | **3.00** | **P0\*** | ⑦a 已完成。⑦c 先只做"≥20 文件 × 大文件"夹具 + 口径（C1）；优化本身 C 待测——**没有数字就不投入**（§6.2） |
+| ㉜ | **非 `.tex` 输入变化不触发编译**（改了 `.bib`/图片没反应） | 3 | 2 | 1 | 1 | **2.50** | P1 | G1 研究实测（[报告](./g1-read-interception-feasibility.md) §5.1）：`watch.rs:178` 只认 `.tex` 扩展名；改**被 `\bibliography` 引用**的 `refs.bib` → 全部 tmp 产物 mtime 纹丝不动。修法 C1：把非 `.tex` 输入纳入触发集合（最省：项目内非忽略文件变化即触发，交给 latexmk 自己判定） |
 | ⑧ | 跨文件 LaTeX 语义操作 | 4 | 5 | 4 | 3 | **1.29** | P1 | P10：VS Code 明确缺失（§6.3） |
 | ⑩ | 深色主题（Candy Desk 暗色） | 3 | 2 | 2 | 2 | **1.25** | P1 | 配置类第一痛点：206 票 / 23 万浏览（§6.4） |
 | ㉖ | **模板自带 latexmkrc 与构建约定的交互**（硬证据已就位） | 3 | 4 | 3 | 3 | **1.17** | P1 | hithesis：rc 覆写 `$pdflatex` + `--shell-escape` + 尾部 `;cp`，在 `-outdir=tmp` 下 `\include{body/...}` 写不出 aux、报错后 latexmk 挂住；精简 rc 最小复现仍能恢复 → 触发条件待定位（§6.1） |
@@ -63,6 +64,7 @@
 | ⑭ | 拼写检查 | 3 | 2 | 3 | 2 | **1.00** | P2 | P8：拼写/语法弱 |
 | ㉙ | 未存盘 overlay（编辑期不写用户文件） | 2 | 3 | 3 | 2 | **1.00** | P2 | 吸收自上游 `edit_data` overlay；与 **ADR-0007「FS 为真相源」冲突**，且无实测痛点支撑 |
 | ⑮ | 多窗口与多项目 | 3 | 2 | 4 | 3 | **0.71** | P2 | design.md 后置项 |
+| ㉝ | 精确失效：用依赖集合过滤 watch 事件 | 2 | 1 | 2 | 2 | **0.75** | P2 | 反向的浪费：改**未被引用**的 `.tex` 会白编译一次（实测 `main.aux` 被重写；一次白编译 = 小档 1s / 真实论文 >120s）。判据现成：`.fdb_latexmk` 源依赖集合 + `.fls`（`scripts/fls-report.mjs` 已解析），四条保守原则见 [G1 报告](./g1-read-interception-feasibility.md) §6.2 |
 | ⑯ | 外部 PDF 查看器 | 2 | 2 | 3 | 3 | **0.67** | P2 | design.md 后置项 |
 | ⑰ | 自动更新 | 2 | 2 | 3 | 3 | **0.67** | P2 | design.md 后置项 |
 | ⑱ | 代码签名证书 | 2 | 2 | 2 | 4 | **0.67** | P2 | 分发信任，但外部依赖重 |
@@ -95,7 +97,7 @@
 
 | 前提 | 现状 | 判定 |
 |---|---|---|
-| G1 拦截 I/O | 跑的是 **stock latexmk + xelatex**（外部进程），不拦截；且**不需要**——产物本身渐进落盘 | ➖ 不需要 |
+| G1 拦截 I/O | 跑的是 **stock latexmk + xelatex**（外部进程），不拦截。**2026-09 深挖**：其**信息内容**（读了什么）已免费拥有——`.fls`（latexmk 默认开 `-recorder`，引擎实际打开的文件，编译中可尾随）+ `.fdb_latexmk`（依赖图 + mtime/size/**md5** + bibtex 步骤），两者互补、零新增依赖；**字节偏移**那半既拿不到（需改引擎 / 文件系统驱动 / API hook），也**没有消费方**（上游唯一用途 seen 水位依赖 G4 的进程快照，Windows 无 `fork()`）。见 [G1 报告](./g1-read-interception-feasibility.md) | ➖ 不需要（"读了什么"已现成，可兑现为精确失效/缺失诊断） |
 | G2 字节偏移重同步 | **成立**：产物是 **XDV**（`tmp/<stem>.xdv` 每次编译都在），页包自包含、指令长度可算；自研页索引实测：截断到任意位置解出的页与完整文件**逐字节相同**、4.41MB/186 页解析 **2.7ms**。见 [G2 报告](./g2-byte-offset-resync.md) | ✅ 成立（索引） |
 | G3 部分输入 | latexmk 只认文件系统；我们的模型是"自动保存 → 监视 → 编译"；**不需要**（只读已产出的页） | ➖ 不需要 |
 | G4 fork 快照 | **Windows 无 `fork()`**（该文档 §1.3 自述）；且**不需要**（不追求"改一行只重排一行"） | ➖ 不需要 |
@@ -111,7 +113,7 @@
 | 阶段 3 增量输出解析 | 🟡 **索引成立、渲染不做**：自研页索引可行且便宜（§5.7），但没有渲染器消费它 |
 | 阶段 4 脏矩形显示 | 🟡 已被粗粒度等价物覆盖：分页 DOM 虚拟化 + 同文件 canvas 复用（[modules.md](../modules.md) §9.4）；PDF 路线下无法矩形级增量 |
 | 阶段 5 VFS + 事务回滚 | ❌ 与 **ADR-0007** 冲突（overlay 会引入第二真相源），且需引擎配合 |
-| 阶段 6 seen 水位 + trace | ❌ 需 G1（拦截每一次读） |
+| 阶段 6 seen 水位 + trace | ❌ **执行层不可得**：机制要"引擎进程活着 + 状态可回退"（G4 fork 快照，Windows 无 `fork()`）；信息层（读了什么）已由 `.fls` / `.fdb_latexmk` 免费提供，但只够**依赖级**用途（精确失效），兑不出"打字不重算前半篇"。见 [G1 报告](./g1-read-interception-feasibility.md) |
 | 阶段 7 fork 快照 + fence | ❌ 需 G4（Windows 无 fork） |
 | 阶段 8 多趟收敛 | 🟡 思想已吸收（㉘：编辑期轻、停手后跑全） |
 
@@ -271,6 +273,7 @@ C/V 全表最高（5/4）：干净 Windows 机器零预装可用。属"环境引
 | ⑪ 预览状态保持 | design.md §预览 + 本文件 §5.7（页哈希差分候选） |
 | DVI/XDV 预览（**否决**） | [dvi-preview-feasibility.md](./dvi-preview-feasibility.md) |
 | G2 字节偏移重同步（**索引吸收**） | [g2-byte-offset-resync.md](./g2-byte-offset-resync.md) + `scripts/xdv-report.mjs` |
+| G1 拦截每一次读（**降级为依赖记录**） | [g1-read-interception-feasibility.md](./g1-read-interception-feasibility.md) + `scripts/fls-report.mjs`（`.fls` / `.fdb_latexmk` 依赖报告） |
 | 上游阶段 2（子进程/流式/时间片） | [stage2-streaming-feasibility.md](./stage2-streaming-feasibility.md)（进度三通道 + 部分 PDF 实测 + UI 不卡对照） |
 | ⑫ TinyTeX / ⑮⑯⑰⑱ | design.md §后置/未决清单 |
 
@@ -306,3 +309,5 @@ C/V 全表最高（5/4）：干净 Windows 机器零预装可用。属"环境引
 16. **① 的遗留（编辑 GBK 源文件只报英文错误）**：已由 ㉓ 处理（中文可操作提示 + 状态栏提示条）；**仍不支持编辑**非 UTF-8 源文件，这是设计取舍不是欠账。
 17. **`cargo test -p texpresso`（src-tauri）在本机因 WebView2 限制无法运行**：见 [troubleshooting.md](../troubleshooting.md)（另有新增坑：接了常驻 `texpresso-mcp` 后该二进制被锁，需换 `CARGO_TARGET_DIR` 或用 `--lib`）。
 18. **`parse_log` 的文件栈错位（2026-09 落地阶段 2 时新发现，未修）**：TeX 日志把"关闭上一个文件 + 打开下一个文件"打在**同一行**（`[64]) (./ch_05.tex`），而扫描器只认行首 `(` / `)` → 文件归属错一章（实测：错误在 `ch_05.tex:164`，列表报 `./ch_04.tex:164`），错误列表的文件名与点击跳转目标都错。终态与流式共用同一解析器，两条路径都受影响；修法要按字符顺序做括号配对。见 [modules.md](../modules.md) §12.1 #22 与 [troubleshooting.md](../troubleshooting.md)。
+19. **精确失效的收益未在真实大文档上量化**（[G1 报告](./g1-read-interception-feasibility.md) §8.5）：只测到小探针"改无关文件 → 白编译一次"；真实收益 = 白编译频率 × 单次编译时长，两个因子都未统计。
+20. **`.fls` / `.fdb_latexmk` 当依赖源的边界未全测**（[G1 报告](./g1-read-interception-feasibility.md) §8）：多趟 xelatex 的 `.fls` 合并行为、biber/makeindex 等更多子步骤、编辑期写入时机，均未验证。
