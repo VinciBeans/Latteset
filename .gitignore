@@ -72,6 +72,9 @@ test_file/research/
 test_file/e2e/drivers/
 .npm-cache/
 
+# ============ LuaJIT 实验构建副本（研究用，含嵌套 .git 与构建产物，勿上传） ============
+test_file/luajit-src/
+
 # ============ Logo 工具临时产物（临时目录 + 预览页，勿上传） ============
 *.tmpdir/
 __logo_preview*.html
