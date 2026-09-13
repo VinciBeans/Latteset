@@ -498,8 +498,9 @@ lualatex -fmt="<abs>\partial.fmt" -interaction=nonstopmode -output-directory=tmp
 2. **但它的形态与我们的现状冲突在"文件从哪来"**：它自带 bundle（默认联网按需下载，首跑 51–214 s），
    **不读用户的 TeX Live**。我们现在的价值主张之一是"用户已有 TeX Live 就能用"，且我们的 ㉒/㉖/㉗ 一堆逻辑
    （`.fls`、模板 `.cls` 探测、`kpsewhich` 回路）都建立在"本机 TL"上。
-3. ⇒ **值得试的方向不是"换引擎"，而是"把 Tectonic 当作免装 TeX Live 的备选后端"**：`-b <本地 bundle>` + `-C`
-   可离线化；`--outfmt xdv` 让现有页级机制原样复用。要落地还需回答：bundle 分发体积/许可、与用户 TL 的宏包差异
+3. ⇒ **值得试的方向不是"换引擎"，而是"把 Tectonic 当作免装 TeX Live 的备选后端"**：`-b <本地 bundle>` +
+   `-C` 可离线化；`--outfmt xdv` 让现有页级机制原样复用。要落地还需回答：bundle 分发体积/许可、与用户 TL 的宏包差异
    （本机 `tex/luatex`、`context` 等被排除；`.lua` 文件也在 ignore 列表里）、以及首跑下载能不能接受。
+   **落地计划、摩擦点清单与明天的四件事见 [tectonic-integration-plan.md](./tectonic-integration-plan.md)。**
 4. **仍未测**：真实学位论文模板（图表/公式密集）上的表现；bibtex/biber 全链路；`--bundle` 指的本地 bundle 实测；
    与 Latteset 现有"打开项目 → 探测根文件 → SyncTeX"链路的端到端适配成本。
