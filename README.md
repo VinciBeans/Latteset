@@ -73,17 +73,6 @@ latteset-mcp --project <项目目录>         # 供 harness / Agent 拉起（std
 
 **Latteset 的若干设计思路，学习自 [TeXPresso](https://github.com/let-def/texpresso) 项目**（作者 [let-def](https://github.com/let-def)，OCaml 实现，改造 XeTeX 做 LaTeX live rendering）——它把"边改边出图"从概念做到了工程级，是本项目立项时最重要的参考对象。
 
-**已吸收并落地**（均为独立实现，未复用其源码）：
-
-- **空闲收敛**：编辑期跑轻的、停手后补一次全的 → 本项目的 Quick 单趟 + 2s 空闲收敛；
-- **把决策过程打出来**：调度/收敛决策留日志，排障时可视化；
-- **确定性验证**：连跑两次逐字节比对，作为一切输出优化的前提；
-- **引擎输出管道化**：把引擎输出从丢弃改为管道化，换来编译期进度与实时错误 → 状态栏「已排版 N 页」+ 错误列表在编译结束前就报致命错误。
-
-**评估后未采用**（其路线要求拥有引擎内部，与 ADR-0007 冲突）：fork 快照 / seen 水位、VFS 事务回滚、以 DVI/XDV 代替 PDF 作为预览格式。
-
-完整的源码通读与逐阶段复刻路线见 [docs/texpresso-live-rendering-roadmap.md](./docs/texpresso-live-rendering-roadmap.md)，本项目的取舍与吸收清单见 [docs/research/tex-ide-roadmap-priority.md](./docs/research/tex-ide-roadmap-priority.md) §5。
-
 > **更名的起因也是一次善意的提醒**：GitHub 用户 [@mathlab08](https://github.com/mathlab08) 指出了本项目与上游 TeXPresso 的重名问题。**特此感谢**——正因这条提醒才有了 TeXPresso → Latteset 的更名（见 [ADR-0011](./docs/adr/0011-rename-to-latteset.md)）。同名是误会，致敬是本意。
 
 ## 许可
