@@ -153,6 +153,26 @@ node scripts/synctex-report.mjs --projects=<dir> --recompile
 - **已穷尽尝试仍失败**：把 `webview2-com-sys-*/out/{arch}/WebView2Loader.dll` 拷到 `target/debug` **及 `target/debug/deps`（测试 exe 同目录）** 并加入 PATH；`dumpbin /imports` 显示静态导入均为系统 DLL、延迟导入仅 `VCRUNTIME140.dll`；`danger-full-access` 提权运行——均仍 `STATUS_ENTRYPOINT_NOT_FOUND`。**非沙箱权限、非 PATH、非运行时缺失**，是 Tauri v2 shell crate 测试二进制的已知 Windows 工具链限制。把 `cargo test -p texpresso -- --ignored export_bindings` 当"无 GUI 生成 bindings"的捷径同样不可行（`0xc0000139`）。
 - **推论（DTO 改动后怎么刷新 `src/bindings.ts`）**：`export_bindings` 这条捷径在本机不可用 → **起一次 `npm run tauri dev`**：debug 构建启动时会自动重新导出 `src/bindings.ts`（`lib.rs` 里 `#[cfg(debug_assertions)]` 的 export）。新增 DTO 字段时实测即如此，导出结果与手写预期一致。
 
+## Linux CI 上 `cargo test -p texpresso-core` 红：Windows 路径语义被写进了跨平台用例（2026-09）
+
+**现象**：本机（Windows）173 项全绿，GitHub Actions 的 `ubuntu-latest` 上 `synctex::classify::tests::windows_separators_and_case` 失败，172 passed / 1 failed：
+
+```
+left:  OutsideProject("E:\\proj\\chapters\\intro.tex")
+right: Source("E:\\proj\\chapters\\intro.tex")
+```
+
+**根因**：`normalize_lexically` / `classify_inverse_target` 的路径比较是**词法级**的，吃的是 `std::path::Path` 的**平台原生**分隔符语义——Windows 上 `\` 是分隔符（`E:\proj\chapters\intro.tex` 能剥出项目内相对路径），Unix 上 `\` 只是普通字符，整串是**一个文件名**，`starts_with(root)` 为假 → 判 `OutsideProject`。**产品逻辑无误**（Windows 首发，synctex 返回的就是 Windows 路径），红的是把 Windows 专属结论写成跨平台契约的用例。
+
+**处置**（`crates/texpresso-core/src/synctex/classify.rs`）：
+
+- 跨平台部分改用 `std::path::MAIN_SEPARATOR` 拼路径，「项目内源码」与「盘符大小写不 case-fold」在两端都被断言到；
+- 反斜杠形态按平台分叉：`#[cfg(windows)]` 断言 `Source`，`#[cfg(not(windows))]` 断言 `OutsideProject`（锁死"Linux 上绝不误判成可打开的源码"）。
+
+**验证**：本机 `cargo test -p texpresso-core` → 173 passed；`rustup target add x86_64-unknown-linux-gnu` 后 `cargo check -p texpresso-core --target x86_64-unknown-linux-gnu --tests` 通过（非 Windows 分支可编译）。沙箱内首次 `rustup target add` 与 crates 下载均被 TLS 拦（`SEC_E_NO_CREDENTIALS`），按 §4 边界提权一次后成功。
+
+**规则**：core 单测要能在 Linux CI 上跑，**别把 Windows 路径形态（`\`、`E:\`）当跨平台契约**——要么用 `MAIN_SEPARATOR` 拼，要么 `#[cfg]` 分叉并显式写出两端期望值。（`texpresso-infra` 的 `runner` / `storage` 用例含同类 Windows 字面量：读实现可判定 `root_stem` / `latexmk_input` 在 Unix 上会因"整串只当一个文件名"而走回退分支、断言必失败（**未在 Linux 实跑，仅读码判定**）；CI 目前不跑 infra，纳入前需先按此规则过一遍。）
+
 ## 中文文件名/路径兼容性实测
 
 **总结论**：**文件名/路径层面的中文全链路可用**（无阻塞缺陷，回归测试已固化）；唯一实测出的真实缺陷**不在路径，而在日志编码**（见下节）。

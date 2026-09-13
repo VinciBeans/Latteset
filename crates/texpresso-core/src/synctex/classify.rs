@@ -150,12 +150,38 @@ mod tests {
         assert!(matches!(t, InverseTarget::Generated(_)));
     }
 
+    /// 分隔符语义**跟随编译目标平台**（`std::path::Path`）：Windows 上 `\` 是分隔符，
+    /// Unix 上只是普通字符。所以跨平台那部分用 `std::path::MAIN_SEPARATOR` 拼路径——
+    /// "项目内源码"这个结论两端都该成立；反斜杠形态是 Windows 专属结论，只在该平台断言。
+    /// 背景：曾把 `E:\proj\…` 的 Windows 结果写成跨平台契约，Linux CI 直接红。
     #[test]
     fn windows_separators_and_case() {
-        let t = classify_inverse_target(Path::new(r"E:\proj"), Path::new(r"e:\proj\chapters\intro.tex"));
-        // 词法比较大小写敏感，但路径形态（反斜杠 / `.`）必须规整掉
-        assert!(matches!(t, InverseTarget::Source(_) | InverseTarget::OutsideProject(_)));
-        let t2 = classify_inverse_target(Path::new(r"E:\proj"), Path::new(r"E:\proj\chapters\intro.tex"));
-        assert_eq!(t2, InverseTarget::Source(PathBuf::from(r"E:\proj\chapters\intro.tex")));
+        let s = std::path::MAIN_SEPARATOR;
+        let root = format!("E:{s}proj");
+        let hit = format!("E:{s}proj{s}chapters{s}intro.tex");
+        assert_eq!(
+            classify_inverse_target(Path::new(&root), Path::new(&hit)),
+            InverseTarget::Source(PathBuf::from(&hit))
+        );
+
+        // 词法比较大小写敏感（盘符不 case-fold）：判成项目外是安全侧，不做猜测
+        let cased = format!("e:{s}proj{s}chapters{s}intro.tex");
+        assert!(matches!(
+            classify_inverse_target(Path::new(&root), Path::new(&cased)),
+            InverseTarget::Source(_) | InverseTarget::OutsideProject(_)
+        ));
+
+        // Windows 专属：反斜杠形态必须规整成项目内源码
+        #[cfg(windows)]
+        assert_eq!(
+            classify_inverse_target(Path::new(r"E:\proj"), Path::new(r"E:\proj\chapters\intro.tex")),
+            InverseTarget::Source(PathBuf::from(r"E:\proj\chapters\intro.tex"))
+        );
+        // 非 Windows：`\` 不是分隔符，整串只是一个文件名 → 词法上在根之外，绝不能误判为可打开的源码
+        #[cfg(not(windows))]
+        assert!(matches!(
+            classify_inverse_target(Path::new(r"E:\proj"), Path::new(r"E:\proj\chapters\intro.tex")),
+            InverseTarget::OutsideProject(_)
+        ));
     }
 }
