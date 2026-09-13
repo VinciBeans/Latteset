@@ -193,6 +193,11 @@ pwsh -NoProfile -File "$lab\fair.ps1" -N 3
 # 8) 引擎内页指纹（§7.2，不改用户文档）
 lualatex -interaction=nonstopmode -halt-on-error -jobname=shipmin `
   "\AddToHook{shipout/before}{\directlua{dofile('pageship.lua')}}\input{min-zh.tex}"   # → _ship.log：shipout page=1 nodes=979 fnv=…
+
+# 9) Lua 层版本与速度（§7.3 #1）
+luajittex --luaonly luaversion.lua    # → Lua 5.1 + LuaJIT 2.1.81742，且 jit.status()==false
+lualatex  --luaonly luaversion.lua    # → Lua 5.3，无 jit
+luajittex --luaonly bench-lua.lua     # 与 lualatex --luaonly 对照；jit.on() 版见 _jitonbench.lua 的拼法
 ```
 
 ## 6. 未验证与局限
@@ -247,7 +252,7 @@ lualatex -jobname=inj "\AddToHook{shipout/before}{\directlua{dofile('pageship.lu
 
 | # | 想法 | 实测 | 结论 |
 |---|---|---|---|
-| 1 | **LuaJIT 变体**（`luajitlatex`） | TL2026 的 `fmtutil.cnf` **只有 plain 的** `luajittex`/`luajithbtex`（`luatex.ini`），**根本没有 luajitlatex**；手工用 `lualatex.ini` 给 JIT 引擎建 LaTeX 格式 → dump 出来的格式编译即错（`! Undefined control sequence.` / bad DVI） | ⛔ **此版本 TeX Live 上不可用**（不是没试，是没有受支持配置） |
+| 1 | **LuaJIT 变体**（`luajitlatex`） | TL2026 的 `fmtutil.cnf` **只有 plain 的** `luajittex`/`luajithbtex`（`luatex.ini`），**根本没有 luajitlatex**；手工用 `lualatex.ini` 给 JIT 引擎建 LaTeX 格式 → dump 出来的格式编译即错（`! Undefined control sequence.` / bad DVI）。**另外三件实测**：① 该构建里 **JIT 默认是关的**（`jit.status()==false`，手动 `jit.on()` 才变 true）；② 它是 **Lua 5.1**、stock 引擎是 **Lua 5.3**（`utf8` 库缺失、`math.type` 缺失，连 `//` 整数除法都是语法错误——我的基准脚本第一次就栽在这上面）⇒ 为 5.3 写的 `luaotfload`/`luatexja` **不能假定可直接跑**；③ 纯 Lua 层微基准（N=200 万，最好值）：numeric/string/table = **Lua 5.3 24/124/253 ms**、LuaJIT(JIT off) **14/66/131 ms**、LuaJIT(JIT on) **3/45/118 ms** ⇒ Lua 层本身**快 1.7–8×**（[推断] 若 CJK 字体层的耗时确实主要在 Lua（§7.4），JIT 本可吃掉一大块；但受 ① ② 两条限制，本机无法验证） | ⛔ **此版本 TeX Live 上不可用**（不是没试，是没有受支持配置） |
 | 2 | **PDF 压缩调优**（`\pdfvariable compresslevel=0 objcompresslevel=0`） | min-zh：PDF **281,486 B**（原 96,362 B，2.9×）而耗时 **3817 ms vs 3704 ms**（噪声内，甚至更慢） | ⛔ 无收益 |
 | 3 | **预编译导言区**（fmt） | dump 成功（§3.4）；导言区占 LuaLaTeX 单趟 **44%**（2869/6468 ms）→ 上限约 **2.9 s** | 🟡 **唯一大杠杆**，但需 `mylatexformat` 等价实现（本机未装），未落地 |
 | 4 | **引擎内页指纹**（恢复 B/C） | 原型打通、钩子零开销（§7.2） | 🟡 可行，收益 ~100 ms，风险不成比例，未落地 |
