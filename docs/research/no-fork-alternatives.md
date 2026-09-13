@@ -15,6 +15,7 @@
 | **编辑期单趟的成本结构**（本轮实测） | `bench/thesis`（28 页）**导言区占 71%**（964/1358ms）；`bench/multifile`（74 页）**占 89.5%**（1347/1505ms）→ 固定开销（引擎启动 + 导言区 + 字体加载）是主项 |
 | 推论 | **fork 就算能用也只省小头**；要加速编辑期编译，该做的是**砍固定开销**（导言区 fmt 化 / 字体预热），而这**不需要 fork** |
 | 但"砍固定开销"也被关死了吗 | ❌ **基本关死**（§3.1 成本分解）：**引擎启动 946 ms**（进程级，fmt 省不到）+ **ctex/字体 400 ms**（native font，**XeTeX 禁止 dump**）＝ 61%，fmt 一分钱省不到；唯一可 fmt 化的"宏包加载"只有 **150 ms**。而且 `xelatex -ini … \dump` 直接报 `! Can't \dump a format with native fonts or font-mappings.` |
+| "把字体挪出 fmt"能绕过吗 | ❌ **不能**（§3.2 实测）：**XeLaTeX 的基座 format 自身**就带 native font，连 `\documentclass{article}` 都 dump 不了。反过来在 **pdflatex** 上 fmt 确实可行且产出逐字节等价，收益与导言区重量成正比（**2.6% @极简 → 12.8% @重导言区**）——但那与我们的主场景（中文 + XeLaTeX）无关 |
 | 已落地的不需要 fork 的收益 | 页级复用三件（B/C/A，2026-09）：跳过预览重载、只重绘变化页（render 102→7ms）、跳过 PDF 转换 |
 
 ## 1. `fork` 到底换来什么（精确口径）
@@ -98,6 +99,32 @@
 
 ⇒ "砍固定开销"这条路在 **stock 引擎 + Windows** 的约束下**基本被关死**。剩下的只能是产品层面的三件事：**减少编译次数**（合并队列/防抖/页级复用，已有）、**让单次编译不可见**（编译不阻塞 UI、只重绘变化页，已有）、以及**给用户的产品级建议**（精简导言区、少用重宏包——上面那 150ms 与用户文档的重宏包直接相关，但那是用户的取舍，不是我们能替他们做的优化）。
 
+### 3.2 "把字体挪出 fmt"能绕过吗——实测（2026-09 追加）
+
+上一版把"用 `mylatexformat` 把字体设置挪到 `\endofdump` 之后"列为"仍未测"。用手工 dump（机制等价）实测了这个想法：
+
+**① XeLaTeX：连最简导言区都 dump 不了**——不是"含字体才不行"
+
+`\documentclass{article}` + 空文档的 fmt 生成**同样**报
+`! Can't \dump a format with native fonts or font-mappings.`（日志里 `Beginning to dump on file …` 之后就中止）。
+根因：**XeLaTeX 的基座 format 自身**就用 native font 设默认字体（`\font\TU/lmr/m/n/10=[lmroman10-regular]:mapping=tex-text;`），
+所以"把**用户导言区里**的字体挪走"根本不解决问题——**用 `xelatex` 作基座就无法 dump 任何 format**。
+这与社区结论一致（[dpctex#15](https://github.com/davidcarlisle/dpctex/issues/15) 的答复是 "You really, really don't want to do this"、[TeX.SE: Precompile header with xelatex](https://tex.stackexchange.com/questions/49295/precompile-header-with-xelatex)）。
+
+**② pdflatex：可行，收益与导言区重量成正比**（`bench/large` 125 页英文，各 4 次取中位）
+
+| 导言区 | 完整编译 | fmt 编译 | 节省 | 产出对拍 |
+|---|---|---|---|---|
+| 极简（仅 `\documentclass{article}`） | 1370 ms | 1335 ms | **35 ms（2.6%）** | 125 页 / **172,953 B**，两版字节数一致 |
+| 重（+ amsmath / amssymb / tikz / graphicx / booktabs / hyperref） | 1796 ms | 1567 ms | **229 ms（12.8%）** | 125 页 / **189,058 B**，两版字节数一致 |
+
+⇒ fmt 机制**确实工作**（产出逐字节等价），但：
+- 它省的只是"**导言区里的宏包加载**"，收益与导言区重量成正比（2.6% → 12.8%）——与 §3.1 的成本分解吻合；
+- **对我们的主场景（中文 + XeLaTeX）收益为 0**：引擎层面就用不了（①），且中文必然依赖 native 字体（ctex/xeCJK）；
+- 引擎启动（946 ms）与字体加载（400 ms）依旧不在它的能力范围内。
+
+**仍未测**：LuaLaTeX（字体同样是 native，[推断] 同样受限，未验证）；pdflatex + CJK 宏包的中文路线（我们已不支持该路径）。
+
 ## 4. 不需要 `fork` 的替代路径（逐条判定）
 
 | # | 路径 | 换来什么 | 状态 |
@@ -159,9 +186,9 @@ foreach ($f in @("_l1.tex","_l2.tex","_l3.tex","main.tex")) {
 
 1. **WSL 路径完全未验证**（本机服务拒绝访问）：字体、IO、分发三处代价都是**定性判断**，没有数字。
 2. **`PssCaptureSnapshot` 的"只读"结论来自 API 语义**（它面向 dump/调试），本文**没有写代码调用验证**。
-3. ~~**fmt 化的收益没有实测**~~ ✅ **已实测并否决**（§3.1）：`xelatex -ini … \dump` 报
-   `! Can't \dump a format with native fonts or font-mappings.`——中文文档（fontspec/ctex 必然引入 native font）**禁止** fmt 化；且成本分解显示可 fmt 化的部分仅 ~150 ms。
-   **仍未测**：`mylatexformat` 能不能靠"把字体设置挪到 `\endofdump` 之后"绕过这条限制（本机未装该宏包；且即便绕过，能省的也只是那 150 ms 里的一部分，不值得）。
+3. ~~**fmt 化的收益没有实测**~~ ✅ **已实测并否决**（§3.1 / §3.2）：`xelatex -ini … \dump` 报
+   `! Can't \dump a format with native fonts or font-mappings.`——而且**连最简导言区也如此**（根因在 XeLaTeX 基座自身，§3.2①）。**"把字体挪出 fmt"的绕过也已实测：无效**（§3.2）。pdflatex 侧则确实可行、产出逐字节等价，收益 2.6%（极简）→ 12.8%（重导言区）——但与中文 + XeLaTeX 的主场景无关。
+   **仍未测**：LuaLaTeX 是否同样受限（字体也是 native，[推断] 成立但未验证）。
 4. **成本结构只测了合成夹具**：两档都是"页多、每页内容少"的中文文档；真实学位论文（图表/公式密集）的正文占比会明显更高，fork 的相对价值随之上升——**未测**（hithesis 被 ㉖ 阻塞）。
 5. **只测了 `-no-pdf` 单趟**：没测多趟（latexmk 收敛）与 `xdvipdfmx` 的占比（后者已在 DVI 报告里测过：0.65–0.94s/次）。
 6. **没有验证"字体在 fmt 里能不能用"**：这决定 c 路线的实际收益，是下一步最该补的实测。
