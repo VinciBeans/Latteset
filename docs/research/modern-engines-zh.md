@@ -204,7 +204,7 @@ luajittex --luaonly bench-lua.lua     # 与 lualatex --luaonly 对照；jit.on()
 
 1. **Tectonic 完全未测**（本机未安装）：它的"现代性"（自动取包 / 可复现 / 增量缓存）全是**外部资料判断**，没有本机数字；它对中文的实际表现（bundle 里的 Fandago 字体、系统字体、`ctex` 可用性）也未知。
 2. ~~**LuaJITTeX 未测**~~ ✅ **已测并否决**（§7.3 #1）：TL2026 的 `fmtutil.cnf` 里**没有 luajitlatex**（只有 plain 的 `luajittex`/`luajithbtex` + `luatex.ini`），手工给 JIT 引擎建 LaTeX 格式也失败 ⇒ 这个版本上"JIT + LaTeX + 中文"**没有受支持的配置**（因此它是否更快仍是空白，但没有可用的落地形态）。
-3. **fmt 的收益数字没拿到**：dump 成功、`article` 格式运行成功，但 **ctex 文档的运行时挂接失败**（需要 `mylatexformat` 或等价实现，本机未装）→ "LuaLaTeX 上 fmt 到底省多少"仍是空白。**上限已量化**：导言区占 LuaLaTeX 单趟 44%（2869/6468 ms，§7.4）。
+3. **fmt 的收益数字没拿到，但"能不能用"已有答案**：dump 成功（`article` 格式运行成功），**中文文档运行时失败**——根因是 `luatexja`（§7.6 五组对照）。**上限已量化**：导言区占 LuaLaTeX 单趟 44%（2869/6468 ms，§7.4），但这条上限拿不到。
 4. **回调只做了"能注册、能触发"这一层**：逐页指纹验证到"页号准确 + 引擎侧零开销"（§7.2），但**没有验证把它接成 B/C 的页级复用是否真的正确**（需要与"PDF 实际变化页"对齐）；"零侵入拦截 I/O"的正确 reader 实现也**没做通**（§3.3 坑 2）。
 5. **只测了合成夹具**：`thesis`/`multifile` 每页内容偏少；真实学位论文（图表/公式密集）里 LuaLaTeX 的相对劣势可能变大也可能变小，**未测**（hithesis 档仍被 ㉖ 阻塞）。
 6. **Full 对比只有一组可用样本**：latexmk 收敛对比里，第二次运行两边都被判"已是最新"（~0.9 s）不可比，只有首跑那组（xe 9193 / lua 16686 ms）可用。
@@ -226,7 +226,7 @@ luajittex --luaonly bench-lua.lua     # 与 lualatex --luaonly 对照；jit.on()
 | 页级复用 C（只重绘变化页） | ✅ 页哈希 → 页号 | ✅ 同上（页号准确，实测 1 页文档恰好 1 次 shipout、页号=1） |
 | 页级复用 A（跳过转换） | ✅ 省 0.65–1.4 s/次 | — 无对应物（不是被漏掉，是结构上没有这一步） |
 | 首编后的多趟收敛 | 空闲收敛 Full | 同样（且 Quick 的相对收益更大，§7.3） |
-| 预编译导言区（fmt） | ⛔ 引擎**禁止** dump（no-fork §3.2） | 🟡 **dump 可行**（§3.4），运行时挂接未做通 → 这是**唯一一个"XeLaTeX 永远做不到、LuaLaTeX 有机会"的大杠杆**（导言区占它单趟 44%） |
+| 预编译导言区（fmt） | ⛔ 引擎**禁止** dump（no-fork §3.2） | ⛔ **实测对中文文档不可用**（§7.6）：装上 `mylatexformat` 后英文/fontspec 能过，**`luatexja` 必失败**（`! LaTeX Error: Missing \begin{document}`）——而中文在 LuaLaTeX 上必经 luatexja |
 
 ### 7.2 引擎内页指纹：不改用户文档也能拿到"页号 → 该页指纹"
 
@@ -254,7 +254,7 @@ lualatex -jobname=inj "\AddToHook{shipout/before}{\directlua{dofile('pageship.lu
 |---|---|---|---|
 | 1 | **LuaJIT 变体**（`luajitlatex`） | ⛔ **此版本 TeX Live 上不可用**（根因见 §7.5：**连 LaTeX 内核自己的 Lua 代码都解析不了**）。TL2026 的 `fmtutil.cnf` 只有 plain 的 `luajittex`/`luajithbtex`（`luatex.ini`）；另外三件实测：① 该构建里 **JIT 默认是关的**（`jit.status()==false`，`jit.on()` 才 true）；② 它是 **Lua 5.1**、stock 引擎是 **Lua 5.3**（`utf8` 库缺失、`math.type` 缺失，连 `//` 都是语法错误）；③ 纯 Lua 层微基准（N=200 万，最好值）：numeric/string/table = **Lua 5.3 18–24/92–124/230–253 ms**、LuaJIT(JIT off) **11–14/57–66/88–131 ms**、LuaJIT(JIT on) **3/39–49/111–122 ms** ⇒ Lua 层本身**快 2–8×**（[推断] 若 CJK 字体层的耗时确在 Lua，JIT 本可吃掉一大块；受 §7.5 限制无法验证） |
 | 2 | **PDF 压缩调优**（`\pdfvariable compresslevel=0 objcompresslevel=0`） | min-zh：PDF **281,486 B**（原 96,362 B，2.9×）而耗时 **3817 ms vs 3704 ms**（噪声内，甚至更慢） | ⛔ 无收益 |
-| 3 | **预编译导言区**（fmt） | dump 成功（§3.4）；导言区占 LuaLaTeX 单趟 **44%**（2869/6468 ms）→ 上限约 **2.9 s** | 🟡 **唯一大杠杆**，但需 `mylatexformat` 等价实现（本机未装），未落地 |
+| 3 | **预编译导言区**（fmt） | dump 成功（§3.4）；导言区占 LuaLaTeX 单趟 **44%**（2869/6468 ms）→ 上限约 **2.9 s** | ⛔ **实测关死（§7.6）**：装上 `mylatexformat` 后，**中文文档运行时必失败**（`! LaTeX Error: Missing \begin{document}`）；根因是 **`luatexja`**（英文 / fontspec 都能过）⇒ 这条杠杆对目标用户不存在 |
 | 4 | **引擎内页指纹**（恢复 B/C） | 原型打通、钩子零开销（§7.2） | 🟡 可行，收益 ~100 ms，风险不成比例，未落地 |
 
 ### 7.4 拉齐之后的对比
@@ -275,7 +275,8 @@ lualatex -jobname=inj "\AddToHook{shipout/before}{\directlua{dofile('pageship.lu
 **读法（这是本节最重要的一句）**：拉齐之后排名没有变，但**原因被定位了**——
 - **不是"LuaLaTeX 引擎慢"**：英文文档里它**反而更快**（1878 vs 2341 ms），且它的 PDF 产出方式（引擎内写，~288 ms）比 XeLaTeX 的"先 XDV 再转换"（~1125 ms）更省。
 - **差距全在 CJK 字体层**：XeTeX 的 native font 是**引擎内编译进去的**，`xeCJK` 只是薄薄一层；而 LuaLaTeX 走 `luatexja + luaotfload`，字体加载与字距调整都是 **Lua 层实现**——中文场景 3.2–3.5× 的差距就从这里来。
-- 因此"给 LuaLaTeX 做针对性优化"的正确落点是**固定开销里的字体/导言区部分**（§7.3 第 3 项，上限 2.9 s，能把 3.5× 压到约 1.9×），而不是页级复用（~100 ms 量级）或压缩之类的边角。
+- 因此"给 LuaLaTeX 做针对性优化"的正确落点**本应是**固定开销里的字体/导言区部分（上限 2.9 s，能把 3.5× 压到约 1.9×）——但**这条路本轮实测也关死了**（§7.6：预编译导言区在 luatexja 上必失败；§7.3 #1：JIT 在 TL2026 无 LaTeX 格式）。
+  ⇒ **拉齐之后，LuaLaTeX 已经没有可用的大杠杆了**：3.2–3.5× 是当前 TeX Live + 当前 luatexja/luaotfload 的结构性结果，不是我们管线没优化。
 
 ### 7.5 LuaJIT 源码实测：能不能用它跑 LaTeX（2026-09 追加）
 
@@ -331,3 +332,49 @@ cmd /c "call `"C:\Program Files\Microsoft Visual Studio\18\Community\VC\Auxiliar
 2. 与 ADR-0003（签名分发、不自维护引擎分支）冲突——这正是上游 TeXpresso 那条路线被否的原因之一。
 3. **收益不确定**：Lua 层实测快 2–8×，但 §7.4 只把 3.5× 归因到"CJK 字体层"，层内 Lua 占多少**没有 profile**；而代价是 79+ 处语义级补丁的长期维护。
 > 触发重估的条件（都在我们手里之外）：LuaJIT 上游支持 `//`，或 LaTeX 内核放弃 5.3 专属语法。
+
+### 7.6 mylatexformat 实测：预编译导言区对中文文档不可用（2026-09 追加）
+
+§7.3 #3 说过"预编译导言区是 LuaLaTeX 唯一真正大的杠杆（上限 2.9 s）"。拿到 `mylatexformat`
+（`E:\Works\mylatexformat`，v3.4 / 2011）后把它真正跑起来——**结论是这条路对中文文档不通**。
+
+**① 装包（不碰用户的 TeX Live）**
+
+包只给了 `.dtx`，按它自己的说明（"Unpacking (b): `etex mylatexformat.dtx`"）提取：
+
+```powershell
+etex -interaction=nonstopmode mylatexformat.dtx      # → mylatexformat.ltx（12.6 KB）+ .ins/.drv
+# 注：pdflatex 跑 dtx（提取+文档）会先死在文档部分：Package etoolbox Error: \scr@load@hook undefined
+```
+把 `mylatexformat.ltx` 放进**工作区内**的 texmf 树，用 `TEXMFHOME` 指过去即可（`kpsewhich mylatexformat.ltx` 验证命中）。
+
+**② 用法（建格式 + 运行时，**不改用户文档**）**
+
+```powershell
+# 建格式（README 的形态；本机 lualatex 对应 &lualatex）
+lualatex -ini -interaction=nonstopmode -jobname=thfmt '&lualatex' mylatexformat.ltx main.tex
+# 运行时：用 -fmt 指到格式文件即可，文档一个字都不用改
+lualatex -fmt="<abs>\thfmt.fmt" -interaction=nonstopmode -halt-on-error -output-directory=tmpfmt main.tex
+```
+
+**③ 五组对照（全部本机实测）**
+
+| 文档 | 引擎 | 建格式 | 运行时 `-fmt` |
+|---|---|---|---|
+| `article`（英文） | lualatex | ✅ 4.7 MB | ✅ **出 PDF 1 页**（`CUSTOMISED FORMAT: "enfmt"` → `Output written`） |
+| `article + fontspec` | lualatex | ✅ 6.2 MB | ✅ 出 PDF |
+| `article + luatexja` | lualatex | ✅ 10 MB | ❌ `! LaTeX Error: Missing \begin{document}.` |
+| `article + [UTF8]{ctex}` 宏包 | lualatex | ✅ 25.1 MB | ❌ 同上 |
+| `ctexart`（`min-zh`）/ `ctexbook`（thesis 27 页） | lualatex | ✅ 25.8 / 26.4 MB | ❌ 同上（用显式 `\endofdump` 标记重建格式也**一样失败**） |
+| `article`（英文） | **xelatex** | ⚠️ 写出了 6.2 MB 文件，但 dump 报 `Can't \dump a format with native fonts or font-mappings` | —（格式不可用） |
+
+⇒ **根因锁定在 `luatexja`**：不是 ctex、不是 fontspec、也不是文档类（`fontspec` 能过，`luatexja` 不能）。
+而 **LuaLaTeX 上排中文必经 `luatexja`**（ctex 在 LuaTeX 下就是走它）——所以"预编译导言区"这条杠杆**对目标用户不存在**。
+（顺带否掉 README 里"XeTeX 可用"那条 2011 年的说明：今天 XeTeX 的 native font 限制依旧。）
+
+**④ 影响**
+
+- §7.3 #3 的"上限 2.9 s"作废；§7.4 的公平对比**不会再变**：LuaLaTeX 侧已无可用的大杠杆（JIT 见 §7.5、fmt 见本节、页指纹只有 ~100 ms）。
+- 仍未测的一个想法：**只 dump 非 CJK 宏包**（amsmath/tikz…），让 ctex/luatexja 每趟加载——预期收益小
+  （导言区的大头正是 CJK 层），而且 mylatexformat 的设计假设是"文档加载的包都应在格式里"，**未验证**。
+- 版本边界：mylatexformat v3.4（2011）× TeX Live 2026（ctex 2.x / luatexja 2025-09）——上游任一更新都可能改变结论。

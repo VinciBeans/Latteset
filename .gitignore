@@ -75,6 +75,10 @@ test_file/e2e/drivers/
 # ============ LuaJIT 实验构建副本（研究用，含嵌套 .git 与构建产物，勿上传） ============
 test_file/luajit-src/
 
+# ============ 本地 TeX 实验件（mylatexformat 提取物 + 工作区 texmf 树，勿上传） ============
+test_file/mylatexformat/
+test_file/texmf/
+
 # ============ Logo 工具临时产物（临时目录 + 预览页，勿上传） ============
 *.tmpdir/
 __logo_preview*.html
