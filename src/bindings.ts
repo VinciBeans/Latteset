@@ -26,13 +26,9 @@ export const commands = {
 	/**
 	 *  PDF 点击 → 源码（roadmap ⑤/㉒）：**只回落到项目内真实源码**。
 	 * 
-	 *  为什么要这一层（2026-09 实测）：`synctex edit` 在生成内容上会返回生成它的中间文件——
-	 *  点 `multifile` 第 3 页目录区得到 `tmp/main.toc:15`，同一屏往上 50pt 却是 `main.tex:37`。
-	 *  直接把 `tmp/main.toc` 当跳转目标会打开一屏用户没写过的内容。
-	 * 
-	 *  策略：先按点击点定位；命中"非源码"时在**附近小范围探测**（y 上下 40/80pt），
-	 *  取第一个项目内源码（首个命中的偏移最小，故就是"最近"的那个）；仍无则忽略并给出提示。
-	 *  探测只在"没拿到源码"时发生，正常点击的延迟不变。
+	 *  策略本身（就近探测 + 生成产物分类 + 提示文案）在 core [`texpresso_core::synctex::resolve_inverse`]，
+	 *  与 headless CLI/MCP 共用一份（roadmap ⑥-P0-3：避免 GUI 与 CLI 行为漂移）；
+	 *  这里只做 DTO 映射，并在"完全拿不到映射"时结合文件系统状态补一句更准确的话。
 	 */
 	synctexInverse: (page: number, x: number | null, y: number | null) => typedError<InverseResultDto, CmdError>(__TAURI_INVOKE("synctex_inverse", { page, x, y })),
 	getSettings: () => typedError<Settings, CmdError>(__TAURI_INVOKE("get_settings")),
