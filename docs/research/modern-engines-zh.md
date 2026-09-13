@@ -9,7 +9,7 @@
 | 问题 | 答案 |
 |---|---|
 | 有比 XeLaTeX 现代、又能排中文的引擎吗 | ✅ **LuaLaTeX** = LuaHBTeX 1.24.0（TeX Live 2026）。中文走 `ctex → luatexja`；本机两条夹具（28 页 / 74 页）都编出来了，**页数与 XeLaTeX 一致** |
-| 还有别的候选吗 | **Tectonic**（Rust、XeTeX 衍生、自动取包、可复现）——**本机未安装，全部结论未测**；~~LuaJITTeX~~ ❌ [已测并否决](#73-试过的-lualatex-针对性优化逐项结论)：TL2026 **没有 luajitlatex**（`fmtutil.cnf` 只有 plain 的 `luajittex`），手工建 JIT+LaTeX 格式也失败；Typst / ConTeXt 不是 LaTeX 替代品 |
+| 还有别的候选吗 | **Tectonic**（Rust、XeTeX 衍生、自带 bundle、可复现）——**已做源码级评估（§8）：机制上几乎逐条对得上我们（`--outfmt xdv` 直出 XDV + 页事件 + 格式缓存 + 认 `SOURCE_DATE_EPOCH`），但没有运行数字**（源码缺 harfbuzz 子模块、网络被封、机器在临时电源上）；~~LuaJITTeX~~ ❌ [已测并否决](#73-试过的-lualatex-针对性优化逐项结论)：TL2026 **没有 luajitlatex**（`fmtutil.cnf` 只有 plain 的 `luajittex`），手工建 JIT+LaTeX 格式也失败；Typst / ConTeXt 不是 LaTeX 替代品 |
 | 快吗 | ❌ **3.2–3.5× 慢**（§2 表）：28 页 6468 vs 1870 ms；74 页 7111 vs 2189 ms |
 | 首次使用贵吗 | ❌ 冷启动要建字体缓存：**25.8 s / 23.6 MB / 35 个文件**，且缓存目录必须可写 |
 | 我们的 Quick（编辑触发单趟）能用吗 | ~~❌ 不能用~~ ✅ **已修（#25）**：原实测两种失败——干净项目 → `xdvipdfmx` 找不到 `.xdv` **报编译失败**（引擎其实成功了）；有遗留 XDV 时 → **转出上一次 XeLaTeX 的 PDF 并覆盖 LuaLaTeX 的产出，还报成功** |
@@ -202,7 +202,9 @@ luajittex --luaonly bench-lua.lua     # 与 lualatex --luaonly 对照；jit.on()
 
 ## 6. 未验证与局限
 
-1. **Tectonic 完全未测**（本机未安装）：它的"现代性"（自动取包 / 可复现 / 增量缓存）全是**外部资料判断**，没有本机数字；它对中文的实际表现（bundle 里的 Fandago 字体、系统字体、`ctex` 可用性）也未知。
+1. **Tectonic 只做了源码级评估**（§8）：结构上它几乎逐条对得上我们的机制（`--outfmt xdv` 直出 XDV、事件式解析器带页事件、
+   格式缓存、认 `SOURCE_DATE_EPOCH`、SyncTeX、自带收敛），但**没有任何运行数字**——源码 tarball 不含 harfbuzz 子模块、
+   无预编译二进制，且当时网络被封 + 机器在临时电源上。**未验证**：中文实际能否编、速度快慢、XDV 能否直接喂 `xdv.rs`、bundle 获取成本。
 2. ~~**LuaJITTeX 未测**~~ ✅ **已测并否决**（§7.3 #1）：TL2026 的 `fmtutil.cnf` 里**没有 luajitlatex**（只有 plain 的 `luajittex`/`luajithbtex` + `luatex.ini`），手工给 JIT 引擎建 LaTeX 格式也失败 ⇒ 这个版本上"JIT + LaTeX + 中文"**没有受支持的配置**（因此它是否更快仍是空白，但没有可用的落地形态）。
 3. **fmt 的收益数字没拿到，但"能不能用"已有答案**：dump 成功（`article` 格式运行成功），**中文文档运行时失败**——根因是 `luatexja`（§7.6 五组对照）。**上限已量化**：导言区占 LuaLaTeX 单趟 44%（2869/6468 ms，§7.4），但这条上限拿不到。
 4. **回调只做了"能注册、能触发"这一层**：逐页指纹验证到"页号准确 + 引擎侧零开销"（§7.2），但**没有验证把它接成 B/C 的页级复用是否真的正确**（需要与"PDF 实际变化页"对齐）；"零侵入拦截 I/O"的正确 reader 实现也**没做通**（§3.3 坑 2）。
@@ -422,3 +424,61 @@ lualatex -fmt="<abs>\partial.fmt" -interaction=nonstopmode -output-directory=tmp
 3. **逐次校验**：没见到 `Output written` 的样本直接丢弃并记录原因；
 4. **带控制组**：CPU（Lua 微基准，本轮基线 numeric 18–24 ms）、磁盘 I/O（400 文件热读 178 MB/s）、字体（`fc-list` ~0.7 s）——控制组异常就先修环境，别测；
 5. **只信同批比值**：跨会话的绝对值可以差 ±30%（缓存/温度/电源都影响），倍率才有意义。
+
+## 8. Tectonic 0.17：源码级评估（**未运行**，2026-09 追加）
+
+§1 把 Tectonic 列为候选但"本机未安装、全部结论未测"。拿到源码（`E:\Works\tectonic-tectonic-0.17.0`，871 文件 / 12.6 MB）
+后先做**源码级对照**——本节所有结论都标注了证据文件，**没有一条是运行测出来的**（原因见 §8.3）。
+
+### 8.1 它是什么（结构事实）
+
+- **XeTeX 衍生引擎**：`crates/engine_xetex`（42 文件，其中 36 个 `.c/.h`，1.76 MB）——**引擎 C 源码在库内**，不依赖空着的 `reference_sources` 子模块。
+- **自带 Rust 版 xdvipdfmx**：`crates/engine_xdvipdfmx`（8 文件）→ 不需要外部转换进程。
+- **XDV 是一等输出格式**：`src/driver.rs` 的 `OutputFormat` 含 `Xdv`/`Pdf`/`Html`/`Aux`，CLI 有 `--outfmt`（`src/bin/tectonic/compile.rs:43`）。
+- 组合方式：`crates/` 下 **26 个子 crate**（`bridge_harfbuzz`/`bridge_icu`/`bridge_freetype2`/`bridge_fontconfig`/`bridge_graphite2`/`bridge_png`、`engine_bibtex`、`pdf_io`、`xdv`、`xetex_format`、`engine_spx2html` …）。
+
+### 8.2 与 Latteset 的需求逐条对照（源码证据）
+
+| 我们的需求 | Tectonic 0.17 的答案 | 证据 |
+|---|---|---|
+| 中文（ctex/xeCJK 路线） | ✅ 同源 XeTeX 路径；bundle 的 `search_order` 含 `tex/{xelatex,latex,xetex,plain,generic}//` 与 `fonts//`（ctex/xeCJK 在 `tex/latex` 下） | `bundles/bundles/texlive2024-0312/bundle.toml:77-89` |
+| **页级复用 A/B/C 的输入（XDV）** | ✅ **`--outfmt xdv` 直出 XDV**（等价于我们的 `xelatex -no-pdf`），转换由自带 Rust xdvipdfmx 按需做 | `src/driver.rs` `OutputFormat::Xdv`；`src/bin/tectonic/compile.rs:43,118` |
+| 逐页信息（页边界） | ✅ 事件式 XDV 解析器**有 `handle_begin_page`**，还提供 `checkpoint()/current_offset()/process_with_seeks()` —— 正是我们 G2/阶段 3 手搓的"增量 + 字节偏移"能力 | `crates/xdv/src/lib.rs:115,128`（`trait XdvEvents`） |
+| Quick/Full 两级强度 | ✅ 有 `--reruns N` 自己做多趟收敛；`--outfmt xdv` 天然就是"只排版"那一级 | `src/bin/tectonic/compile.rs` |
+| 启动开销摊销（fmt 那一类） | ✅ `src/io/format_cache.rs`：**按 bundle digest 缓存已编译 format** | `src/io/format_cache.rs` |
+| 构建确定性（㉚） | ✅ 认 `SOURCE_DATE_EPOCH`，另有 `force_deterministic` 回退到 UNIX_EPOCH | `src/driver.rs`（`build_date_from_env`） |
+| SyncTeX | ✅ `synctex: bool` 选项 | `src/driver.rs` |
+| 监听/触发 | ✅ 自带 `watch` 子命令 | `src/bin/tectonic/v2cli/commands/watch.rs` |
+| 语义层（roadmap ⑧⑨） | 🟡 有 `.spx` 语义中间产物 + `engine_spx2html` + `--outfmt html`，可作参考实现 | `crates/engine_spx2html`、`src/driver.rs` |
+| **文件从哪来** | ⚠️ **不用用户的 TeX Live**：自带 bundle，默认从 `https://relay.fullyjustified.net/default_bundle_v{N}.tar` 下载；bundle 由 **TeX Live 2024 tarball + 补丁**构建，且**排除** `tex/luatex`、`tex/lualatex`、`context` 等 | `crates/bundles/src/lib.rs:303-328`；`bundles/bundles/texlive2024-0312/bundle.toml:41-75` |
+| 系统字体 | ⚠️ 走 **fontconfig**（`bridge_fontconfig`）→ 与刚记录的 [fontconfig 缓存故障](../troubleshooting.md) 同源：Windows 上缓存坏了同样会把它拖慢 | `crates/bridge_fontconfig` |
+| 引擎内核可改（上游 TeXpresso 那条路） | 🟡 引擎 C 源码在库内、且是 **Rust + C 的可嵌入库** → 比"给 TeX Live 的 XeTeX 打补丁"更可控，但仍是自维护分支（与 ADR-0003 的正交性问题） | `crates/engine_xetex` |
+
+**读法**：在"我们要的机制"这一层，Tectonic 几乎逐条对得上——**XDV 直出 + 页级事件 + 格式缓存 + 确定性 + SyncTeX + 自带收敛**；
+真正的**结构性差异只有一条**：它自带 bundle，不读用户的 TeX Live。这对我们是双面的：
+- **加分**：用户不必装 TeX Live，装个二进制就能编（对 Windows 中文用户是实打实的体验优势）；
+- **减分**：要么联网下 bundle（默认路径是外网 relay），要么自己用 TL tarball 建 bundle（要 GNU patch + 最新 TL 2024 tarball）；而且**宏包/字体集**由 bundle 决定，用户手上那些依赖本机 TL 的模板可能对不上；字体解析还多依赖一个 fontconfig。
+
+### 8.3 为什么这一轮**没有**测出任何数字
+
+- 源码 tarball **不含子模块**：`crates/bridge_harfbuzz/harfbuzz`（构建 `bridge_harfbuzz` 时要编译的 harfbuzz C 源码）与 `reference_sources` 都是**空目录**；`dist/` 里只有打包脚本，**没有预编译二进制**。
+- 因此要跑起来必须先：① 取 harfbuzz 源码（或走 `external-harfbuzz` feature 找系统库）；② `cargo fetch` 拉 **463 个 crate**（`Cargo.lock` 已锁定）；③ 构建（大量 C 依赖）；④ 取/建 **bundle**。
+- 而本机当时：**网络默认被封**（`git ls-remote` 报 `schannel: AcquireCred…`，需要提权），且机器正挂在**临时 40 分钟电源**上 → 不适合开一场 15–30 分钟的构建 + 上百 MB 下载。
+
+**测量方案（等电源/网络条件允许，一条条照做即可）**：
+
+```powershell
+# 1) 源码进工作区（避免在源码目录写 target/），并补上 harfbuzz
+Copy-Item E:\Works\tectonic-tectonic-0.17.0 test_file\tectonic-src -Recurse     # 提权
+git clone --depth 1 https://github.com/harfbuzz/harfbuzz.git test_file\tectonic-src\crates\bridge_harfbuzz\harfbuzz
+# 2) 依赖重定向进工作区（~/.cargo 在工作区外，沙箱会拒写）
+$env:CARGO_HOME = "E:\Works\tex-presso\.cargo-home"
+cargo fetch --locked --manifest-path test_file\tectonic-src\Cargo.toml
+# 3) 构建（release）
+cargo build --release --manifest-path test_file\tectonic-src\Cargo.toml
+# 4) 取默认 bundle（或按 bundles/README 用 TL tarball 自建）
+.\test_file\tectonic-src\target\release\tectonic.exe -X compile --outfmt xdv --keep-logs --synctex `
+  test_file\projects\bench\_zhcmp\thesis\main.tex
+```
+
+**要测的四件事**（都对着 §7 的口径）：① 中文能否编（ctex/xeCJK + bundle 字体 vs 系统字体）；② **单趟速度**（`--outfmt xdv`）与 XeLaTeX `-no-pdf` 比；③ **产出的 XDV 能否直接喂我们现有的 `xdv.rs`**（页哈希/变化页判定）；④ 首跑 bundle/格式化成本。
