@@ -479,3 +479,12 @@ Select-String -Path kpse.err -Pattern 'searching for|returning from generic sear
 
 1. **"改了 `.bib` 没反应"是已知缺陷，不是操作问题**：`watch` 只对 `.tex` 触发（[modules.md](./modules.md) §7），被 `\bibliography` 引用的 `.bib` 改完，`tmp/` 全部产物 mtime 不变（roadmap ㉜）；反向也错——改**未被引用**的 `.tex` 会白编译一次（roadmap ㉝）。
 2. **别常开 `KPATHSEA_DEBUG`**：它的输出走 **stderr**，而应用的流式错误通道也在读 stderr（[modules.md](./modules.md) §2.6.1）——1 MB 的 `kdebug:` 行会灌进解析缓冲；只在做单次诊断性编译时开。
+
+## 用 WS 探针脚本调前端时踩到的两个坑（2026-09）
+
+「WS 直驱真机」的探针（`node scripts/editor-report.mjs --eval-file <file>`）很好用——它自己连 MCP Bridge 的 9223，不需要 MCP 会话在场。但有两条**不是产品缺陷、却极难自查**的坑：
+
+1. **探针脚本不能以 `//` 注释开头**：应用的执行器把脚本**包进括号**求值，行注释开头会让整段解析失败——而且失败是**静默**的：返回 `null` 而不是 error（脚本里的 `console.log` 也看不到）。**让第一行就是 `(async () => {`**；`Session.eval` 已对 `//`/`/*` 开头的脚本补前导换行兜底。
+2. **别用 mtime 判"某条命令有没有跑"**：验证"跳过 `xdvipdfmx`"时用 `tmp/<stem>.pdf` 的 mtime 当判据，结果被**空闲收敛**（㉘）干扰——Quick 成功后 2s 的收敛 Full 走 latexmk，它自己会重写该文件，看起来像"Quick 没跳过"。**改用日志行判定**（`跳过 xdvipdfmx 转换与 PDF 拷贝`）才看清真相。
+
+顺带一条：探针涉及的 dev 实例只允许一个——端口 1420/9223 被占时新实例会**静默连到旧实例**（日志里看到的项目可能不是你以为的那个）。起实例前先 `Test-NetConnection 127.0.0.1 -Port 1420`。

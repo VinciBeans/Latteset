@@ -138,6 +138,7 @@ node scripts/bench.mjs --with-real         # 追加真实模板档（依赖本�
 - **无构建产物自动升级**：`tmp/<stem>.aux` 不存在时单趟会让引用全成 `??`，runner 探测后自动升级为 Full，并把**实际**执行的强度回传（升级趟不误报草稿）。
 - **空闲收敛**：成功且为草稿后停手 **2000ms**（任何编辑或新编译都取消）补一次 Full，把目录/交叉引用页码追上；期间状态栏显示琥珀色「引用待更新」，只由下一次成功且为 Full 的编译清除（失败与运行中都不清——屏幕上的 PDF 没变）。
 - **编译中反馈**（阶段 2，2026-09）：状态栏显示「已排版 N 页」（来自引擎 `[N]` 标记，只升不降——多趟重启不回跳）；真机实测 400KB / 162 页 ctexbook 首编 `1.7s 起 running → 3.4–4.8s 页数 2→162 → 8.2s success`。预览仍只在编译成功后刷新（编译期无中间 PDF，见 [阶段 2 报告](./research/stage2-streaming-feasibility.md) 与 [G2 报告](./research/g2-byte-offset-resync.md)）。
+- **页级复用**（2026-09，[增量编辑 × DVI](./research/incremental-edit-x-dvi.md)）：每次编译后按 `tmp/<stem>.xdv` 的**页哈希**与上一轮比对，把"哪些页变了"随 `pdf-updated` 下发，换来三处复用——**逐页未变则不刷新预览**、**部分变化则只重绘变化页**（实测 74 页文档改末章：render **102ms → 7ms**）、**页哈希全同则跳过 PDF 转换**（Quick 改 `xelatex -no-pdf` + 条件 `xdvipdfmx`）。三者的收益都落在"下游重复工作"，不改变排版本身（重排场景仍会命中大量页）。
 - **真机证据**（tauri server MCP，`multifile`）：一个 cycle 内 就绪 → 排版中 → 就绪 +「引用待更新」→ **Δ≈2.0s** 后再次排版中（收敛的 Full）→ 就绪、提示消失；`tmp/main.fdb_latexmk` 由收敛那一趟更新（晚于 Quick 趟）而 Quick 趟不动它——确证收敛真的跑了 latexmk、Quick 真的没跑。
 - **未验证**：bib/biber 场景下编辑期单趟的可用性（现有 fixture 编辑期不触发 bibtex；收敛兜底应能覆盖，但没有实测结论）。
 

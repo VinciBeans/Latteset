@@ -244,10 +244,13 @@ impl CompileRunner for LatexmkRunner {
 
 ```
 Full（默认）：latexmk -xelatex -outdir=tmp -synctex=1 -interaction=nonstopmode <root_file 相对项目根路径>
-Quick（编辑期）：xelatex -interaction=nonstopmode -synctex=1 -output-directory=tmp <root_file 相对项目根路径>
+Quick（编辑期）：xelatex **-no-pdf** -interaction=nonstopmode -synctex=1 -output-directory=tmp <root_file 相对项目根路径>
   —— 直调引擎单趟，不经 latexmk（实测省 40% 中位，见 design.md §延迟预算实测附节）
   —— 前置条件：tmp/<stem>.aux 存在（有上一趟产物）；否则 runner 自动升级为 Full
      （单趟在无 .aux/.toc 时会让引用全成 `??`），且 `Success{kind}` 报 Full
+  —— `-no-pdf`（2026-09，docs/research/incremental-edit-x-dvi.md 功能点 A）：只产 XDV，
+     PDF 由 runner 在收尾时**按需**调 `xdvipdfmx -q -o tmp/<stem>.pdf tmp/<stem>.xdv` 转换；
+     若本次页哈希与上次**逐页相同**则整个跳过转换与拷贝（复用项目根已有 PDF）
 XeLaTeX → -xelatex / xelatex；PdfLaTeX → -pdf / pdflatex；LuaLaTeX → -lualatex / lualatex
 cwd = project_root（相对 input/include 才能解析）；输入用完整相对路径（嵌套根文件如 css/thesis.tex 也能编译）
 产物：tmp/<root>.pdf（原子拷贝到项目根）；tmp/<root>.synctex.gz（SyncTeX CLI 用）；tmp/<root>.log（解析用）
@@ -656,7 +659,7 @@ export function subscribeEvents(): () => void
 //   compile-progress → compileStore.setProgress（中间态：仅 running 时采纳，只增不减）
 //   compile-errors   → compileStore.setLiveErrors（中间态：仅 running 时采纳）
 //   errors-updated   → compileStore.setErrors（**权威终态**，无条件写入）
-//   pdf-updated    → previewStore.reload
+//   pdf-updated    → previewStore.onPdfUpdated（含 changed_pages/pages：可能**不重载**）
 //   files-changed  → editorStore.onFilesChanged(paths)（过滤+重载判定）
 //                     projectStore.refreshTreeDebounced(structural)（300ms 防抖；仅结构变化重建）
 //   settings-changed → settingsStore.setSettings
@@ -677,7 +680,7 @@ useAutoSave 依赖 editorStore.dirty + settingsStore（读）
 | projectStore | project、rootFile、fileTree | openProject、refreshTree、refreshTreeDebounced、resolvePath、relativizePath（绝对 → 项目内相对路径，`update_settings` 唯一可接受的形态）、syncProject（经 `get_project` 重新同步） |
 | editorStore | openTabs[]、activePath、dirtyPaths:Set、lastSaved:Map<path,time>、buffers、externalConflict | openFile、closeTab、markDirty、markSaved、saveAll、onFilesChanged、acceptExternal |
 | compileStore | phase、kind、draft、errors[]、pages | setStatus、setProgress、setLiveErrors、setErrors |
-| previewStore | pdfPath、reloadKey、highlight、syncNote | onPdfUpdated、setHighlight、setSyncNote |
+| previewStore | pdfPath、reloadKey、highlight、syncNote、changedPages、pagesTotal、skippedReloads | onPdfUpdated（**页哈希全同则不递增 reloadKey**）、setHighlight、setSyncNote |
 | settingsStore | settings | setSettings、updateSettings |
 
 **前端自保存过滤算法（editorStore.onFilesChanged）**：入参 paths 中，`lastSaved` 里存在且时间近（< 2s）的路径判定为"自己刚保存"→ 忽略；其余 → 已打开且不脏 → 重载内容；已打开且脏 → 保留 + 状态栏提示；未打开 → 忽略（文件树自会刷新）。`lastSaved` 是 editorStore 模块内状态，不进任何函数参数。
@@ -727,9 +730,10 @@ useAutoSave 依赖 editorStore.dirty + settingsStore（读）
 
 - **分页 DOM 虚拟化**：只挂载视口窗口内的页（`mountStart..mountEnd`，前后各 `PAGE_WINDOW=6`），顶部/底部占位撑住总高度；`renderNearViewport` / `updateCurrentPage` 只遍历窗口内页 → 复杂度 O(视口)，不是 O(总页数)。滚动驱动 + 窗口变化 watcher + 容器 `ResizeObserver`（不用 IntersectionObserver）。
 - **canvas 代次**：`structuralEpoch` **仅在缩放 / 换文档时递增**（重建 canvas DOM）；同文件内容重载**复用 DOM**（`doRenderPage` 每次 `canvas.width=` 即重置 2D context），`pageH1` 保留 → 滚动恢复精确。
+- **只重绘变化页**（2026-09，[incremental-edit-x-dvi.md](./research/incremental-edit-x-dvi.md) 功能点 C）：`load()` 不再无条件 `renderedScale.clear()`——**同文件 + 页数一致 + 有变化页集合**时只让变化页失效，其余页沿用旧 canvas（`renderPage` 的 `renderedScale.get(n) === scale` 闸门自然跳过重绘）。安全依据：XDV 页哈希相同 ⇒ 页字节等价 ⇒ 页尺寸与内容都不变。其余情形（换文档 / `pages == 0` 无法判定 / 页数变了）仍全部重绘。实测：74 页文档改末章 → `pagesRendered 7→0`、`pagesReused 7`、render 102ms→7ms。
 - **页高是布局的唯一驱动**：`.page-wrap` 高度绑定 `pageH1[n]×scale`（`pageWrapHeight(n)`），不依赖 canvas 尺寸。两类复发路径：① 释放/重建把 canvas 置 0×0 时页-wrap 塌缩到只剩边距 → `scrollHeight` 变短（滚动条拖不到真实末尾），且 `renderNearViewport` 用 `getBoundingClientRect`（0 高）把近页误判为远页而释放（PDF 消失）；② `pageH1`/`prefixH1` 是普通数组（非响应式），页高变化必须靠 `layoutRev` 自增让相关 computed 重算。`.page-wrap canvas { display:block }` 消除内联 canvas 在强制高度下的基线缝隙。
 - **跳转先预热页高**：`renderPage` 返回渲染链 promise（`await` 真正完成 + `setHeight` 记录页高），跳转前预热目标页及之前页高并 `nextTick`，用瞬间定位（`behavior:"auto"`）——平滑滚动会在中途布局变化下跳不到位。页码输入与 SyncTeX 正向共用 `goToPage(n)`（展开窗口 + 预热 + 渲染 + 居中）。
-- 插桩：`window.__previewLastReload` + 控制台 `[preview] reload#N`（真机验收清单第 6 项读它）；耗时基线见 [design.md](./design.md) §预览。
+- 插桩：`window.__previewLastReload` + 控制台 `[preview] reload#N`（真机验收清单第 6 项读它）；耗时基线见 [design.md](./design.md) §预览。**`pagesReused`**（2026-09）与 `pagesRendered` 并列——"复用了多少页"是功能点 C 的判据。
 
 ### 9.5 编辑器语言特性（latexSuggest.ts / texParse.ts）
 
@@ -768,7 +772,12 @@ errors-updated: ErrorEntry[]                       // 失败时携带；编译�
 compile-progress: { pages: number }                // **中间态**（阶段 2）：编译中已排版页数，只升不降；仅 running 时采纳
 compile-errors:  ErrorEntry[]                      // **中间态**（阶段 2）：编译中解析到的致命错误（不含 Overfull 等警告）；仅 running 时采纳
                                                    // 中间态与终态**刻意分开**：收尾补发可能晚于终态抵达，共用事件名会顶掉权威列表（§2.6.1）
-pdf-updated:    { path: string }
+pdf-updated:    { path: string, changed_pages: number[], pages: number }
+                                                   // 页级差异（2026-09，incremental-edit-x-dvi.md 的 B/C）：
+                                                   //   pages>0 且 changed_pages 空 → 逐页未变 → 前端**跳过重载**；
+                                                   //   pages>0 且非空 → 只重绘这些页（其余复用 canvas）；
+                                                   //   pages==0 → 无法判定（XDV 缺失/损坏）→ 全量刷新
+                                                   // 来源：runner 读 tmp/<stem>.xdv 算页哈希 → 调度器与上一轮比对
 files-changed:  { paths: string[], structural: boolean }   // structural=true 仅增/删/重命名（文件树重建）；内容修改为 false（跳过）
 settings-changed: Settings
 ```
