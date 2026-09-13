@@ -8,7 +8,7 @@
 //! 且流式错误**只报致命错误、不报警告**（理由见 [`entries_from_log`]）。
 
 use async_trait::async_trait;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use latteset_core::log_parser::{
@@ -196,6 +196,15 @@ fn fingerprint(entries: &[ErrorEntry]) -> u64 {
     h.finish()
 }
 
+/// 页哈希缓存路径（与 XDV 同目录：`tmp/<stem>.pages`）。
+///
+/// 为什么放**磁盘**而不是 runner 内存（功能点 A 的设计取舍）：runner 保持无状态（`&self` 不可变、
+/// 一次调用完全独立，见 modules.md §2.6）；而且这份基线能被 Quick 与 Full 两条路径共享——
+/// 若各自记在内存里，两者交替时会把对方的产物当成"变了"，白白多转换一次。
+fn pages_cache_path(tmp_dir: &Path, stem: &str) -> PathBuf {
+    tmp_dir.join(format!("{stem}.pages"))
+}
+
 fn root_stem(root_file: &Path) -> String {
     root_file
         .file_stem()
@@ -222,9 +231,14 @@ fn compile_command(req: &CompileRequest, kind: CompileKind) -> tokio::process::C
     let mut cmd = match kind {
         // Quick：直调引擎一趟（实测比完整 latexmk 快 40% 中位，见 design.md §延迟预算实测附节）。
         // 与 latexmk 的差异只在外层机制与收敛趟；产物路径与 Full 一致（都在 tmp/<stem>.pdf）。
+        //
+        // `-no-pdf`（2026-09，功能点 A）：直调引擎**只产 XDV**，PDF 改为由我们在收尾时按需调
+        // `xdvipdfmx` 转换——这样"页哈希与上次逐页相同"时就能整个跳过转换（省 0.65–0.94s/次）。
+        // latexmk 内部走的也是这条序列（`xelatex -no-pdf` → `xdvipdfmx -E -o …`，见 design.md）。
         CompileKind::Quick => {
             let mut c = tokio::process::Command::new(req.engine.binary_name());
-            c.arg("-interaction=nonstopmode")
+            c.arg("-no-pdf")
+                .arg("-interaction=nonstopmode")
                 .arg("-synctex=1")
                 .arg(format!("-output-directory={OUT_DIR}"))
                 .arg(latexmk_input(&req.root_file, &req.project_root));
@@ -337,32 +351,11 @@ impl CompileRunner for LatexmkRunner {
             }
             status = child.wait() => match status {
                 Ok(s) if s.success() => {
-                    // 成功：tmp/<stem>.pdf → 项目根（design.md 产物位置）
-                    // 原子拷贝：先写临时文件再 rename，失败时旧 PDF 保留（不被截断/损坏）。
-                    let pdf_src = tmp_dir.join(format!("{stem}.pdf"));
-                    let pdf_tmp = pdf_dst.with_extension("pdf.tmp");
-                    let copy = async {
-                        tokio::fs::copy(&pdf_src, &pdf_tmp).await?;
-                        tokio::fs::rename(&pdf_tmp, &pdf_dst).await
-                    };
-                    match copy.await {
-                        Ok(_) => {
-                            // 页级差异的判据（docs/research/incremental-edit-x-dvi.md 的 B/C）：
-                            // 读本次产出的 XDV 算页哈希，交给调度器与上一轮比对。读不到 → 空表
-                            // = "无法判定"，前端保守全量刷新（这是优化判据，失败不上报为错误）。
-                            let page_hashes = self.page_hashes(&tmp_dir, &stem).await;
-                            CompileOutcome::Success {
-                                pdf_path: pdf_dst,
-                                kind,
-                                page_hashes,
-                            }
-                        }
-                        Err(e) => {
-                            let _ = tokio::fs::remove_file(&pdf_tmp).await;
-                            CompileOutcome::IoError {
-                                message: format!("PDF 拷贝失败（{} → {}）：{e}", pdf_src.display(), pdf_dst.display()),
-                            }
-                        }
+                    // 成功收尾抽成方法：里面可能"跳过转换"提前返回，而 select 分支里**不能直接 return**
+                    // （会跳过下面的 stop/join 收尾，泄漏读任务）。
+                    match self.finish_success(&req, &tmp_dir, &stem, kind, &pdf_dst).await {
+                        Ok(outcome) => outcome,
+                        Err(message) => CompileOutcome::IoError { message },
                     }
                 }
                 Ok(_) => {
@@ -426,6 +419,135 @@ impl LatexmkRunner {
                 debug!(path = %path.display(), "读 XDV 失败，页级差异不可判定：{e}");
                 Vec::new()
             }
+        }
+    }
+
+    /// 成功收尾：页哈希 →（必要时）`xdvipdfmx` 转换 → 拷贝到项目根 → 缓存页哈希。
+    ///
+    /// 功能点 A（docs/research/incremental-edit-x-dvi.md §2.2）就在这里落地：Quick 路径改用
+    /// `-no-pdf` 后不再自己转 PDF，于是"本次 XDV 页哈希与上次**逐页相同**"时可以：
+    /// **跳过转换与拷贝，直接复用项目根已有的 PDF**（省 0.65–0.94s/次）。
+    /// Full（latexmk）自己会转换，不受影响。
+    ///
+    /// 返回 `Err(message)` → 调用方包装成 `IoError`。
+    async fn finish_success(
+        &self,
+        req: &CompileRequest,
+        tmp_dir: &Path,
+        stem: &str,
+        kind: CompileKind,
+        pdf_dst: &Path,
+    ) -> Result<CompileOutcome, String> {
+        // 页级差异的判据（B/C/A 三个功能点共用）：读本次产出的 XDV 算页哈希。
+        // 读不到 → 空表 = "无法判定"，一切优化路径都不走（保守）。
+        let page_hashes = self.page_hashes(tmp_dir, stem).await;
+        let cache_path = pages_cache_path(tmp_dir, stem);
+        let prev = self.read_pages_cache(&cache_path).await;
+        let unchanged = !page_hashes.is_empty() && prev.as_deref() == Some(page_hashes.as_slice());
+        let pdf_src = tmp_dir.join(format!("{stem}.pdf"));
+
+        if kind == CompileKind::Quick {
+            // 复用条件：内容逐页未变 **且** 项目根确实已经有上一次的 PDF（用户可能手删过）
+            let reusable = unchanged && tokio::fs::try_exists(pdf_dst).await.unwrap_or(false);
+            if reusable {
+                debug!(
+                    pages = page_hashes.len(),
+                    "页哈希与上次逐页相同：跳过 xdvipdfmx 转换与 PDF 拷贝（复用现有产物）"
+                );
+                self.write_pages_cache(&cache_path, &page_hashes).await;
+                return Ok(CompileOutcome::Success {
+                    pdf_path: pdf_dst.to_path_buf(),
+                    kind,
+                    page_hashes,
+                });
+            }
+            self.convert_xdv(tmp_dir, stem, &req.project_root).await?;
+        }
+
+        // tmp/<stem>.pdf → 项目根（design.md 产物位置）
+        // 原子拷贝：先写临时文件再 rename，失败时旧 PDF 保留（不被截断/损坏）。
+        let pdf_tmp = pdf_dst.with_extension("pdf.tmp");
+        let copy = async {
+            tokio::fs::copy(&pdf_src, &pdf_tmp).await?;
+            tokio::fs::rename(&pdf_tmp, pdf_dst).await
+        }
+        .await;
+        if let Err(e) = copy {
+            let _ = tokio::fs::remove_file(&pdf_tmp).await;
+            return Err(format!(
+                "PDF 拷贝失败（{} → {}）：{e}",
+                pdf_src.display(),
+                pdf_dst.display()
+            ));
+        }
+        self.write_pages_cache(&cache_path, &page_hashes).await;
+        Ok(CompileOutcome::Success {
+            pdf_path: pdf_dst.to_path_buf(),
+            kind,
+            page_hashes,
+        })
+    }
+
+    /// 调 `xdvipdfmx` 把 `tmp/<stem>.xdv` 转成 `tmp/<stem>.pdf`（Quick 路径专用）。
+    ///
+    /// 为什么需要它：Quick 用了 `-no-pdf` 就没人转 PDF 了——而"按需转换"正是跳过转换的前提。
+    /// Full 路径由 latexmk 内部完成同一件事（`xdvipdfmx -E -o …`）。
+    async fn convert_xdv(&self, tmp_dir: &Path, stem: &str, project_root: &Path) -> Result<(), String> {
+        let xdv = tmp_dir.join(format!("{stem}.xdv"));
+        let pdf = tmp_dir.join(format!("{stem}.pdf"));
+        let out = tokio::process::Command::new("xdvipdfmx")
+            .arg("-q")
+            .arg("-o")
+            .arg(&pdf)
+            .arg(&xdv)
+            .current_dir(project_root)
+            // 与 latexmk 那条路径保持一致（㉚ 构建确定性）
+            .env("SOURCE_DATE_EPOCH", EPOCH_FOR_REPRODUCIBLE_BUILD)
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::piped())
+            .output()
+            .await
+            .map_err(|e| format!("无法启动 xdvipdfmx（TeX Live 未安装？）：{e}"))?;
+        if !out.status.success() {
+            let err = String::from_utf8_lossy(&out.stderr);
+            let tail: Vec<&str> = err.lines().filter(|l| !l.trim().is_empty()).take(5).collect();
+            return Err(format!(
+                "xdvipdfmx 转换失败（exit={:?}）：{}",
+                out.status.code(),
+                if tail.is_empty() { "（无 stderr 输出）".to_string() } else { tail.join(" / ") }
+            ));
+        }
+        Ok(())
+    }
+
+    /// 读上一次的页哈希缓存（`tmp/<stem>.pages`）。
+    ///
+    /// 缺失/损坏 → `None` = **无法判定** → 不做任何"跳过"优化（保守）。
+    async fn read_pages_cache(&self, path: &Path) -> Option<Vec<u64>> {
+        let text = self.fs.read_to_string(path).await.ok()?;
+        let mut out = Vec::new();
+        for line in text.lines() {
+            let t = line.trim();
+            if t.is_empty() {
+                continue;
+            }
+            out.push(u64::from_str_radix(t, 16).ok()?);
+        }
+        if out.is_empty() {
+            None
+        } else {
+            Some(out)
+        }
+    }
+
+    /// 写页哈希缓存（失败只记 debug：它是优化判据，不该让编译失败——最坏结果是下次多转换一次）。
+    async fn write_pages_cache(&self, path: &Path, hashes: &[u64]) {
+        if hashes.is_empty() {
+            return; // "无法判定"不写缓存，免得把下一次也带偏
+        }
+        let body: String = hashes.iter().map(|h| format!("{h:016x}\n")).collect();
+        if let Err(e) = self.fs.write(path, &body).await {
+            debug!(path = %path.display(), "写页哈希缓存失败（下次会多转换一次）：{e}");
         }
     }
 
@@ -607,6 +729,8 @@ mod tests {
         assert_eq!(
             argv(&cmd),
             vec![
+                // -no-pdf（功能点 A）：直调引擎只产 XDV，PDF 改由 finish_success 按需调 xdvipdfmx 转换
+                "-no-pdf",
                 "-interaction=nonstopmode",
                 "-synctex=1",
                 "-output-directory=tmp",
@@ -687,6 +811,64 @@ mod tests {
             timeout: Duration::from_secs(60),
             kind: CompileKind::Full,
         }
+    }
+
+    /// 同一项目上的 Quick 请求（编辑触发的强度）。
+    fn quick_req(project: &TempProject) -> CompileRequest {
+        CompileRequest {
+            kind: CompileKind::Quick,
+            ..req(project)
+        }
+    }
+
+    /// 功能点 A（docs/research/incremental-edit-x-dvi.md §2.2）：页哈希与上次**逐页相同**时，
+    /// Quick 路径跳过 `xdvipdfmx` 转换与 PDF 拷贝。
+    ///
+    /// 判据用 `tmp/main.pdf` 的 mtime：转换没跑 ⇒ 文件不会被重写。
+    #[tokio::test]
+    #[ignore]
+    async fn skips_conversion_when_page_hashes_unchanged() {
+        if !latexmk_available() {
+            eprintln!("跳过：系统未安装 latexmk（需要 TeX Live/MiKTeX）");
+            return;
+        }
+        let project = TempProject::new("skip-convert");
+        project.put(
+            "main.tex",
+            "\\documentclass{article}\n\\begin{document}\nStable content for skip test.\n\\end{document}\n",
+        );
+        let runner = LatexmkRunner::new(
+            std::sync::Arc::new(crate::fs::TokioFs),
+            std::sync::Arc::new(latteset_core::scheduler::NoProgress),
+        );
+        let tmp_pdf = project.dir.join("tmp/main.pdf");
+
+        // 1) Full：建产物 + 写页哈希缓存
+        let first = runner.compile(req(&project), CancellationToken::new()).await;
+        assert!(matches!(first, CompileOutcome::Success { .. }), "预期成功：{first:?}");
+
+        // 2) 第一次 Quick：与 Full 的页哈希可能不同（收敛趟差异）→ 允许转换；这一步确立 Quick 基线
+        let second = runner.compile(quick_req(&project), CancellationToken::new()).await;
+        assert!(matches!(second, CompileOutcome::Success { .. }), "预期成功：{second:?}");
+        tokio::time::sleep(Duration::from_millis(1100)).await; // 避开文件系统 mtime 粒度
+        let before = std::fs::metadata(&tmp_pdf).expect("tmp/main.pdf 应存在").modified().unwrap();
+
+        // 3) 第二次 Quick：同源同强度 → 页哈希必然相同 → 必须跳过转换
+        let third = runner.compile(quick_req(&project), CancellationToken::new()).await;
+        let CompileOutcome::Success { page_hashes, .. } = &third else {
+            panic!("预期成功：{third:?}");
+        };
+        assert!(!page_hashes.is_empty(), "应产出页哈希，否则'跳过'的判据不成立");
+        let after = std::fs::metadata(&tmp_pdf).expect("tmp/main.pdf 应存在").modified().unwrap();
+        assert_eq!(
+            after, before,
+            "页哈希未变时不应重写 tmp/main.pdf（说明 xdvipdfmx 被跳过了）"
+        );
+        // 项目根的 PDF 也必须还在（跳过转换 = 复用上一次的产物）
+        assert!(
+            project.dir.join("main.pdf").exists(),
+            "跳过转换后项目根的 PDF 必须仍然存在"
+        );
     }
 
     /// 成功路径：编译 → PDF 拷贝到项目根 + tmp/ 中间文件 + SyncTeX 双向可用。
