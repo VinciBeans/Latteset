@@ -134,6 +134,8 @@
 
 **明确不做（本评估的 4 条否决项，见 §7）**：fork 快照、seen 水位/trace、增量输出解析（DVI 字节偏移）、VFS 事务回滚。
 
+> **补充（2026-09）："只换显示格式"也评估过并否决**——把预览产物从 PDF 换成 DVI/XDV（不经引擎改造，只读文件）看似能省掉 `xdvipdfmx` 并拿到页级增量，实测结果是**从产物到屏幕慢两个数量级**（121 页：`xdvipdfmx` 0.65s vs `dvisvgm` 44.06s），且工具链**拒绝读取未写完的 DVI**（缺 postamble 直接报错）。完整数据、三个选项的成本对照与"唯一值得吸收的一条（页完成度进度信号）"见 **[dvi-preview-feasibility.md](./dvi-preview-feasibility.md)**。
+
 ### 5.5 「那我们自己改造 XeLaTeX 行不行」——评估结论
 
 **法律上可以**：XeTeX 由 Jonathan Kew 开发、按 **X11（MIT 类）许可**分发（[Wikipedia](https://en.wikipedia.org/wiki/XeTeX)），fork 与修改没有许可障碍。按 TeX 系惯例，改过的引擎要**改名**（pdfTeX / XeTeX / LuaTeX 本身都是这么来的），不能继续叫 xelatex。
@@ -205,6 +207,7 @@
 | **自建/改造 TeX 引擎**（含 fork TeX Live 的 xetex） | 见 §5.5：许可允许（X11）但代价是三层（自建构建+分发自建引擎+自己跟包），**且最值钱的 fork 快照在 Windows 上仍不可达**；不改造也能拿到 overlay（LuaLaTeX 回调）。真要走应走 Tectonic 并另立 ADR |
 | **实时协作** | P=0.40；在线方案护城河，本地方案投入产出不成立。定位「个人 / 离线优先」，协作交给 Git |
 | **增量编译** | [ADR-0005](../adr/0005-latexmk-first-incremental-next.md) 已实测证伪：latexmk 增量＝整份单遍重排，属 xelatex 引擎上限 |
+| **DVI/XDV 作为预览格式** | 2026-09 实测：产物→屏幕比 PDF 链路慢 **57–68×**（121 页 `dvisvgm` 44.06s vs `xdvipdfmx` 0.65s + pdf.js 115ms），XDV 体积不定（0.15×–29× PDF），且**未写完的 DVI 无法解析**（缺 postamble 报错）——要利用"边编边出图"必须自研读取器 + 渲染栈。见 [dvi-preview-feasibility.md](./dvi-preview-feasibility.md) |
 | **②-2 引擎自动推断** | ⑲ 实测：**0/19** 模板因默认 XeLaTeX 选错、`\RequirePDFTeX` 0/7374。改用 ④ 的「选错时明确告诉用户怎么改」替代 |
 | **推断 bib 工具链** | 实测 latexmk 自己就会跑 `bibtex`/`biber`，无需推断也无需用户配置 |
 | **自研 PDF 渲染引擎** | pdf.js 已是够用底座；LaTeX Workshop 的教训是"预览是二等公民"，不是"必须自研渲染器" |
@@ -266,3 +269,4 @@
 13. **⑦ 的"大文档"只测了单文件**：462KB/5405 行与 1.36MB/16213 行两档，均为**单文件项目**；调研里 #4410 的症状是「20 个文件 / 近 7000 页」。⑦a 验证时临时造过 11 文件/436KB 的工程（已删），**常驻夹具还没有**——⑦c 的第一步就是把它做出来（≥20 文件）并补打开耗时/内存/树刷新的数字（分析见 [p1-large-doc-editor-analysis.md](./p1-large-doc-editor-analysis.md) §5）。
 14. **⑦ 的 W=5 与"我们是否真有这个病"是两件事**：实测显示竞品的卡顿来自架构（全文档同步计算），而我们在这些路径上已经规避（惰性词法 + O(1) 每击键处理 + Rust 侧解析）。W 保留（用户在意），但 C 必须按实测重估——这正是 §6.5 把 ⑦ 从"C=4 的大工程"拆成 ⑦a/⑦b/⑦c 的依据（⑦a 实测 C=2 属实：一天内完成并真机验证）。
 15. **⑦a 留了一个开口**：大纲只在**编译成功**时刷新，编译一直失败时大纲停在旧结构（旧行为保留）。⑦a 的缓存让"按保存触发"变得便宜（8–10ms/次），但失败编译期间的刷新时机/节流策略要单独定（modules.md §12.1 #17）。
+16. **"编译期页完成度进度"待落地**：DVI 研究（[dvi-preview-feasibility.md](./dvi-preview-feasibility.md)）实测 `.xdv` 在编译中渐进写入（657ms 起有内容、1291ms 达 92%），纯字节解析 BOP 链可以给出「已排版 ≈N 页」，精度实测 ±3%。**不渲染 DVI**，只读字节——C1。未做。
