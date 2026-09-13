@@ -762,6 +762,8 @@ settings-changed: Settings
 | 17 | 大纲只在**编译成功**时刷新 | 编译一直失败时大纲停在旧结构（旧行为保留）。⑦a 的缓存已让"按保存触发刷新"变便宜（8–10ms/次），但有失败编译时的刷新时机/节流策略需要单独定（未做） |
 | 18 | `texpresso-mcp.exe` 被常驻进程占用 | 接了 DSH 的 `mcp-texpresso` 之后，该进程会**锁住二进制**：`cargo build -p texpresso-server` 报「failed to remove file … 拒绝访问」(os error 5)。绕行：只跑 lib（`--lib`）或用独立 `CARGO_TARGET_DIR`（见 [troubleshooting.md](./troubleshooting.md)） |
 
+| 19 | 编译期"已排版 N 页"进度未做（G2 已实测可行） | `tmp/<stem>.xdv` 每次编译都在，页索引只算指令长度：截断到任意位置解出的页与完整文件逐字节相同、全量 4.41MB = 2.7ms。工具见 `scripts/xdv-report.mjs`；**未接线到 UI**（[G2 报告](./research/g2-byte-offset-resync.md)、roadmap §11.16） |
+
 ### 12.2 跨模块不变量（改回去即复发）
 
 - **Quick 的前置条件**：无 `tmp/<stem>.aux` 时 runner 必须把 Quick 升级为 Full，且 `Success{kind}` 报**实际**强度——否则引用全成 `??`，或前端多提示一次「引用待更新」并多跑一次空收敛。
@@ -798,6 +800,7 @@ settings-changed: Settings
 | 只有真实窗口能验的部分 | [troubleshooting.md](./troubleshooting.md) §真机验收清单（tauri server MCP 驱动） |
 | 产品级实测数字与结论 | [design.md](./design.md)（延迟预算、预览重载、编辑期单趟收益、SyncTeX 精度、构建确定性） |
 | 编辑器侧大文档性能（每击键 / 折叠 / 大纲往返） | [research/p1-large-doc-editor-analysis.md](./research/p1-large-doc-editor-analysis.md)（真机探针方法 + 数据；口径待固化为 `scripts/editor-report.mjs`） |
+| DVI/XDV 产物本身（页索引 / 页级差分 / 截断可读性） | `node scripts/xdv-report.mjs <tmp/*.xdv>`（页数可与 `pdfinfo` 对拍；`--diff` 页级差分、`--truncate-at` 半成品、`--watch` 编译期可用性）；结论见 [research/g2-byte-offset-resync.md](./research/g2-byte-offset-resync.md) |
 | 已完成项及其证据 | [roadmap §1 基线](./research/tex-ide-roadmap-priority.md) |
 
 ### 12.4 与上层文档的关系

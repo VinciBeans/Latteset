@@ -135,6 +135,8 @@
 **明确不做（本评估的 4 条否决项，见 §7）**：fork 快照、seen 水位/trace、增量输出解析（DVI 字节偏移）、VFS 事务回滚。
 
 > **补充（2026-09）："只换显示格式"也评估过并否决**——把预览产物从 PDF 换成 DVI/XDV（不经引擎改造，只读文件）看似能省掉 `xdvipdfmx` 并拿到页级增量，实测结果是**从产物到屏幕慢两个数量级**（121 页：`xdvipdfmx` 0.65s vs `dvisvgm` 44.06s），且工具链**拒绝读取未写完的 DVI**（缺 postamble 直接报错）。完整数据、三个选项的成本对照与"唯一值得吸收的一条（页完成度进度信号）"见 **[dvi-preview-feasibility.md](./dvi-preview-feasibility.md)**。
+>
+> **再补充（2026-09，G2 专项）**：上面那条"工具链拒绝半成品"是 **`dvisvgm` 的选择，不是格式的限制**。自研页索引（只算指令长度、不解释内容）实测成立且便宜：页包自包含、截断到任意位置得到的页与完整文件**逐字节相同**、4.41MB/186 页全量解析 **2.7ms**；`tmp/<stem>.xdv` 本来就在我们每次编译后落盘。⇒ **索引这一半可以吸收**（编译期页进度、页级变更判定），**渲染那一半仍然不做**。见 **[g2-byte-offset-resync.md](./g2-byte-offset-resync.md)**。
 
 ### 5.5 「那我们自己改造 XeLaTeX 行不行」——评估结论
 
@@ -247,6 +249,8 @@
 | ⑥ CLI+MCP（**已实现**） | [cli-mcp-plan.md](../cli-mcp-plan.md)（用法/工具表/实测/偏差/限制）+ modules.md §8.1（契约与验证入口）+ `crates/texpresso-server` |
 | ⑦c 多文件大项目 | **[p1-large-doc-editor-analysis.md](./p1-large-doc-editor-analysis.md)**（真机实测数据 + 代码走查 + 拆分建议）+ modules.md §12.1 |
 | ⑦a 大纲重扫增量（**已完成**） | modules.md §3.5（缓存三不变量）/ §12.2 + `core::outline::{load_cached, OutlineCache}` + `src/stores/outline.ts` + `src/stores/__tests__/outline.spec.ts` |
+| DVI/XDV 预览（**否决**） | [dvi-preview-feasibility.md](./dvi-preview-feasibility.md)（成本/体积/增量三项实测） |
+| G2 字节偏移重同步（**索引可用、渲染不做**） | [g2-byte-offset-resync.md](./g2-byte-offset-resync.md) + `scripts/xdv-report.mjs`（页索引/页差分/截断/监视） |
 | ㉖ latexmkrc 交互 | 本文件 §6.1 + troubleshooting.md「`\include{子目录/文件}` + `-output-directory`」 |
 | ㉚㉛ | [texpresso-live-rendering-roadmap.md](../texpresso-live-rendering-roadmap.md)（外部方案）+ 本文件 §5 |
 | ⑫ TinyTeX / ⑮⑯⑰⑱ | design.md §后置/未决清单 |
@@ -269,4 +273,5 @@
 13. **⑦ 的"大文档"只测了单文件**：462KB/5405 行与 1.36MB/16213 行两档，均为**单文件项目**；调研里 #4410 的症状是「20 个文件 / 近 7000 页」。⑦a 验证时临时造过 11 文件/436KB 的工程（已删），**常驻夹具还没有**——⑦c 的第一步就是把它做出来（≥20 文件）并补打开耗时/内存/树刷新的数字（分析见 [p1-large-doc-editor-analysis.md](./p1-large-doc-editor-analysis.md) §5）。
 14. **⑦ 的 W=5 与"我们是否真有这个病"是两件事**：实测显示竞品的卡顿来自架构（全文档同步计算），而我们在这些路径上已经规避（惰性词法 + O(1) 每击键处理 + Rust 侧解析）。W 保留（用户在意），但 C 必须按实测重估——这正是 §6.5 把 ⑦ 从"C=4 的大工程"拆成 ⑦a/⑦b/⑦c 的依据（⑦a 实测 C=2 属实：一天内完成并真机验证）。
 15. **⑦a 留了一个开口**：大纲只在**编译成功**时刷新，编译一直失败时大纲停在旧结构（旧行为保留）。⑦a 的缓存让"按保存触发"变得便宜（8–10ms/次），但失败编译期间的刷新时机/节流策略要单独定（modules.md §12.1 #17）。
-16. **"编译期页完成度进度"待落地**：DVI 研究（[dvi-preview-feasibility.md](./dvi-preview-feasibility.md)）实测 `.xdv` 在编译中渐进写入（657ms 起有内容、1291ms 达 92%），纯字节解析 BOP 链可以给出「已排版 ≈N 页」，精度实测 ±3%。**不渲染 DVI**，只读字节——C1。未做。
+16. **"编译期页完成度进度"待落地（G2 已实测可行）**：`.xdv` 在编译中渐进落盘（186 页实测：页 1 @46% 编译时长，之后每 ~110ms 一批 ~20 页），自研页索引只算指令长度即可读出完整页——截断到任意位置解出的页与完整文件**逐字节相同**，全量解析 4.41MB = 2.7ms，按落盘粒度增量 ≈0.3ms/次；`tmp/<stem>.xdv` 每次编译都在，**零额外调用**。工具已在 `scripts/xdv-report.mjs`。**未做**。见 [g2-byte-offset-resync.md](./g2-byte-offset-resync.md)。
+17. **⑪ 可用"页哈希差分"作为重绘判定**：DVI 页号与 PDF 页号实测 1:1 同序（SyncTeX 交叉验证 `c05:1 → PDF 79` = 差分命中页）。但要接受 LaTeX 的重排特性：等长替换 → 1 页变；插入一段 → 其后 **108** 页变（差分精确、不会漏，但常覆盖大部分页）。未做。
