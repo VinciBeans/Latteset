@@ -173,12 +173,19 @@ export function parseXdv(buf, { opcodes = false, hashLength = 0 } = {}) {
     // 页体：只算长度
     let truncated = false;
     let unknownOp = null;
+    let sawEop = false;
     while (p < buf.length) {
       const o = buf[p];
-      if (o === 140) { p += 1; break; } // eop
+      if (o === 140) { p += 1; sawEop = true; break; } // eop
       const len = payloadLength(buf, p);
       if (len === null) { truncated = true; break; }
       if (len < 0) { unknownOp = o; break; }
+      // 边界校验（2026-09 修）：payloadLength 对**定长指令**不检查缓冲区长，原先靠"扫过头后
+      // while 自然结束"兜底——结果是"截断点落在一条指令载荷中间"时，该页仍被当成完整页推进页索引，
+      // 而它的页字节与 hash 都是截断的（静默错误）。实测由 scripts/xdv-inc.mjs 的对拍暴露：
+      // 8192 字节前缀解出 `4674-8194` 这一页，而缓冲区只有 8192 字节。
+      const end = p + 1 + len;
+      if (end > buf.length) { truncated = true; break; }
       if (opcodes) {
         const name = OPNAME.get(o) ?? `0x${o.toString(16)}`;
         hist.set(name, (hist.get(name) ?? 0) + 1);
@@ -192,8 +199,12 @@ export function parseXdv(buf, { opcodes = false, hashLength = 0 } = {}) {
           fonts.push({ id: be(buf, p + 1, 4), size: be(buf, p + 5, 4), flags: be(buf, p + 9, 2), name: buf.slice(p + 12, p + 12 + nameLen).toString('latin1') });
         }
       }
-      p += 1 + len;
+      p = end;
     }
+    // 页完整的**唯一**判据是"见到 eop"：只靠 while 退出区分不了"eop 正常结束"与"恰好扫到缓冲区末尾"
+    // （后者 p 也等于 buf.length）。2026-09 由 `scripts/xdv-inc.mjs` 的对拍暴露——它与上面的越界校验
+    // 是两个独立缺陷，任一残留都会让"截断前缀"解出内容被截断的假完整页。
+    if (!sawEop) truncated = true;
     if (truncated) { errors.push(`页 ${pageIndex + 1} 尾部被截断（丢弃该页）`); break; }
     if (unknownOp !== null) { errors.push(`页 ${pageIndex + 1} 处出现未知 opcode 0x${unknownOp.toString(16)} @${p}（丢弃该页）`); break; }
 

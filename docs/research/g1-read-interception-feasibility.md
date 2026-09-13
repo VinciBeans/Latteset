@@ -241,7 +241,7 @@ $env:KPATHSEA_DEBUG = "32"; xelatex -interaction=nonstopmode -output-directory=t
 $env:TEXMFLOG = "$PWD\texmf.log"; xelatex … 
 ```
 
-真机部分（watch 触发行为）：`VITE_TEXPRESSO_PROJECT=<含被引用/未引用文件的探针项目> npm run tauri dev`，改文件后用 `tmp/*` 的 **mtime 是否变化**判定是否触发（比翻 watch 日志干净）。
+真机部分（watch 触发行为）：`VITE_LATTESET_PROJECT=<含被引用/未引用文件的探针项目> npm run tauri dev`，改文件后用 `tmp/*` 的 **mtime 是否变化**判定是否触发（比翻 watch 日志干净）。
 
 ## 8. 未验证与局限
 

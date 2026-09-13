@@ -815,7 +815,7 @@ settings-changed: Settings
 | 17 | 大纲只在**编译成功**时刷新 | 编译一直失败时大纲停在旧结构（旧行为保留）。⑦a 的缓存已让"按保存触发刷新"变便宜（8–10ms/次），但有失败编译时的刷新时机/节流策略需要单独定（未做） |
 | 18 | `latteset-mcp.exe` 被常驻进程占用 | 接了 DSH 的 `mcp-latteset` 之后，该进程会**锁住二进制**：`cargo build -p latteset-server` 报「failed to remove file … 拒绝访问」(os error 5)。绕行：只跑 lib（`--lib`）或用独立 `CARGO_TARGET_DIR`（见 [troubleshooting.md](./troubleshooting.md)） |
 
-| 19 | 编译期页进度的 **XDV 版**未接线（需求已由阶段 2 的日志通道满足） | `tmp/<stem>.xdv` 每次编译都在，页索引只算指令长度：截断到任意位置解出的页与完整文件逐字节相同、全量 4.41MB = 2.7ms。工具见 `scripts/xdv-report.mjs`。**2026-09 起「已排版 N 页」已由流式通道（引擎 `[N]` 标记）给出**（见 #20），XDV 版剩下的价值是页级差分与增量解析（[G2 报告](./research/g2-byte-offset-resync.md)、roadmap §5.7 与 §10-B.8） |
+| 19 | 编译期页进度的 **XDV 版**未接线（需求已由阶段 2 的日志通道满足） | `tmp/<stem>.xdv` 每次编译都在，页索引只算指令长度：截断到任意位置解出的页与完整文件逐字节相同、全量 4.41MB = 2.7ms。工具见 `scripts/xdv-report.mjs`。**2026-09 起「已排版 N 页」已由流式通道（引擎 `[N]` 标记）给出**（见 #20）。**追加式（增量）页索引——上游阶段 3 的技术要件——也已实现并验证**（`scripts/xdv-inc.mjs`：4 种喂入序列对拍、141 轮成本、1122 点前缀一致性），但仍**不接线**（没有消费方）；实现期间修掉全量解析器两个静默错误（见 [阶段 3 报告](./research/stage3-incremental-output-parsing.md)、[G2 报告](./research/g2-byte-offset-resync.md)、roadmap §5.7 与 §10-B.8） |
 
 | 20 | ~~引擎 stdout/stderr 被丢弃（编译期无进度、无实时错误）~~ **已修（阶段 2，2026-09）** | 管道已接 + `tmp/<stem>.log` 尾随（三条读任务 → `LiveFeedback`）：状态栏「已排版 N 页」、错误列表**编译还没结束**就出现致命错误。真机实测（400KB / 162 页 ctexbook 首编）：`1.7s running → 3.4–4.8s 页码 2→162 → 8.2s success`；插入 `\undefinedmacrohere` 后 `41.5s` 收到实时错误，该轮 `42.3s` 才出终态（37 条含警告）。契约见 §2.4 / §2.6.1，事件见 §10 |
 | 22 | 错误条目的**文件归属**会错一章（`parse_log` 文件栈） | 实测（2026-09，流式验证的夹具）：错误写在 `ch_05.tex:164`，列表报 `./ch_04.tex:164`。机制已定位：TeX 日志把"关闭上一个文件 + 打开下一个文件"写在**同一行**（`[64]) (./ch_05.tex`），而 `RE_OPEN` 要求行首是 `(`、弹栈只认行首 `)` → `ch_05` 没入栈、`ch_04` 被弹出。影响：错误列表显示的文件名与点击跳转目标（`ErrorList.jump(entry.file, entry.line)`）都错位；终态与流式共用同一解析器，两者皆然。修法要按字符顺序做括号匹配，属独立任务（**未修**，见 roadmap §10-D） |
@@ -861,7 +861,8 @@ settings-changed: Settings
 | 只有真实窗口能验的部分 | [troubleshooting.md](./troubleshooting.md) §真机验收清单（tauri server MCP 驱动） |
 | 产品级实测数字与结论 | [design.md](./design.md)（延迟预算、预览重载、编辑期单趟收益、SyncTeX 精度、构建确定性） |
 | 编辑器侧大文档性能（每击键 / 折叠 / 大纲往返 / 多文件大项目） | [research/p1-large-doc-editor-analysis.md](./research/p1-large-doc-editor-analysis.md)（单文件探针方法与数据）+ [research/p1c-multifile-large-project.md](./research/p1c-multifile-large-project.md)（多文件夹具/口径/门槛）。口径已固化：`node scripts/gen-large-project.mjs`（三档夹具）→ `VITE_LATTESET_PROJECT=<...> npm run tauri dev` → `node scripts/editor-report.mjs --tier multi20 --json out.json`（WS 直驱真机、零第三方依赖、超门槛退出码 1；`--eval-file` 可当调试入口） |
-| DVI/XDV 产物本身（页索引 / 页级差分 / 截断可读性） | `node scripts/xdv-report.mjs <tmp/*.xdv>`（页数可与 `pdfinfo` 对拍；`--diff` 页级差分、`--truncate-at` 半成品、`--watch` 编译期可用性）；结论见 [research/g2-byte-offset-resync.md](./research/g2-byte-offset-resync.md) |
+| DVI/XDV 产物本身（页索引 / 页级差分 / 截断可读性） | `node scripts/xdv-report.mjs <tmp/*.xdv>`（页数可与 `pdfinfo` 对拍；`--diff=<other.xdv>` 页级差分、`--truncate-at=N` 半成品、`--watch=ms` 编译期可用性）；结论见 [research/g2-byte-offset-resync.md](./research/g2-byte-offset-resync.md) |
+| 追加式（增量）页索引 / 前缀一致性 / 增量 vs 全量成本 | `node scripts/xdv-inc.mjs <tmp/*.xdv> --selftest`（4 种喂入序列与全量逐字段对拍）、`--cost=<chunk>`（最多 141 轮的成本对比）、`--prefix=4096`（1122 个截断点的一致性）、`--watch=ms`（编译期真实尾随）；结论见 [research/stage3-incremental-output-parsing.md](./research/stage3-incremental-output-parsing.md) |
 | 引擎到底读了什么（依赖集合 / 为什么找不到文件） | `node scripts/fls-report.mjs <tmp/main.fls> --fdb <tmp/main.fdb_latexmk>`（`.fls`=引擎实际打开；`.fdb_latexmk`=latexmk 依赖图含 md5 与 bibtex 步骤；差集=只在后者的输入）；失败的查找尝试用 `KPATHSEA_DEBUG=32`；结论见 [research/g1-read-interception-feasibility.md](./research/g1-read-interception-feasibility.md) |
 | 已完成项及其证据 | [roadmap §1 基线](./research/tex-ide-roadmap-priority.md) |
 
