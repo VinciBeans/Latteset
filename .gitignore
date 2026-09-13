@@ -79,6 +79,10 @@ test_file/luajit-src/
 test_file/mylatexformat/
 test_file/texmf/
 
+# ============ Tectonic 实验件（源码副本 + 下载的安装包，勿上传） ============
+test_file/tectonic-src/
+test_file/tectonic-install/
+
 # ============ Logo 工具临时产物（临时目录 + 预览页，勿上传） ============
 *.tmpdir/
 __logo_preview*.html
