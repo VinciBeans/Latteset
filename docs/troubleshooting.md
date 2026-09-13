@@ -309,6 +309,23 @@ xelatex -interaction=nonstopmode -synctex=1 -output-directory=tmp main.tex   # m
 
 **2026-09 补充：latexmk 的自动恢复不是普遍成立的。** 自建夹具（10 章 ctexbook，章节用 `\include{chapters/cNN}`，`tmp/` 为空）走 **Full**（latexmk 完整收敛）时并没有恢复：日志停在"写不出中间文件 `chapters/c01.aux`" + `Emergency stop`，latexmk 反复重跑同一处失败，直到 **120s 超时**（上面 §"为什么合成多文件档没事"里的 `tmp/sub` 被创建，在这里没有发生）。两次实验的差异未定位到判据（文档类/中文宏包/页数都可能相关），但"latexmk 会自动建目录并重跑"这句话**不能当作保证**。顺带这也是一次流式反馈的实战价值演示：实时错误在该次编译的 **68s** 就报出了这条诊断，而超时终态要到 **127s** 才出现（提前 59s）。
 
+## XeLaTeX 每次编译都慢 4–5 秒：fontconfig 字体缓存失效（2026-09 实测）
+
+**现象**：连 `\documentclass{article}` + 一个字符的极简文档，`xelatex` 也要 **4.8 s**（正常 ~0.8 s）；`xelatex --version` 单是启动就 0.5–0.7 s。**同期 `lualatex` 完全正常**（同一份文档 1.2 s），Lua 层微基准与 `cmd /c exit` 也都在基线 ⇒ **不是 CPU 降频、不是磁盘、不是我们的管线**。
+
+**根因**：XeTeX 在 Windows 上用 **fontconfig** 解析 native font（连它基座 format 里的默认字体都走这条路；见 [fmt 研究](./research/no-fork-alternatives.md) §3.2），而 fontconfig 的缓存文件**坏了或丢了** → 每次运行都**重新扫描 3,640 个系统字体**。
+
+**判据（两条，几秒钟就能验）**：
+- `fc-list` 计时：正常 ~0.7 s；故障时 **4.2–4.7 s**
+- `fc-cache -v`：直接报 `invalid cache file: C:/texlive/<年>/texmf-var/fonts/cache/<hash>-x64.cache-9`
+
+**修法**：跑一次 `fc-cache -f`（TeX Live 自带 `fc-cache.exe`）。修好后本机实测：极简文档 **4799 → 790 ms**、`min-zh` 夹具 **5380–5765 → 1371 ms**，`fc-list` **4.2 s → 0.7 s**。
+
+**缓存为什么会坏**：断电/强杀把缓存文件写了一半（本次就是断电后出现的）、磁盘满、杀软隔离、或手工清了 temp。**只有 XeLaTeX 慢、LuaLaTeX 正常**是本问题的特征（LuaLaTeX 不走 fontconfig）。
+> 对产品的影响：用户的 TeX Live 若处于这种状态，编辑期每次编译白等 4 s，而我们的默认引擎正是 XeLaTeX。诊断入口就上面两条命令。
+
+**DSH 沙箱注意**：缓存写在 `C:/texlive/<年>/texmf-var/fonts/cache`，**在工作区之外** ⇒ 沙箱模式下 `fc-cache` 会 `Permission denied`，缓存永远建不起来、**每次编译都慢**（本次排查期间就被这条卡住过）。需要在提权（`danger-full-access`）下跑一次 `fc-cache -f`，或让应用在正常权限下自建。
+
 ## LuaLaTeX：切过去之后编译失败 / 第一次特别慢（2026-09 实测）
 
 引擎是设置面板里可选项（`xelatex` / `lualatex` / `pdflatex`），但 LuaLaTeX 有两个**环境前提**，不满足时的报错都长得不像"引擎问题"：

@@ -375,6 +375,50 @@ lualatex -fmt="<abs>\thfmt.fmt" -interaction=nonstopmode -halt-on-error -output-
 **④ 影响**
 
 - §7.3 #3 的"上限 2.9 s"作废；§7.4 的公平对比**不会再变**：LuaLaTeX 侧已无可用的大杠杆（JIT 见 §7.5、fmt 见本节、页指纹只有 ~100 ms）。
-- 仍未测的一个想法：**只 dump 非 CJK 宏包**（amsmath/tikz…），让 ctex/luatexja 每趟加载——预期收益小
-  （导言区的大头正是 CJK 层），而且 mylatexformat 的设计假设是"文档加载的包都应在格式里"，**未验证**。
+- 仍未测的一个想法：~~**只 dump 非 CJK 宏包**（amsmath/tikz…）~~ ✅ **已测并否决（§7.6 ⑤）**：能编译但**静默丢掉全部中文**（398 条 Missing character），且上限只有 ~519 ms。
 - 版本边界：mylatexformat v3.4（2011）× TeX Live 2026（ctex 2.x / luatexja 2025-09）——上游任一更新都可能改变结论。
+
+**⑤ "只 dump 非 CJK 包"也试了：能编译，但会静默丢掉全部中文**（本节最初列为"未测"，现补上）
+
+构造一个**不含 ctex/luatexja** 的格式（`article` + amsmath/amssymb/graphicx/booktabs/hyperref，4.7 MB），拿去编译中文文档：
+
+```powershell
+lualatex -ini -interaction=nonstopmode -jobname=partial '&lualatex' mylatexformat.ltx partial-pre.tex   # partial-pre.tex 以 \endofdump 结尾
+lualatex -fmt="<abs>\partial.fmt" -interaction=nonstopmode -output-directory=tmpP min-zh.tex
+```
+
+| 结果 | 数值 |
+|---|---|
+| 编译退出码 / 产出 | **exit 0**，PDF 照出（74,349 B，1 页）——**不是报错** |
+| 丢失字符 | **`Missing character` 警告 398 条** |
+| PDF 实际文字 | `Engine comparison baseline (Chinese) … ��`（中文全没了，英文/数字还在） |
+| 同一格式编译英文文档 | ✅ 完全正常（0 条 Missing character） |
+
+原因是 mylatexformat 的机制（读它的源码确认：它**没有**去 patch `\documentclass`/`\usepackage`）：**运行时把用户文档的整个导言区扫掉丢弃**，只在 `\begin{document}` 处恢复读取 ⇒ 文档自己的 `\documentclass[UTF8]{ctexart}` 与 `ctex`→`luatexja` **根本不会被执行**。
+所以"只 dump 非 CJK 包"不是"省一部分"，而是**把 CJK 层整个绕过去了**——而且是最坏的失败形态：**编译成功、预览静默缺字**。
+
+**顺带量了这项的"上限"**（干净状态下同批实测，导言区两档）：`ctexbook` 空文档 **2585 ms** vs 论文完整导言区空文档 **3104 ms** ⇒ 非 CJK 宏包只值 **~519 ms**（约占 27 页全文 5727 ms 的 **9%**）。也就是说：即便这个玩法能用，收益也不到一成的十分之一量级；而它连"能用"都不成立。
+
+### 7.7 测量方法学：本轮踩到的三类坑（含一次故障复盘）
+
+本节所有"倍率"结论都建立在同一批交错测量上，不是跨会话比绝对值——这是被现实教育出来的：
+
+**① 故障复盘：断电 → fontconfig 缓存失效 → XeLaTeX 每次编译多 4 秒**
+某轮实测里 `min-zh`（1 页）的 xelatex 从 1370 ms 变成 **5723 ms**、极简文档要 4.8 s，而同期 `lualatex` 完全正常、Lua 层 CPU 微基准也在基线。定位链条：
+- 进程启动：`cmd /c exit` 19 ms、`lualatex --version` **16 ms**、`xelatex --version` **495–690 ms** ⇒ 只有 XeTeX 慢；
+- 文件读：400 个宏包文件热读 **178 MB/s**（首遍冷读只有 1.6 MB/s，但那是另一回事）⇒ 磁盘不背锅；
+- 字体：`fc-list` **4.2–4.7 s**、`fc-cache -v` 报 `invalid cache file`、四处候选缓存目录**全都不存在** ⇒ **fontconfig 缓存失效，每次重新扫 3,640 个系统字体**。
+`fc-cache -f` 重建后：极简文档 4799 → **790 ms**、`min-zh` 5380–5765 → **1371 ms**、`fc-list` 4.2 s → 0.7 s。**结论：这是断电的次生故障，不是"电脑变慢"**（详见 [troubleshooting.md](../troubleshooting.md) 同名条目）。
+> 期间的所有绝对数字**作废**。修好后同批复测：`thesis` **xe-nopdf 1813 ms vs lua-pdf 5727 ms = 3.2×**、`min-zh` 1609 vs 3837 ms = 2.4×——与 §7.4 记录的 1870/6468（3.5×）一致 ⇒ **§7.4 的结论稳健**。
+
+**② 静默作废的样本**（最危险的一类：跑得"快"其实是失败）
+- 论文夹具 `\include{chapters/chNN}` + `-output-directory`：目标目录里没有 `chapters/` 子目录 → `I can't write on file 'chapters/ch01.aux'` → Emergency stop（4 s 的"成功"其实是 exit 1）；
+- 文件锁/残留进程 → `I can't write on file 'min-zh.log'` → 同样静默早退。
+⇒ **规则：每次运行都要验 `Output written` 才算有效样本**（本轮为此把测量脚本改成逐次校验 + 剔除无效样本并打印原因）。
+
+**③ 协议（以后按这个来）**
+1. **先预热**：每引擎每夹具先跑一次不计入（把宏包/字体/OS 缓存焐热）；
+2. **同批交错**：A/B 两档交替跑 N 轮，别"先跑完 A 再跑 B"（机器状态会漂）；
+3. **逐次校验**：没见到 `Output written` 的样本直接丢弃并记录原因；
+4. **带控制组**：CPU（Lua 微基准，本轮基线 numeric 18–24 ms）、磁盘 I/O（400 文件热读 178 MB/s）、字体（`fc-list` ~0.7 s）——控制组异常就先修环境，别测；
+5. **只信同批比值**：跨会话的绝对值可以差 ±30%（缓存/温度/电源都影响），倍率才有意义。
