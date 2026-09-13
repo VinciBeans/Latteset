@@ -48,6 +48,8 @@ export const commands = {
 
 /** Events */
 export const events = {
+	compileErrors: makeEvent<CompileErrorsEvent>("compile-errors"),
+	compileProgress: makeEvent<CompileProgressEvent>("compile-progress"),
 	compileStatus: makeEvent<CompileStatusEvent>("compile-status"),
 	errorsUpdated: makeEvent<ErrorsUpdatedEvent>("errors-updated"),
 	filesChanged: makeEvent<FilesChangedEvent>("files-changed"),
@@ -59,11 +61,35 @@ export const events = {
 /**  命令错误契约：{ code, message }（modules.md §4 错误模型）。 */
 export type CmdError = { code: "NotFound"; message: string } | { code: "Invalid"; message: string } | { code: "Internal"; message: string };
 
+/**
+ *  编译**进行中**解析到的致命错误（roadmap「阶段 2 · 流式输出」）。
+ * 
+ *  与 [`ErrorsUpdatedEvent`] **刻意分成两个事件**：后者是**权威终态**（编译结束的完整清单，
+ *  含警告），前者是运行中的中间态（只有致命错误）。真机实测（2026-09，长文档超时用例）到混用的
+ *  后果：终态写出「错误行 = 1」之后，列表又变回 30 条实时条目。机制上是收尾期的补发——runner
+ *  拿到 outcome 后仍要置 stop 并 join 尾随 `.log` 的任务（有 600ms 上限），那次补读照样发事件；
+ *  它一旦晚于终态抵达前端，就把权威列表顶掉了。分开后前端按 `phase` 守卫：只在"排版中"接受
+ *  实时错误，终态一到便不再理会。
+ */
+export type CompileErrorsEvent = ErrorEntry[];
+
 /**  编译模式（CONTEXT.md：连续编译 / 保存触发编译）。 */
 export type CompileMode = "continuous" | "on_save";
 
 /**  编译阶段（modules.md §2.5 事件契约）。 */
 export type CompilePhase = "queued" | "running" | "success" | "failed";
+
+/**  进度载荷（**非权威**中间态；前端只在"排版中"时展示）。 */
+export type CompileProgressDto = {
+	/**  引擎已输出的最大页码（`[N]` 标记）。 */
+	pages: number,
+};
+
+/**
+ *  编译**进行中**的进度（roadmap「阶段 2 · 流式输出」）：已排版页数。
+ *  只在数值变大时发出；编译终态仍由 `compile-status` 给出。
+ */
+export type CompileProgressEvent = CompileProgressDto;
 
 /**  编译相关设置。 */
 export type CompileSettings = {

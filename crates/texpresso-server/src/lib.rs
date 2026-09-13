@@ -244,7 +244,12 @@ impl Session {
             timeout: std::time::Duration::from_secs(self.timeout_secs),
             kind: if quick { CompileKind::Quick } else { CompileKind::Full },
         };
-        let runner = LatexmkRunner { fs: self.fs.clone() };
+        // headless 不消费流式反馈（CLI 一条命令一个 JSON；MCP 暂无 notifications）：
+        // 传 NoProgress，行为与接线前一致（引擎输出仍被读取，只是不产出事件）。
+        let runner = LatexmkRunner::new(
+            self.fs.clone(),
+            std::sync::Arc::new(texpresso_core::scheduler::NoProgress),
+        );
         let started = Instant::now();
         let outcome = runner
             .compile(request, tokio_util::sync::CancellationToken::new())

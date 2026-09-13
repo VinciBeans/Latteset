@@ -5,8 +5,9 @@ mod events;
 
 use commands::AppState;
 use events::{
-    build_emitter, CompileStatusEvent, ErrorsUpdatedEvent, FilesChangedEvent, PdfUpdatedEvent,
-    SettingsChangedEvent, TauriSink,
+    build_emitter, CompileErrorsEvent, CompileProgressEvent, CompileStatusEvent,
+    ErrorsUpdatedEvent, FilesChangedEvent, PdfUpdatedEvent, SettingsChangedEvent, TauriProgress,
+    TauriSink,
 };
 use std::sync::Arc;
 use tauri::Manager;
@@ -74,8 +75,13 @@ pub fn run() {
 
             // 调度器（D1：actor，状态收容 task 内；emitter 接 tauri 事件）
             let emitter = build_emitter(app.handle());
+            // 编译进行中的流式反馈（阶段 2）：页进度 + 编译中的错误，直接走 tauri 事件
+            let progress: Arc<dyn texpresso_core::scheduler::CompileProgress> =
+                Arc::new(TauriProgress {
+                    app: app.handle().clone(),
+                });
             let runner: Arc<dyn texpresso_core::scheduler::CompileRunner> =
-                Arc::new(LatexmkRunner { fs: fs.clone() });
+                Arc::new(LatexmkRunner::new(fs.clone(), progress));
             // setup 闭包不是 tokio 上下文：用 tauri 的 runtime（任何线程可用）
             let (scheduler, scheduler_task) = Scheduler::create(runner, emitter);
             tauri::async_runtime::spawn(scheduler_task.run());
@@ -142,6 +148,8 @@ fn build_specta_builder() -> tauri_specta::Builder<tauri::Wry> {
         ])
         .events(tauri_specta::collect_events![
             CompileStatusEvent,
+            CompileProgressEvent,
+            CompileErrorsEvent,
             ErrorsUpdatedEvent,
             PdfUpdatedEvent,
             FilesChangedEvent,

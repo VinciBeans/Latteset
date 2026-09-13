@@ -51,6 +51,10 @@ async function toggleMode() {
       <span class="phase-dot" />
       {{ phaseText }}{{ kindText }}
     </span>
+    <!-- 流式进度（阶段 2）：只在"排版中"且已有页输出时显示，避免闪烁 -->
+    <span v-if="compile.phase === 'running' && compile.pages > 0" class="pages">
+      已排版 {{ compile.pages }} 页
+    </span>
     <span
       v-if="compile.draft"
       class="draft"
@@ -119,6 +123,14 @@ async function toggleMode() {
 .phase.queued { background: rgba(255, 181, 74, 0.16); color: #e09a2e; }
 .phase.running .phase-dot { animation: bounce 0.9s ease-in-out infinite; }
 @keyframes bounce { 50% { transform: translateY(-2px); } }
+/* 流式进度（阶段 2）：编译中已排版页数（非权威中间态，只在排版中显示） */
+.pages {
+  background: rgba(93, 95, 239, 0.08);
+  color: var(--ink-dim);
+  padding: 2px 9px;
+  border-radius: 5px;
+  font-variant-numeric: tabular-nums;
+}
 .conflict {
   cursor: pointer;
   background: rgba(255, 122, 110, 0.14);

@@ -1,28 +1,199 @@
 //! Latexmk 执行器（modules.md §2.6 / 设计决策 D2；位于基础设施层，ADR-0010）。
 //!
 //! 超时检测、进程树杀、PDF 拷贝全在这里；调度器无时钟、无进程概念。
+//!
+//! **流式输出**（roadmap「阶段 2」）：引擎的 stdout/stderr 接管道并**逐行读**——页标记
+//! `[N]` 增量汇总成"已排版 N 页"事件，输出文本节流解析成"编译中的错误"事件。
+//! 终态仍以 `.log` 为准（`parse_log` 是权威），流式期间报的是**非权威中间态**；
+//! 且流式错误**只报致命错误、不报警告**（理由见 [`entries_from_log`]）。
 
 use async_trait::async_trait;
 use std::path::Path;
+use std::sync::Arc;
+use std::time::{Duration, Instant};
 use texpresso_core::log_parser::{
     diagnose, diagnose_timeout, pages_typeset, parse_log, source_release_hint, DiagnosisKind,
-    TimeoutEvidence,
+    MessageKind, PageMarkerScanner, TimeoutEvidence,
 };
 use texpresso_core::project::{collect_tex_files, FileSystem};
-use texpresso_core::scheduler::CompileRunner;
+use texpresso_core::scheduler::{CompileProgress, CompileRunner};
 use texpresso_core::types::{CompileKind, CompileOutcome, CompileRequest, ErrorEntry, ErrorKind};
+use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, warn};
 
 /// 编译中间目录（design.md：统一收纳 tmp/，与 core 忽略规则一致）。
 const OUT_DIR: &str = "tmp";
 
+/// 流式错误解析的节流间隔：既不让解析吃 CPU，也不让错误"迟到"太多。
+const LIVE_ERROR_INTERVAL: Duration = Duration::from_millis(500);
+/// 尾随 `.log` 的轮询间隔（引擎按页 flush，故这个量级足够跟手）。
+const LOG_POLL_INTERVAL: Duration = Duration::from_millis(200);
+/// 流式错误解析保留的输出上限（超出后只保留尾部——页标记是单调的，历史文本对进度无用）。
+const LIVE_ERROR_BUFFER: usize = 1 << 21; // 2 MiB
+
 /// 编译器实现（`CompileRunner` 的唯一实现）。
 ///
 /// 名字是历史遗留：㉘ 之后它按 [`CompileKind`] 驱动**两条**命令——`Full` 用 latexmk、
 /// `Quick` 直调引擎单趟。改名会牵动架构图 SVG 与三处文档，暂留此名。
 pub struct LatexmkRunner {
-    pub fs: std::sync::Arc<dyn FileSystem>,
+    pub fs: Arc<dyn FileSystem>,
+    /// 编译进行中的反馈通道（默认 [`texpresso_core::scheduler::NoProgress`]）。
+    pub progress: Arc<dyn CompileProgress>,
+}
+
+impl LatexmkRunner {
+    /// 构造：`progress` 传 `Arc::new(NoProgress)` 即关闭流式反馈（headless/测试）。
+    pub fn new(fs: Arc<dyn FileSystem>, progress: Arc<dyn CompileProgress>) -> Self {
+        Self { fs, progress }
+    }
+}
+
+/// 编译进行中的反馈状态机（**唯一**写者：外部把新文本 `feed` 进来）。
+///
+/// 两个来源都喂它：① 引擎 stdout/stderr 管道；② `tmp/<stem>.log` 的尾随读取。
+/// 为什么两个都要（实测）：stdout 在非 TTY 下是 **4KB 块缓冲**——短文档的错误要等到进程结束
+/// 才 flush；而 `.log` 是**按页 flush** 的，所以"边编译边报"以日志为主、管道为辅。
+/// 同一份内容可能从两个来源各来一次 → 页码单调（重复无害），错误按指纹去重。
+struct LiveFeedback {
+    progress: Arc<dyn CompileProgress>,
+    scanner: PageMarkerScanner,
+    buffer: String,
+    dirty: bool,
+    last_parse: Instant,
+    last_emitted: Option<u64>,
+}
+
+impl LiveFeedback {
+    fn new(progress: Arc<dyn CompileProgress>) -> Self {
+        Self {
+            progress,
+            scanner: PageMarkerScanner::new(),
+            buffer: String::new(),
+            dirty: false,
+            last_parse: Instant::now() - LIVE_ERROR_INTERVAL,
+            last_emitted: None,
+        }
+    }
+
+    /// 把新到的文本喂进来（可以是逐行，也可以是一整段）。
+    ///
+    /// 解析时机：**见到错误头（行首 `!`）立即解析**（错误要第一时间可见），
+    /// 其余情况按 [`LIVE_ERROR_INTERVAL`] 节流补扫（错误可能没有 `!` 头，或上下文行后到）。
+    /// 只上报致命错误（`warnings = false`），理由见 [`entries_from_log`]。
+    fn feed(&mut self, text: &str, force_parse: bool) {
+        if text.is_empty() {
+            return;
+        }
+        if let Some(pages) = self.scanner.push(text) {
+            self.progress.pages(pages);
+        }
+        self.buffer.push_str(text);
+        self.dirty = true;
+        if self.buffer.len() > LIVE_ERROR_BUFFER {
+            let cut = self.buffer.len() - LIVE_ERROR_BUFFER / 2;
+            let cut = self
+                .buffer
+                .char_indices()
+                .map(|(i, _)| i)
+                .find(|i| *i >= cut)
+                .unwrap_or(self.buffer.len());
+            self.buffer.drain(..cut);
+        }
+        let has_error = force_parse || text.lines().any(|l| l.trim_start().starts_with('!'));
+        if !has_error && (!self.dirty || self.last_parse.elapsed() < LIVE_ERROR_INTERVAL) {
+            return;
+        }
+        self.last_parse = Instant::now();
+        self.dirty = false;
+        let entries = entries_from_log(&self.buffer, false);
+        if entries.is_empty() {
+            return;
+        }
+        let fp = fingerprint(&entries);
+        if self.last_emitted == Some(fp) {
+            return;
+        }
+        self.last_emitted = Some(fp);
+        self.progress.errors(&entries);
+    }
+}
+
+/// 流式读取一条管道（stdout/stderr）：逐行喂 [`LiveFeedback`]。
+async fn pump_output<R>(reader: R, feedback: Arc<tokio::sync::Mutex<LiveFeedback>>)
+where
+    R: tokio::io::AsyncRead + Unpin,
+{
+    let mut lines = BufReader::new(reader).lines();
+    while let Ok(Some(line)) = lines.next_line().await {
+        feedback.lock().await.feed(&line, false);
+        feedback.lock().await.feed("\n", false);
+    }
+}
+
+/// 尾随 `tmp/<stem>.log`（**按页 flush**，是流式反馈的主力来源）。
+///
+/// 用 [`FileSystem::read_appended`] 只读新增字节；每 [`LOG_POLL_INTERVAL`] 一次。
+/// `stop` 由调用方在编译收尾时置位（终态解析以整份 `.log` 为准）。
+async fn tail_log(
+    fs: Arc<dyn FileSystem>,
+    log_path: std::path::PathBuf,
+    feedback: Arc<tokio::sync::Mutex<LiveFeedback>>,
+    stop: Arc<std::sync::atomic::AtomicBool>,
+) {
+    use std::sync::atomic::Ordering;
+    let mut offset = 0u64;
+    while !stop.load(Ordering::Relaxed) {
+        tokio::time::sleep(LOG_POLL_INTERVAL).await;
+        match fs.read_appended(&log_path, offset).await {
+            Ok((text, next)) => {
+                offset = next;
+                feedback.lock().await.feed(&text, false);
+            }
+            // 日志还没出现（或这一趟还没建）→ 下一轮再试
+            Err(_) => continue,
+        }
+    }
+    // 收尾补一次：把最后一段（可能不足一个轮询周期）喂进去
+    if let Ok((text, _)) = fs.read_appended(&log_path, offset).await {
+        feedback.lock().await.feed(&text, true);
+    }
+}
+
+/// 文本 → `ErrorEntry`（与终态路径**同一套**解析与诊断，只是不做 `.ins`/`.dtx` 的项目内查证）。
+///
+/// `warnings = false`（流式通道用）时**丢掉警告**，只留致命错误。实测依据：一次失败的
+/// ctexbook 长文档（2026-09）日志里 30 条消息中有 **27 条是 `Overfull \hbox`**——它们不阻止
+/// 编译完成，却足以把"写不出 `c01.aux`""Emergency stop"这类真正致命的条目挤出可视区。
+/// 流式通道的目标只是"尽早看见会终结本次编译的错误"，完整清单（含警告）由终态给出。
+fn entries_from_log(text: &str, warnings: bool) -> Vec<ErrorEntry> {
+    parse_log(text)
+        .into_iter()
+        .filter(|m| warnings || m.kind == MessageKind::Error)
+        .map(|m| {
+            let diagnosis = diagnose(&m);
+            ErrorEntry {
+                message: m.message,
+                file: m.file,
+                line: m.line,
+                kind: ErrorKind::ContentError,
+                diagnosis,
+            }
+        })
+        .collect()
+}
+
+/// 条目集合指纹（用于"内容没变就不发"）。
+fn fingerprint(entries: &[ErrorEntry]) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    for e in entries {
+        e.message.hash(&mut h);
+        e.file.hash(&mut h);
+        e.line.hash(&mut h);
+    }
+    entries.len().hash(&mut h);
+    h.finish()
 }
 
 fn root_stem(root_file: &Path) -> String {
@@ -107,8 +278,10 @@ impl CompileRunner for LatexmkRunner {
             CompileKind::Full => debug!(engine = req.engine.latexmk_flag(), "Full 编译（完整 latexmk 收敛）"),
         }
         cmd.current_dir(&req.project_root)
-            .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null())
+            // 流式输出（roadmap「阶段 2」）：接管道逐行读——页进度与"编译中的错误"都从这里来。
+            // 此前是 Stdio::null()：引擎输出被整个丢弃，编译期既没有进度也没有实时错误。
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
             // 进程孤儿防护：若编译 future 被丢弃（应用退出/任务取消），随 future 一并杀掉子进程。
             // 避免子进程残留、持续写 tmp/ 或占用 PDF 锁。（树杀仍由 kill_tree 负责，这里是兜底。）
             .kill_on_drop(true);
@@ -126,6 +299,24 @@ impl CompileRunner for LatexmkRunner {
             }
         };
         let pid = child.id();
+
+        // 读任务：stdout/stderr 管道 + `tmp/<stem>.log` 尾随，三路都喂同一个反馈状态机。
+        // 它们随管道关闭 / stop 置位自然结束；下面在拿到 outcome 后会短暂 join 一下，避免任务泄漏。
+        let log_path = tmp_dir.join(format!("{stem}.log"));
+        let feedback = Arc::new(tokio::sync::Mutex::new(LiveFeedback::new(self.progress.clone())));
+        let stop = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let mut pumps = vec![tokio::spawn(tail_log(
+            self.fs.clone(),
+            log_path,
+            feedback.clone(),
+            stop.clone(),
+        ))];
+        if let Some(out) = child.stdout.take() {
+            pumps.push(tokio::spawn(pump_output(out, feedback.clone())));
+        }
+        if let Some(err) = child.stderr.take() {
+            pumps.push(tokio::spawn(pump_output(err, feedback.clone())));
+        }
 
         let outcome = tokio::select! {
             _ = tokio::time::sleep(req.timeout) => {
@@ -174,20 +365,8 @@ impl CompileRunner for LatexmkRunner {
                     let log_path = tmp_dir.join(format!("{stem}.log"));
                     match self.fs.read_to_string_lossy(&log_path).await {
                         Ok(text) => {
-                            let errors: Vec<ErrorEntry> = parse_log(&text)
-                                .into_iter()
-                                .map(|m| {
-                                    // 诊断在移动 message 之前算（roadmap ④）
-                                    let diagnosis = diagnose(&m);
-                                    ErrorEntry {
-                                        message: m.message,
-                                        file: m.file,
-                                        line: m.line,
-                                        kind: ErrorKind::ContentError,
-                                        diagnosis,
-                                    }
-                                })
-                                .collect();
+                            // 终态清单**含警告**（Overfull/Underfull/LaTeX Warning）——既有行为不变。
+                            let errors = entries_from_log(&text, true);
                             // roadmap ㉗：缺 .cls 且项目里确有 .ins/.dtx 时，把泛化建议换成具体命令
                             let errors = self.enrich_source_release_hints(errors, &req.project_root).await;
                             let diagnosed = errors.iter().filter(|e| e.diagnosis.is_some()).count();
@@ -212,6 +391,12 @@ impl CompileRunner for LatexmkRunner {
                 },
             },
         };
+        // 收尾：置 stop 让尾随任务做最后一次补读，然后 join（进程已退出/被杀 → 管道关闭）。
+        // 给一个短上限是为了极端情况（树杀没杀干净、孙子进程仍持有写端）不把编译 future 拖住。
+        stop.store(true, std::sync::atomic::Ordering::Relaxed);
+        for p in pumps {
+            let _ = tokio::time::timeout(Duration::from_millis(600), p).await;
+        }
         outcome
     }
 }
@@ -491,9 +676,10 @@ mod tests {
             "\\documentclass{article}\n\\begin{document}\nHello TeXPresso\n\\end{document}\n",
         );
 
-        let runner = LatexmkRunner {
-            fs: std::sync::Arc::new(crate::fs::TokioFs),
-        };
+        let runner = LatexmkRunner::new(
+            std::sync::Arc::new(crate::fs::TokioFs),
+            std::sync::Arc::new(texpresso_core::scheduler::NoProgress),
+        );
         let outcome = runner
             .compile(req(&project), tokio_util::sync::CancellationToken::new())
             .await;
@@ -557,9 +743,10 @@ mod tests {
             "main.tex",
             "\\documentclass{article}\n\\begin{document}\n\\tableofcontents\n\\section{One}\\label{s:one}\nSee \\ref{s:one}.\n\\end{document}\n",
         );
-        let runner = LatexmkRunner {
-            fs: std::sync::Arc::new(crate::fs::TokioFs),
-        };
+        let runner = LatexmkRunner::new(
+            std::sync::Arc::new(crate::fs::TokioFs),
+            std::sync::Arc::new(texpresso_core::scheduler::NoProgress),
+        );
         let cancel = || tokio_util::sync::CancellationToken::new();
 
         // 1) 首编 = Full（建 tmp/main.aux，Quick 的前置条件）
@@ -610,9 +797,10 @@ mod tests {
             "main.tex",
             "\\documentclass{article}\n\\begin{document}\n\\tableofcontents\n\\section{One}\\label{s:one}\nSee \\ref{s:one}.\n\\end{document}\n",
         );
-        let runner = LatexmkRunner {
-            fs: std::sync::Arc::new(crate::fs::TokioFs),
-        };
+        let runner = LatexmkRunner::new(
+            std::sync::Arc::new(crate::fs::TokioFs),
+            std::sync::Arc::new(texpresso_core::scheduler::NoProgress),
+        );
         let mut quick = req(&project);
         quick.kind = CompileKind::Quick;
         let outcome = runner.compile(quick, tokio_util::sync::CancellationToken::new()).await;
@@ -647,9 +835,10 @@ mod tests {
             "\\documentclass{article}\n\\begin{document}\n\\undefinedcommandhere\n\\end{document}\n",
         );
 
-        let runner = LatexmkRunner {
-            fs: std::sync::Arc::new(crate::fs::TokioFs),
-        };
+        let runner = LatexmkRunner::new(
+            std::sync::Arc::new(crate::fs::TokioFs),
+            std::sync::Arc::new(texpresso_core::scheduler::NoProgress),
+        );
         let outcome = runner
             .compile(req(&project), tokio_util::sync::CancellationToken::new())
             .await;
@@ -677,9 +866,10 @@ mod tests {
             "\\documentclass{article}\n\\begin{document}\nBig\n\\end{document}\n",
         );
 
-        let runner = LatexmkRunner {
-            fs: std::sync::Arc::new(crate::fs::TokioFs),
-        };
+        let runner = LatexmkRunner::new(
+            std::sync::Arc::new(crate::fs::TokioFs),
+            std::sync::Arc::new(texpresso_core::scheduler::NoProgress),
+        );
         let mut request = req(&project);
         request.timeout = Duration::from_millis(1); // 必超时
         let outcome = runner
@@ -719,9 +909,10 @@ mod tests {
             "\\documentclass{article}\n\\begin{document}\nBig\n\\end{document}\n",
         );
 
-        let runner = LatexmkRunner {
-            fs: std::sync::Arc::new(crate::fs::TokioFs),
-        };
+        let runner = LatexmkRunner::new(
+            std::sync::Arc::new(crate::fs::TokioFs),
+            std::sync::Arc::new(texpresso_core::scheduler::NoProgress),
+        );
         let cancel = tokio_util::sync::CancellationToken::new();
         cancel.cancel(); // 立即取消
         let outcome = runner.compile(req(&project), cancel).await;
@@ -733,6 +924,110 @@ mod tests {
         assert_eq!(root_stem(Path::new(r"C:\proj\main.tex")), "main");
         assert_eq!(root_stem(Path::new("css/thesis.tex")), "thesis");
         assert_eq!(root_stem(Path::new("main")), "main"); // 无扩展名回退
+    }
+
+    /// 流式反馈记录器（阶段 2）：记下每次回调的**时刻**，好断言"编译结束前就到了"。
+    struct RecordingProgress {
+        start: Instant,
+        pages: std::sync::Mutex<Vec<(u32, Duration)>>,
+        errors: std::sync::Mutex<Vec<(usize, Duration)>>,
+    }
+
+    impl RecordingProgress {
+        fn new() -> Self {
+            Self {
+                start: Instant::now(),
+                pages: std::sync::Mutex::new(Vec::new()),
+                errors: std::sync::Mutex::new(Vec::new()),
+            }
+        }
+    }
+
+    impl CompileProgress for RecordingProgress {
+        fn pages(&self, pages: u32) {
+            self.pages.lock().unwrap().push((pages, self.start.elapsed()));
+        }
+        fn errors(&self, errors: &[ErrorEntry]) {
+            self.errors.lock().unwrap().push((errors.len(), self.start.elapsed()));
+        }
+    }
+
+    /// 流式输出（阶段 2）：真实编译期间就该报上"已排版 N 页"，而不是等编译结束。
+    #[tokio::test]
+    #[ignore]
+    async fn reports_streaming_pages_before_compile_finishes() {
+        if !latexmk_available() {
+            eprintln!("跳过：系统未安装 latexmk（需要 TeX Live/MiKTeX）");
+            return;
+        }
+        let project = TempProject::new("stream-pages");
+        // 三页文档：页标记必须出现多次，且最后一次为 3
+        project.put(
+            "main.tex",
+            "\\documentclass{article}\n\\begin{document}\nFirst\n\\newpage\nSecond\n\\newpage\nThird\n\\end{document}\n",
+        );
+        let progress = std::sync::Arc::new(RecordingProgress::new());
+        let runner = LatexmkRunner::new(std::sync::Arc::new(crate::fs::TokioFs), progress.clone());
+        let started = Instant::now();
+        let outcome = runner
+            .compile(req(&project), tokio_util::sync::CancellationToken::new())
+            .await;
+        let total = started.elapsed();
+        assert!(matches!(outcome, CompileOutcome::Success { .. }), "预期成功：{outcome:?}");
+
+        let events = progress.pages.lock().unwrap().clone();
+        let seen: Vec<u32> = events.iter().map(|(p, _)| *p).collect();
+        assert!(!events.is_empty(), "流式页进度一次都没上报（stdout 管道没接上？）");
+        assert_eq!(seen.iter().max().copied(), Some(3), "最大页码应为 3：{seen:?}");
+        // 注意：latexmk 会跑**多趟**（每趟一个新进程），页码在多趟之间会重启 → 只要求**非递减**。
+        // 前端展示的是 max（compileStore.setProgress 只接受更大的值），故重启不会造成回跳。
+        assert!(seen.windows(2).all(|w| w[1] >= w[0]), "页码在单趟内必须单调递增：{seen:?}");
+        // 关键断言：进度**在编译结束前**就到了（不是收尾时才补发）
+        let (_, first_at) = events[0];
+        let lead = total.saturating_sub(first_at);
+        assert!(
+            lead >= Duration::from_millis(100),
+            "首个页进度距编译结束只有 {lead:?}（总时长 {total:?}）——像是收尾才发的"
+        );
+    }
+
+    /// 流式输出（阶段 2）：编译**进行中**就要报出错误（长文档不必等到超时/结束）。
+    #[tokio::test]
+    #[ignore]
+    async fn reports_live_errors_before_compile_finishes() {
+        if !latexmk_available() {
+            eprintln!("跳过：系统未安装 latexmk（需要 TeX Live/MiKTeX）");
+            return;
+        }
+        let project = TempProject::new("stream-errors");
+        // 错误出现在第 1 页，后面还有足够内容让编译继续跑一会儿（nonstopmode 不中断）
+        let filler = "Filler line with some words. ".repeat(20);
+        project.put(
+            "main.tex",
+            &format!(
+                "\\documentclass{{article}}\n\\begin{{document}}\n\\undefinedcommandhere\n{filler}\n\\newpage\n{filler}\n\\end{{document}}\n"
+            ),
+        );
+        let progress = std::sync::Arc::new(RecordingProgress::new());
+        let runner = LatexmkRunner::new(std::sync::Arc::new(crate::fs::TokioFs), progress.clone());
+        let started = Instant::now();
+        let outcome = runner
+            .compile(req(&project), tokio_util::sync::CancellationToken::new())
+            .await;
+        let total = started.elapsed();
+        assert!(
+            matches!(outcome, CompileOutcome::ContentError { .. }),
+            "预期内容错误：{outcome:?}"
+        );
+
+        let live = progress.errors.lock().unwrap().clone();
+        assert!(!live.is_empty(), "编译中一次都没有上报错误（流式解析没生效？）");
+        let (_, first_at) = live[0];
+        let lead = total.saturating_sub(first_at);
+        assert!(
+            lead >= Duration::from_millis(100),
+            "首个流式错误距编译结束只有 {lead:?}（总时长 {total:?}）——像是收尾才发的"
+        );
     }
 
     #[test]
@@ -791,9 +1086,10 @@ mod tests {
         );
         project.put("章节/第一章.tex", "\\section{子文件章节}\n中文正文。\n");
 
-        let runner = LatexmkRunner {
-            fs: std::sync::Arc::new(crate::fs::TokioFs),
-        };
+        let runner = LatexmkRunner::new(
+            std::sync::Arc::new(crate::fs::TokioFs),
+            std::sync::Arc::new(texpresso_core::scheduler::NoProgress),
+        );
         let request = CompileRequest {
             root_file: project.dir.join("中文主文件.tex"),
             project_root: project.dir.clone(),
@@ -877,9 +1173,10 @@ mod tests {
             "\\documentclass{article}\n\\begin{document}\n\\undefinedcommandhere\n\\end{document}\n",
         );
 
-        let runner = LatexmkRunner {
-            fs: std::sync::Arc::new(crate::fs::TokioFs),
-        };
+        let runner = LatexmkRunner::new(
+            std::sync::Arc::new(crate::fs::TokioFs),
+            std::sync::Arc::new(texpresso_core::scheduler::NoProgress),
+        );
         // 必须编译中文根文件本身：req() 造的是 main.tex，项目里并不存在，
         // latexmk 会因缺少输入而无 .log 可解析（原用例恒失败，2026-09 修正）。
         let request = CompileRequest {

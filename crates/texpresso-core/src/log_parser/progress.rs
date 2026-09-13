@@ -23,6 +23,71 @@ pub fn pages_typeset(log: &str) -> Option<u32> {
         .max()
 }
 
+/// **增量**页标记扫描器（roadmap「阶段 2 · 流式输出」）：把引擎输出**按块**喂进来，
+/// 回报新出现的最大页码。成本只与**新增字节**成正比（不是每次重扫全部输出）。
+///
+/// 为什么不是"逐块独立匹配"：`[N]` 会被 `max_print_line` 折行，`[6` 与 `]` 之间可能隔着
+/// 若干换行甚至正文回显（见上）。故每次把上一块的**尾部残留**（[`CARRY`] 字节）接到新块前面，
+/// 再整体匹配——既避免跨块漏检，也不需要保留全部历史输出。
+pub struct PageMarkerScanner {
+    carry: String,
+    max: Option<u32>,
+}
+
+/// 跨块残留窗口：折行标记的两半之间不会超过这个量级（实测最多隔几行 + 一小段正文回显）。
+const CARRY: usize = 4096;
+
+impl Default for PageMarkerScanner {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl PageMarkerScanner {
+    pub fn new() -> Self {
+        Self {
+            carry: String::new(),
+            max: None,
+        }
+    }
+
+    /// 追加一块输出；**页码变大**时返回新的最大页码，否则 `None`（调用方据此决定要不要发事件）。
+    pub fn push(&mut self, chunk: &str) -> Option<u32> {
+        if chunk.is_empty() {
+            return None;
+        }
+        let mut text = String::with_capacity(self.carry.len() + chunk.len());
+        text.push_str(&self.carry);
+        text.push_str(chunk);
+        let found = pages_typeset(&text);
+        self.carry = tail_chars(&text, CARRY);
+        let next = match (self.max, found) {
+            (Some(a), Some(b)) => Some(a.max(b)),
+            (Some(a), None) => Some(a),
+            (None, b) => b,
+        };
+        if next != self.max {
+            self.max = next;
+            return next;
+        }
+        None
+    }
+
+    /// 当前已知的最大页码。
+    pub fn max(&self) -> Option<u32> {
+        self.max
+    }
+}
+
+/// 取字符串末尾 `n` 个**字符**（不切坏 UTF-8）。
+fn tail_chars(s: &str, n: usize) -> String {
+    let count = s.chars().count();
+    if count <= n {
+        return s.to_string();
+    }
+    s.chars().skip(count - n).collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -53,5 +118,41 @@ mod tests {
     #[test]
     fn no_page_output_returns_none() {
         assert_eq!(pages_typeset("This is XeTeX\n(./main.aux)\n"), None);
+    }
+
+    // ---------------- PageMarkerScanner（增量，阶段 2 流式输出）
+
+    #[test]
+    fn scanner_reports_only_when_page_grows() {
+        let mut s = PageMarkerScanner::new();
+        assert_eq!(s.push("[1] [2]"), Some(2));
+        assert_eq!(s.push("[3]"), Some(3));
+        assert_eq!(s.push("正文，无标记\n"), None); // 没变大 → 不发事件
+        assert_eq!(s.push("[2] [1]"), None); // 旧页码（乱序回显）不算前进
+        assert_eq!(s.max(), Some(3));
+    }
+
+    #[test]
+    fn scanner_handles_marker_split_across_chunks() {
+        // 数字与 `]` 被切开
+        let mut s = PageMarkerScanner::new();
+        assert_eq!(s.push("[12"), None);
+        assert_eq!(s.push("3]"), Some(123));
+        // 折行（max_print_line）跨块的场景：`[6` 与 `]` 之间隔若干行 + 正文回显
+        let mut s2 = PageMarkerScanner::new();
+        assert_eq!(s2.push("[6\n\n"), None);
+        assert_eq!(s2.push("\n\n] 第二章"), Some(6));
+    }
+
+    #[test]
+    fn scanner_survives_long_stream_without_keeping_history() {
+        let mut s = PageMarkerScanner::new();
+        for i in 1..=500u32 {
+            let got = s.push(&format!("[{i}] 正文片段 {}\n", "x".repeat(200)));
+            assert_eq!(got, Some(i));
+        }
+        assert_eq!(s.max(), Some(500));
+        // 内部只保留尾部窗口，不随输出线性增长
+        assert!(s.carry.chars().count() <= CARRY);
     }
 }

@@ -125,6 +125,24 @@ pub trait CompileRunner: Send + Sync {
 
 **设计决策 D2（超时归属 runner）**：超时检测、进程树杀、PDF 拷贝全部在 runner 内，scheduler 无时钟、无进程概念。备选"调度器注入时钟管超时"被否决：scheduler 被迫依赖 tokio 时钟，单测要注入时间源，复杂度不成比例。收益：scheduler 单测只需喂 `CompileOutcome` 假结果，超时路径由 runner 的集成测试覆盖。
 
+**编译进行中的反馈**（阶段 2 · 流式输出，2026-09）：
+
+```rust
+pub trait CompileProgress: Send + Sync {
+    fn pages(&self, _pages: u32) {}             // 只在**数值变大**时调用
+    fn errors(&self, _errors: &[ErrorEntry]) {} // 只报致命错误；节流 + 指纹去重
+}
+
+pub struct NoProgress;                          // 全空实现（headless / 测试）
+```
+
+`LatexmkRunner::new(fs, progress)` 的可选依赖，**不进 `Emitter`**：`Emitter` 只在**任务完成**那一刻被调用（队列合并/失败语义都在那时成立），而流式反馈属于"运行中的进程输出"，与调度语义正交。
+
+契约两条，改坏即出错：
+
+- **非权威**：终态一律以 `CompileOutcome` 为准，UI 只在运行中采纳中间态；
+- **中间态可能晚于终态抵达**：runner 收尾时仍要置 stop 并 join 尾随任务（有 600ms 上限），那次补发照样回调。故中间态**必须走独立事件**（`compile-progress` / `compile-errors`），前端配 `phase === "running"` 守卫——复用终态事件名会让晚到的中间态顶掉权威列表（真机实测：超时诊断 1 条被 30 条中间态覆盖后才发现的）。
+
 ### 2.5 scheduler.rs — actor 主循环（core）
 
 ```rust
@@ -195,13 +213,14 @@ pub enum FailureKind { Timeout, ContentError, Aborted }
 ### 2.6 LatexmkRunner 实现（texpresso-infra）
 
 ```rust
-pub struct LatexmkRunner { fs: Arc<dyn FileSystem> }
+pub struct LatexmkRunner { fs: Arc<dyn FileSystem>, progress: Arc<dyn CompileProgress> }
 
 impl CompileRunner for LatexmkRunner {
     async fn compile(&self, req: CompileRequest, cancel: CancellationToken) -> CompileOutcome {
         // 1. 构造命令（算法见下）
         // 2. tokio::process::Command::new("latexmk").current_dir(&req.project_root)
-        //    .args([...]).stdout(Stdio::null()).stderr(Stdio::null()).kill_on_drop(true).spawn()
+        //    .args([...]).stdout(Stdio::piped()).stderr(Stdio::piped()).kill_on_drop(true).spawn()
+        // 2b. 三条读任务喂同一个 LiveFeedback：子进程 stdout、stderr、tmp/<stem>.log 尾随（见 §2.6.1）
         // 3. tokio::select! {
         //       _ = tokio::time::sleep(req.timeout)   => { kill_tree(pid); return Timeout }
         //       _ = cancel.cancelled()                => { kill_tree(pid); return Aborted }
@@ -234,7 +253,28 @@ cwd = project_root（相对 input/include 才能解析）；输入用完整相�
 产物：tmp/<root>.pdf（原子拷贝到项目根）；tmp/<root>.synctex.gz（SyncTeX CLI 用）；tmp/<root>.log（解析用）
 ```
 
-**信息局部性**：runner 无内部状态（`&self` 不可变），一次调用完全独立；每次调用所需信息全部在 `CompileRequest` 里。
+#### 2.6.1 流式反馈（阶段 2，2026-09）
+
+```
+三条读任务 → 同一个 LiveFeedback 状态机（唯一写者，Mutex 串行）→ progress.pages / progress.errors
+
+LiveFeedback::feed(text, force_parse)：
+  ① scanner.push(text) → Some(N) 就回调 pages(N)      // 增量 `[N]` 扫描，带 4096 字符回溯窗口
+  ② buffer += text（超 2MiB 只留尾部——页标记单调，历史文本对进度无用）
+  ③ 解析时机：行首出现 `!` 立即解析；其余按 500ms 节流补扫
+  ④ 结果按「消息+文件+行号」指纹去重 → 内容没变就不发
+```
+
+| 通道 | 实现 | 实测特性 |
+|---|---|---|
+| stdout / stderr | `pump_output`：`BufReader::lines()` 逐行喂 | **非 TTY 下是 4KB 块缓冲**：短文档的错误要等进程结束才 flush |
+| `tmp/<stem>.log` | `tail_log`：`read_appended(path, offset)` 只读新增字节，200ms 一次；调用方置 stop 后补读一次 | **按页 flush** → 边编译边报的主力通道（这正是"实时错误"要尾随日志、而不是只读管道的原因） |
+
+- **页标记扫描器**（`core::log_parser::progress::PageMarkerScanner`）：增量扫描 `[N]`，保留 4096 字符回溯窗口以兼容 `max_print_line` 折行的标记（`[6\n\n]`）；**只升不降**——latexmk 会跑多趟（每趟新进程、页码重启），UI 拿到的永远是历史最大页。
+- **只报致命错误**：`entries_from_log(text, warnings = false)` 丢掉 `Overfull`/`Underfull`/`LaTeX Warning`。依据是实测：一次失败的 ctexbook 长文档（约 160 页）日志 30 条消息里 **27 条是 `Overfull \hbox`**，足以把真正致命的条目挤出可视区；完整清单（含警告）由终态给出，**终态行为未变**。
+- **与终态同一套解析**：流式与终态都走 `parse_log` + `diagnose`，只是流式不做 `.ins`/`.dtx` 的项目内查证（终态的 `enrich_source_release_hints` 需要读盘）。
+
+**信息局部性**：runner 无内部状态（`&self` 不可变；`fs` / `progress` 都是注入依赖），一次调用完全独立；每次调用所需信息全部在 `CompileRequest` 里。
 
 ## 3. 项目子系统（project 大模块）
 
@@ -605,8 +645,10 @@ export const ipc = { openProject, listDir, readFile, saveAll,
 // events.ts —— 订阅一次，分发到各 store（内部经 useXxxStore() 取实例）；返回取消函数
 export function subscribeEvents(): () => void
 // 映射表（单向：事件 → store 动作）：
-//   compile-status → compileStore.setStatus
-//   errors-updated → compileStore.setErrors
+//   compile-status   → compileStore.setStatus
+//   compile-progress → compileStore.setProgress（中间态：仅 running 时采纳，只增不减）
+//   compile-errors   → compileStore.setLiveErrors（中间态：仅 running 时采纳）
+//   errors-updated   → compileStore.setErrors（**权威终态**，无条件写入）
 //   pdf-updated    → previewStore.reload
 //   files-changed  → editorStore.onFilesChanged(paths)（过滤+重载判定）
 //                     projectStore.refreshTreeDebounced(structural)（300ms 防抖；仅结构变化重建）
@@ -627,7 +669,7 @@ useAutoSave 依赖 editorStore.dirty + settingsStore（读）
 |---|---|---|
 | projectStore | project、rootFile、fileTree | openProject、refreshTree、refreshTreeDebounced、resolvePath、relativizePath（绝对 → 项目内相对路径，`update_settings` 唯一可接受的形态）、syncProject（经 `get_project` 重新同步） |
 | editorStore | openTabs[]、activePath、dirtyPaths:Set、lastSaved:Map<path,time>、buffers、externalConflict | openFile、closeTab、markDirty、markSaved、saveAll、onFilesChanged、acceptExternal |
-| compileStore | phase、kind、draft、errors[] | setStatus、setErrors |
+| compileStore | phase、kind、draft、errors[]、pages | setStatus、setProgress、setLiveErrors、setErrors |
 | previewStore | pdfPath、reloadKey、highlight、syncNote | onPdfUpdated、setHighlight、setSyncNote |
 | settingsStore | settings | setSettings、updateSettings |
 
@@ -638,6 +680,7 @@ useAutoSave 依赖 editorStore.dirty + settingsStore（读）
 - `editorStore.openFile`：去重判断放在 `await readFile` **之后复检**——并发的树节点双击不会开出两个标签；
 - `editorStore.onFilesChanged`：读盘后**复检 `dirty`**，脏则保留本地内容 + 冲突标记，不覆盖用户最新输入；
 - `compileStore.setStatus("success")` 清空 `errors`/`hasError`——无 `running` 前置时旧错误不残留；
+- **中间态只在运行中采纳**：`setProgress` / `setLiveErrors` 都以 `phase === "running"` 为前置（前者只增不减，后者不碰 `hasError`）——收尾期补发的中间态可能**晚于终态**抵达，缺了守卫就会顶掉权威列表（真机实测：超时诊断 1 条被 30 条中间态覆盖）；
 - `EditorPane` 的 Monaco 事件订阅逐个收集并随卸载 dispose；`PreviewPane` 带 `unmounted` 守卫（在途 load 不回写插桩与标题、catch 不误报）、卸载时 `cancelAllRenders()`、`onCanvasClick` 包 try/catch（卸载期间点击不产生未处理 rejection）。
 
 ### 9.3 composables
@@ -669,7 +712,7 @@ useAutoSave 依赖 editorStore.dirty + settingsStore（读）
 | FileTree | 树数据、激活路径 | 打开文件/目录展开 | 展开状态（只在前端本地） |
 | RootFilePicker | root、candidates（探测候选）、fallbackFiles（零候选时全部 .tex）、busy、error | `select`（**项目内相对路径**）、`close` | 无（纯展示；相对路径由 `relativizePath` 计算） |
 | ErrorList | errors[] | 点击条目 → openFile+定位 | 无；**诊断展示**（roadmap ④）：条目带 `diagnosis` 时渲染两行（原因 + 建议），无诊断降级为原文首行；头部「已诊断 N」。**去重/截断**：同源（文件 + 首行消息相同）聚合为一条并显示 `×N`；不同源最多展示 `MAX_DISPLAY=30` 组，超出提示隐藏数量（错误雪崩时不刷屏） |
-| StatusBar | compileStore/editorStore/projectStore 只读投影 + 「未确定根文件」可点击入口（emit `pick-root`）+ 草稿期「引用待更新」 | `pick-root` → App 打开根文件选择器 | 无（`queued/running/failed` 不改「引用待更新」标记——屏幕上的 PDF 仍是旧的，失败不产出新 PDF） |
+| StatusBar | compileStore/editorStore/projectStore 只读投影 + 「未确定根文件」可点击入口（emit `pick-root`）+ 草稿期「引用待更新」+ 编译中「已排版 N 页」 | `pick-root` → App 打开根文件选择器 | 无（`queued/running/failed` 不改「引用待更新」标记——屏幕上的 PDF 仍是旧的，失败不产出新 PDF；「已排版 N 页」只在 `running && pages > 0` 时显示） |
 
 **布局（App.vue）**：左栏文件树与大纲**上下分布**（`SplitPane direction="horizontal"`，比例 0.55）；底部面板默认折叠成约 30px 细条（头部「报告 · 状态 · 展开」，点击展开/收起），展开后错误列表占满底部宽度。分割器自研（不引入 vue-code-layout，多面板布局后置），`.split-pane.vertical` 显式写规则，不依赖默认 flex 行为。
 
@@ -715,6 +758,9 @@ compile-status: { phase: 'queued'|'running'|'success'|'failed',
 errors-updated: ErrorEntry[]                       // 失败时携带；编译启动时清空由前端 setStatus('running') 触发
                                                    // ErrorEntry = { message, file, line, kind, diagnosis }
                                                    // diagnosis = { kind, cause, hint, suggested_timeout_secs } | null
+compile-progress: { pages: number }                // **中间态**（阶段 2）：编译中已排版页数，只升不降；仅 running 时采纳
+compile-errors:  ErrorEntry[]                      // **中间态**（阶段 2）：编译中解析到的致命错误（不含 Overfull 等警告）；仅 running 时采纳
+                                                   // 中间态与终态**刻意分开**：收尾补发可能晚于终态抵达，共用事件名会顶掉权威列表（§2.6.1）
 pdf-updated:    { path: string }
 files-changed:  { paths: string[], structural: boolean }   // structural=true 仅增/删/重命名（文件树重建）；内容修改为 false（跳过）
 settings-changed: Settings
@@ -762,9 +808,10 @@ settings-changed: Settings
 | 17 | 大纲只在**编译成功**时刷新 | 编译一直失败时大纲停在旧结构（旧行为保留）。⑦a 的缓存已让"按保存触发刷新"变便宜（8–10ms/次），但有失败编译时的刷新时机/节流策略需要单独定（未做） |
 | 18 | `texpresso-mcp.exe` 被常驻进程占用 | 接了 DSH 的 `mcp-texpresso` 之后，该进程会**锁住二进制**：`cargo build -p texpresso-server` 报「failed to remove file … 拒绝访问」(os error 5)。绕行：只跑 lib（`--lib`）或用独立 `CARGO_TARGET_DIR`（见 [troubleshooting.md](./troubleshooting.md)） |
 
-| 19 | 编译期"已排版 N 页"进度未做（G2 已实测可行） | `tmp/<stem>.xdv` 每次编译都在，页索引只算指令长度：截断到任意位置解出的页与完整文件逐字节相同、全量 4.41MB = 2.7ms。工具见 `scripts/xdv-report.mjs`；**未接线到 UI**（[G2 报告](./research/g2-byte-offset-resync.md)、roadmap §5.7 与 §10-B.8） |
+| 19 | 编译期页进度的 **XDV 版**未接线（需求已由阶段 2 的日志通道满足） | `tmp/<stem>.xdv` 每次编译都在，页索引只算指令长度：截断到任意位置解出的页与完整文件逐字节相同、全量 4.41MB = 2.7ms。工具见 `scripts/xdv-report.mjs`。**2026-09 起「已排版 N 页」已由流式通道（引擎 `[N]` 标记）给出**（见 #20），XDV 版剩下的价值是页级差分与增量解析（[G2 报告](./research/g2-byte-offset-resync.md)、roadmap §5.7 与 §10-B.8） |
 
-| 20 | 引擎 stdout/stderr 被丢弃（编译期无进度、无实时错误） | `runner.rs` 用 `Stdio::null()` 起 latexmk/xelatex，只在退出后读 `tmp/<stem>.log`。实测（[阶段 2 报告](./research/stage2-streaming-feasibility.md)）：stdout 的 `[N]` 页码标记与 XDV 完整页时间线一致（首个非零 ≈ 编译 48%），**core 已有 `pages_typeset()`**；接管道即可得「已排版 N 页」+ 边编译边报错（C1，未做） |
+| 20 | ~~引擎 stdout/stderr 被丢弃（编译期无进度、无实时错误）~~ **已修（阶段 2，2026-09）** | 管道已接 + `tmp/<stem>.log` 尾随（三条读任务 → `LiveFeedback`）：状态栏「已排版 N 页」、错误列表**编译还没结束**就出现致命错误。真机实测（400KB / 162 页 ctexbook 首编）：`1.7s running → 3.4–4.8s 页码 2→162 → 8.2s success`；插入 `\undefinedmacrohere` 后 `41.5s` 收到实时错误，该轮 `42.3s` 才出终态（37 条含警告）。契约见 §2.4 / §2.6.1，事件见 §10 |
+| 22 | 错误条目的**文件归属**会错一章（`parse_log` 文件栈） | 实测（2026-09，流式验证的夹具）：错误写在 `ch_05.tex:164`，列表报 `./ch_04.tex:164`。机制已定位：TeX 日志把"关闭上一个文件 + 打开下一个文件"写在**同一行**（`[64]) (./ch_05.tex`），而 `RE_OPEN` 要求行首是 `(`、弹栈只认行首 `)` → `ch_05` 没入栈、`ch_04` 被弹出。影响：错误列表显示的文件名与点击跳转目标（`ErrorList.jump(entry.file, entry.line)`）都错位；终态与流式共用同一解析器，两者皆然。修法要按字符顺序做括号匹配，属独立任务（**未修**，见 roadmap §10-D） |
 | 21 | 预览只能显示"编译完成的 PDF" | PDF 由 `xdvipdfmx` 在排版结束后产出（需完整 XDV + postamble）→ 编译期无图可显示。**可行性已验证**：页前缀 + 从零合成 postamble → `xdvipdfmx` 接受（页数正确、首页渲染一致），成本 0.65–0.94s/次；**未接线**（[阶段 2 报告](./research/stage2-streaming-feasibility.md) §3） |
 
 ### 12.2 跨模块不变量（改回去即复发）
@@ -776,6 +823,7 @@ settings-changed: Settings
 - **外部写文件是非原子的**：设置热更新必须容忍"截断 → 写入 → 关闭"的中间态（3×150ms 短重试），否则第一次读空文件、第二次撞共享冲突 → 用户看到「改了没反应」。
 - **路径校验只有一个入口**：命令面路径一律经 core `project::paths`（D8）；core 内部（如 outline 读盘）用词法前缀版，差异仅剩符号链接目标与 8.3 短名。
 - **`.log` 必须容错解码**：严格 UTF-8 读取会把「编译失败」退化为「拿不到任何错误信息」（GBK 源 + pdflatex）。
+- **流式反馈必须走独立事件 + 前端 `phase` 守卫**（§2.4 / §2.6.1）：中间态在收尾期仍会补发（runner 置 stop 后尾随任务还要补读一次，join 有 600ms 上限），可能**晚于终态**抵达前端；复用 `errors-updated` 会让晚到的中间态顶掉权威列表（实测：超时诊断 1 条被 30 条中间态覆盖）。
 - **两条编译路径都必须固定 `SOURCE_DATE_EPOCH`**：不固定时同一份源码两次编译的 PDF 只差 trailer 的 `/ID`（实测 Quick 路径 67 字节、Full 路径长度都变），会让"输出 diff / 只重排变化页"分不清"真改了"与"ID 抖了"。（实测：该变量**不影响** XeTeX 的 `\today`。）
 - **生成产物永不当作源码打开**（㉒）：反向定位命中 `tmp/*.toc` 之类时先就近回落真实源码、落空则只给提示——直接打开会出现一屏用户没写过的内容。
 - **失败必须可见**：`openFile` 的 rejection 与 SyncTeX 的正反向失败都要落到 UI（状态栏提示条 / 预览工具条同步提示），不能只有 `console.error`——否则一律表现为"点了没反应"。
@@ -796,7 +844,8 @@ settings-changed: Settings
 | 构建确定性（逐字节） | `node scripts/check-determinism.mjs`（三档 × Full/Quick 各两次；`--without-epoch` 可复现非确定性） |
 | SyncTeX 往返精度 | `node scripts/synctex-report.mjs`（三组样本；基线见 design.md §预览） |
 | core 逻辑（调度 / 解析 / 诊断 / 大纲） | `cargo test -p texpresso-core` |
-| 真实 latexmk / synctex 集成 | `cargo test -p texpresso-infra -- --ignored` |
+| 真实 latexmk / synctex 集成 | `cargo test -p texpresso-infra -- --ignored`（含两条流式用例：`-- --ignored streaming` / `-- --ignored live_errors`，断言"进度/错误在编译结束前 ≥100ms 就到了"） |
+| 流式反馈真机时间线（页进度 / 实时错误 / 终态不被覆盖） | `node scripts/gen-stream-fixture.mjs test_file/projects/_stream-lab [--error]` 生成 400KB / 162 页夹具 → `VITE_TEXPRESSO_PROJECT=<夹具> npm run tauri dev` → 用 tauri server 注入 `window.__TAURI__.event.listen` 记录四个编译事件的时间线（脚本见提交说明；夹具目录已被 .gitignore 覆盖） |
 | headless 服务层（CLI/MCP 共用） | `cargo test -p texpresso-server`（`-- --ignored` 跑真编译；`--test mcp_stdio` 跑真实二进制的 MCP 管道链路；见 §8.1.1） |
 | 前端 store 与 composable | `npm run test`（大纲增量/合并见 `src/stores/__tests__/outline.spec.ts`；core 侧见 `cargo test -p texpresso-core outline`） |
 | 类型检查与构建 | `npm run build` |

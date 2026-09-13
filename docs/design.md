@@ -52,8 +52,8 @@
 
 ### 错误列表
 
-- 编译中清空 → 失败展示最新错误 → 点击跳转源码行
-- 依据 .log 解析（结构化错误提取）
+- 编译中清空 → **编译还没结束就能看见致命错误**（阶段 2 流式反馈，2026-09；只报致命错误，`Overfull` 这类警告留到终态）→ 失败展示最新完整清单（含警告）→ 点击跳转源码行
+- 依据 .log 解析（结构化错误提取）；实时那一路尾随 `tmp/<stem>.log`（引擎按页 flush），管道 stdout 只作补充（非 TTY 下 4KB 块缓冲）
 - **诊断**：把原始报错翻译成「原因 + 怎么改」——22 类（缺包/缺类/缺文件/缺字体/字体集/引擎不匹配/不支持的引擎/语法与结构类/超时两类/写不出中间文件/宏包与 LaTeX 兜底），匹配不到则退回原文 + 行号（**不猜**）。这是对"错误信息不可读"这一行业最高频痛点的正面回应。**不做引擎自动推断**：19 个真实模板双引擎实测中 **0 例**因默认 XeLaTeX 选错，正确替代是"不猜，但选错时明确告诉用户怎么改"（见 [research/template-corpus-survey.md](./research/template-corpus-survey.md)）。契约与语料见 [modules.md](./modules.md) §4.1。
 
 ### 延迟预算（产品约束，验收标准）
@@ -137,6 +137,7 @@ node scripts/bench.mjs --with-real         # 追加真实模板档（依赖本�
 - 编辑触发走 `CompileKind::Quick`（直调 `xelatex -interaction=nonstopmode -synctex=1 -output-directory=tmp`，不经 latexmk）；首编、手动「编译」、空闲收敛走 `CompileKind::Full`（完整 latexmk）。
 - **无构建产物自动升级**：`tmp/<stem>.aux` 不存在时单趟会让引用全成 `??`，runner 探测后自动升级为 Full，并把**实际**执行的强度回传（升级趟不误报草稿）。
 - **空闲收敛**：成功且为草稿后停手 **2000ms**（任何编辑或新编译都取消）补一次 Full，把目录/交叉引用页码追上；期间状态栏显示琥珀色「引用待更新」，只由下一次成功且为 Full 的编译清除（失败与运行中都不清——屏幕上的 PDF 没变）。
+- **编译中反馈**（阶段 2，2026-09）：状态栏显示「已排版 N 页」（来自引擎 `[N]` 标记，只升不降——多趟重启不回跳）；真机实测 400KB / 162 页 ctexbook 首编 `1.7s 起 running → 3.4–4.8s 页数 2→162 → 8.2s success`。预览仍只在编译成功后刷新（编译期无中间 PDF，见 [阶段 2 报告](./research/stage2-streaming-feasibility.md) 与 [G2 报告](./research/g2-byte-offset-resync.md)）。
 - **真机证据**（tauri server MCP，`multifile`）：一个 cycle 内 就绪 → 排版中 → 就绪 +「引用待更新」→ **Δ≈2.0s** 后再次排版中（收敛的 Full）→ 就绪、提示消失；`tmp/main.fdb_latexmk` 由收敛那一趟更新（晚于 Quick 趟）而 Quick 趟不动它——确证收敛真的跑了 latexmk、Quick 真的没跑。
 - **未验证**：bib/biber 场景下编辑期单趟的可用性（现有 fixture 编辑期不触发 bibtex；收敛兜底应能覆盖，但没有实测结论）。
 

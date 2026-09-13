@@ -47,4 +47,28 @@ pub trait FileSystem: Send + Sync {
 
     /// 写入（覆盖）文本文件。父目录必须已存在——建目录属于上层策略。
     async fn write(&self, path: &std::path::Path, contents: &str) -> io::Result<()>;
+
+    /// **从 `offset` 起**读新增内容（容错解码），返回新文本与新的偏移量（字节）。
+    ///
+    /// 用途（roadmap「阶段 2 · 流式输出」）：编译期间**尾随 `tmp/<stem>.log`**。
+    /// 实测：引擎的 stdout 在非 TTY 下是 4KB **块缓冲**（页标记与错误要攒够一块才落盘），
+    /// 而 `.log` 是**按页 flush** 的——所以"边编译边报进度/报错"必须读日志文件。
+    ///
+    /// 契约：
+    /// - `offset` 超过文件长度（文件被重写/截断）时，从 0 重新开始（`offset` 回落到新长度）；
+    /// - 返回的 `offset` 是**原始字节**偏移（不是字符数），即便文本经过有损解码；
+    /// - 文件不存在 → `NotFound`（调用方自行决定是否重试）。
+    ///
+    /// 默认实现退化为"读全量再从 offset 切"（正确但每次全读）；真实实现（TokioFs）
+    /// 覆盖为 seek + 读增量。
+    async fn read_appended(
+        &self,
+        path: &std::path::Path,
+        offset: u64,
+    ) -> io::Result<(String, u64)> {
+        let text = self.read_to_string_lossy(path).await?;
+        let bytes = text.as_bytes();
+        let start = usize::try_from(offset).unwrap_or(0).min(bytes.len());
+        Ok((String::from_utf8_lossy(&bytes[start..]).into_owned(), bytes.len() as u64))
+    }
 }

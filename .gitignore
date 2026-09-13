@@ -7,6 +7,8 @@
 node_modules/
 .pnp
 .pnp.js
+# 沙箱内 npm/pnpm 缓存被拒时的重定向目标（见 docs/troubleshooting.md）
+.pnpm-store/
 
 # ============ 构建产物 ============
 dist/

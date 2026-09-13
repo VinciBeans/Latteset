@@ -19,6 +19,14 @@ export function subscribeEvents(): () => void {
       // 编译成功 = 文档结构已确立 → 重建大纲（source 结构变化后保持同步）
       if (dto.phase === "success") useOutlineStore().refresh().catch(() => {});
     }),
+    // 编译进行中的流式反馈（阶段 2）：已排版页数 + 编译中的致命错误。
+    // 两者都是**非权威中间态**，只走各自的新事件；终态由 compile-status / errors-updated 给。
+    events.compileProgress.listen((e) => {
+      useCompileStore().setProgress(e.payload.pages);
+    }),
+    events.compileErrors.listen((e) => {
+      useCompileStore().setLiveErrors(e.payload);
+    }),
     events.errorsUpdated.listen((e) => {
       useCompileStore().setErrors(e.payload);
     }),

@@ -11,7 +11,7 @@ pub use diagnosis::{
     diagnose, diagnose_timeout, source_release_hint, Diagnosis, DiagnosisKind, TimeoutEvidence,
 };
 pub use model::{LogMessage, MessageKind};
-pub use progress::pages_typeset;
+pub use progress::{pages_typeset, PageMarkerScanner};
 pub use scan::parse_log;
 
 /// 解码 `.log` 字节为文本：**能严格解就严格解，不能则 lossy**（非法字节 → U+FFFD）。

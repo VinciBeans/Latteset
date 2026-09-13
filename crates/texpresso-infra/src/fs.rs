@@ -28,6 +28,22 @@ pub struct TokioFs;
 
 #[async_trait]
 impl FileSystem for TokioFs {
+    /// 增量读（阶段 2）：seek 到 `offset` 再读到文件尾——编译期尾随 `.log` 时只读新增字节。
+    async fn read_appended(&self, path: &Path, offset: u64) -> io::Result<(String, u64)> {
+        use tokio::io::{AsyncReadExt, AsyncSeekExt};
+        let mut file = tokio::fs::File::open(path).await?;
+        let len = file.metadata().await?.len();
+        // 文件被重写/截断（新一趟编译）→ 从头读
+        let start = if offset <= len { offset } else { 0 };
+        if start > 0 {
+            file.seek(std::io::SeekFrom::Start(start)).await?;
+        }
+        let mut bytes = Vec::new();
+        file.read_to_end(&mut bytes).await?;
+        let next = start + bytes.len() as u64;
+        Ok((texpresso_core::log_parser::decode_log(&bytes), next))
+    }
+
     async fn read_dir(&self, path: &Path) -> io::Result<Vec<DirEntry>> {
         let mut rd = tokio::fs::read_dir(path).await?;
         let mut out = Vec::new();

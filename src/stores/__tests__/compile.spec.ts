@@ -66,4 +66,61 @@ describe("compileStore", () => {
     c.setStatus("failed", "content_error", false);
     expect(c.draft).toBe(true);
   });
+
+  // ---- pages（阶段 2 · 流式输出）：编译中已排版页数 ----
+  it("running 时接受进度，且只增不减（多趟重启不回跳）", () => {
+    const c = useCompileStore();
+    c.setStatus("running", null, false);
+    c.setProgress(3);
+    expect(c.pages).toBe(3);
+    c.setProgress(1); // 第二趟重新从第 1 页开始 → 忽略
+    expect(c.pages).toBe(3);
+    c.setProgress(12);
+    expect(c.pages).toBe(12);
+  });
+
+  it("非 running 忽略进度（终态之后到达的旧事件不污染状态）", () => {
+    const c = useCompileStore();
+    c.setStatus("success", null, false);
+    c.setProgress(42);
+    expect(c.pages).toBe(0);
+  });
+
+  it("新的编译开始与结束都把页数归零", () => {
+    const c = useCompileStore();
+    c.setStatus("running", null, false);
+    c.setProgress(7);
+    c.setStatus("success", null, false);
+    expect(c.pages).toBe(0);
+    c.setStatus("running", null, false);
+    expect(c.pages).toBe(0);
+  });
+
+  // ---- 流式错误（阶段 2）：编译中的致命错误，非权威 ----
+  it("running 时接受流式错误（编译没结束就能看见）", () => {
+    const c = useCompileStore();
+    c.setStatus("running", null, false);
+    c.setLiveErrors([ERR]);
+    expect(c.errors).toEqual([ERR]);
+  });
+
+  it("终态之后到达的流式错误被忽略（回归：晚到的中间态不得顶掉权威列表）", () => {
+    const c = useCompileStore();
+    c.setStatus("running", null, false);
+    c.setLiveErrors([ERR]);
+    // 编译结束：权威列表（如超时诊断）写入
+    const authoritative: ErrorEntry = { ...ERR, message: "超时", kind: "timeout" };
+    c.setStatus("failed", "timeout", false);
+    c.setErrors([authoritative]);
+    // 收尾期补发的实时事件随后抵达 → 必须被丢弃
+    c.setLiveErrors([ERR, ERR]);
+    expect(c.errors).toEqual([authoritative]);
+  });
+
+  it("流式错误不改 hasError：结论只由终态给", () => {
+    const c = useCompileStore();
+    c.setStatus("running", null, false);
+    c.setLiveErrors([ERR]);
+    expect(c.hasError).toBe(false);
+  });
 });
