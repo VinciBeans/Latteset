@@ -97,14 +97,27 @@ P0-3（路径与 SyncTeX 策略下沉 core）按计划做了：`core::synctex::{
 | P1-4 | outline 解析下沉 Rust（前端改调 `get_outline`） | **早已落地**（更早的提交，见 [modules.md](./modules.md) §3.5） |
 | P1-5 | Emitter 三回调改多订阅者 fanout（跑 MCP notifications） | **未做**（一期用快照；见 §5） |
 
-## 7. harness 接线（DSH 示例）
+## 7. harness 接线（DSH，已落地并实测）
+
+DSH 的 MCP server 由 profile 的 patch 层声明（**本地文件、不入库**：`~/.dsh/profiles/web/cordis.patch.yml`，`patchReload: live` = 改完即时生效）。实际写入的行：
 
 ```yaml
-# ~/.dsh/profiles/web/cordis.patch.yml（MCP 层）
-mcp:
-  servers:
-    texpresso:
-      command: "<node 不需要；这里直接是可执行文件>"
-      args: ["E:/Works/tex-presso/src-tauri/target/debug/texpresso-mcp.exe", "--project", "<默认项目目录>"]
+- insert:
+    - id: mcp-texpresso
+      name: '@deepseek-ai/dsh-mcp-client'
+      config:
+        serverName: texpresso
+        transport: stdio
+        command: 'E:/Works/tex-presso/src-tauri/target/debug/texpresso-mcp.exe'
+        args: []
+        cwd: 'E:/Works/tex-presso'
+        env: {}
 ```
-> `--project` 只是"预打开"：工具调用仍可带 `project` 参数切换到别的项目（一个 server 管多项目已实测）。
+
+接线要点（都是踩过的）：
+
+- **`command` 用可执行文件绝对路径**：MCP SDK 以 `shell: false` spawn，`.cmd` 壳（npm 风格）在 Windows 起不来；Rust 二进制直接可用，**不需要 node**。
+- **`args` 留空 = 不预打开项目**：每次工具调用带 `project=<目录>`（相对路径按 `cwd` 解析），或先调 `project_open`。留空是刻意的——避免"当前项目"隐式粘在某个夹具上；`--project` 若要用也只影响"未显式传参"的调用。
+- **`cwd` 决定相对路径基准**：设成项目仓库根，工具调用里就可以写 `test_file/projects/multifile` 这类相对路径。
+
+**实测（DSH 会话内直接调用，不经 shell）**：`project_open`（multifile → `root_file=main.tex`、无候选歧义）→ `compile`（`status=success`、`kind=full`、2789ms、errors 空、`pdf_path` 就位）→ `outline_get`（章/节带 `文件:行号`）→ `synctex_forward chapters/intro.tex:3` → `page 4 (70.87, 47.48)`。协议面另外用「真实二进制 + stdin 管道」复核：`initialize` 回 `protocolVersion=2024-11-05`、`capabilities.tools`，`tools/list` 11 项且**每项都有 `inputSchema`**（SDK 客户端会校验这一点）。
