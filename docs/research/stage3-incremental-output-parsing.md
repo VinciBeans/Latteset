@@ -130,6 +130,48 @@
 
 ## 8. 结论：为什么"达成但不接线"
 
+### 8.1 先看上游：它的消费方是谁（2026-09 抓 master 源码核对）
+
+上游 `incdvi.h` 的公开 API 只有 9 个函数，而且**全是"查询/渲染"式（pull），没有任何"页完成回调"**：
+
+```c
+incdvi_t *incdvi_new(fz_context *ctx, dvi_reshooks hooks);
+void incdvi_reset(incdvi_t *d);
+void incdvi_update(fz_context *ctx, incdvi_t *d, fz_buffer *buf);      // 增量扫描（阶段 3 本体）
+bool incdvi_output_started(incdvi_t *d);
+int  incdvi_page_count(incdvi_t *d);
+void incdvi_page_dim(incdvi_t *d, fz_buffer *buf, int page,
+                     float *width, float *height, bool *landscape);    // 不渲染就知道页尺寸
+void incdvi_render_page(fz_context *ctx, incdvi_t *d, fz_buffer *buf, int page, fz_device *dev);
+void incdvi_find_page_loc(fz_context *ctx, incdvi_t *d, fz_buffer *buf, int page);
+float incdvi_tex_scale_factor(incdvi_t *d);
+```
+
+所以消费方 = **主动调用它的那一层**。顺着 `engine.h` 的 `txp_engine_class` 虚表与 `engine_dvi.c` 的实现（两处都已抓下来核对）可以得到完整链条：
+
+| 环节 | 证据 | 作用 |
+|---|---|---|
+| 收输出字节 | `engine_tex.c`（`txp_create_tex_engine(..., stream_mode, ...)`） | **流式路径**：收到新字节就 `incdvi_update` ← 阶段 3 验收标准（"每帧常数级"）的对象 |
+| 页索引 | `incdvi.c` | 页边界 + 页字节区间 + 页尺寸 + 页定位 |
+| 包成统一引擎接口 | `engine.h` 的虚表：`page_count` / `render_page` / `scale_factor` | 三个方法直接由 `incdvi_*` 实现——**incdvi 就是 engine 的"页"能力提供者** |
+| 逐页渲染 | `engine_dvi.c` 的 `engine_render_page`：先 `incdvi_page_dim(...,&w,&h,NULL)` 建 `fz_display_list`，再 `incdvi_render_page(..., dev)` | 产出 MuPDF display list |
+| 上屏 | `renderer.c`（脏矩形纹理）→ SDL | 只重绘变化区域 |
+
+一个实证细节：**静态查看路径**（`texpresso foo.xdv`）里 `incdvi_update` **只在构造时调用一次**——`txp_create_dvi_engine()` 读完整个文件后 update 一次就返回。也就是说 incdvi 同时服务两种场景：静态查看器（一次喂满）与实时渲染（反复喂）。
+
+⇒ **上游的消费方是它自己的渲染闭环**（engine → 主循环 → renderer）：`incdvi` 不是给外部 API 用的中间层，而是"边编边看"里**从字节流到屏幕的必经段**。这也解释了为什么它值得为"每帧常数级"做优化——它真的每帧被问。
+
+### 8.2 为什么我们没有：四个消费方在别处各有替代
+
+| 上游 incdvi 的用途 | 上游消费者 | 我们的替代 |
+|---|---|---|
+| 页进度（`output_started` / `page_count`） | 主循环（配合 `advance_engine` 的 5ms 时间片判断"还有没有活"） | 阶段 2 的 `[N]` 标记（日志尾随；比解析 XDV 更便宜，且已在跑） |
+| 按需渲染（`render_page`） | MuPDF display list → 纹理 | pdf.js 渲染 **PDF**（我们不在 XDV 上渲染；DVI 渲染已被 [DVI 报告](./dvi-preview-feasibility.md) 否决） |
+| 页尺寸/布局（`page_dim`，不渲染即知页大小） | 滚动区总高度、页框 | pdf.js 的 PDF 页尺寸 |
+| 滚动/定位（`find_page_loc`） | 视口跳转 | pdf.js `scrollIntoView` + SyncTeX 正向定位 |
+
+⇒ "达成但没有消费方"**不是遗漏，而是架构差异**：我们没有 XDV 渲染栈，页索引因此只剩"离线页级差分 + 诊断"两种用途。若将来真要做"编译期逐页出图"，缺的恰恰是上游这条链的**下游半段**（`render_page`），而它已被 DVI 报告实测否决（比 PDF 链路慢 57–68×）。
+
 把阶段 3 的产出按"谁能用"过一遍：
 
 | 潜在消费方 | 现状 | 需要增量吗 |
