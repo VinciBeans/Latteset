@@ -811,7 +811,7 @@ settings-changed: Settings
 | 13 | headless `file_write` 不代建目录 | **设计取舍**（与 GUI `save_all` 同契约）：父目录必须已存在，错误消息明说。Agent 新建子目录需先建目录 |
 | 14 | headless 根文件探测每次重扫 | 未做缓存：多数项目 <100ms；大项目再评估（缓存一致性成本 > 收益） |
 | 15 | 折叠提供者全量扫描（编辑器侧） | `latexSuggest.ts` 的 `provideFoldingRanges` 忽略区间、`getValue().split()` 扫全文；**实测** 2.2ms@462KB、3.7ms@1.36MB，折叠模型失效后重算一次（防抖 ≥200ms）。60Hz 帧预算内，144Hz + 多 MB 才明显（[分析](./research/p1-large-doc-editor-analysis.md) §3.2，roadmap ⑦b 缓做） |
-| 16 | 编辑器侧"大文档"只测过单文件 | 462KB/1.36MB 均为单文件项目；多文件大项目（≥20 文件）的打开/内存/树刷新未测（roadmap ⑦c 第一步：建夹具 + 口径） |
+| 16 | ~~编辑器侧"大文档"只测过单文件~~ **已补（⑦c，2026-09）** | 三档夹具（9 / 21 / 41 文件 × 2.2–5.5 MB，后两档同总量双倍文件数）：五项门槛全过——每击键净 **0.077–0.097 ms（绝对值恒定，与文件数/总量无关）**、打开全部标签 252/507/675 ms、大纲往返 14.1/28/27.9 ms、关标签后 model 25→4 且缓冲归零（**无泄漏**）。**结论：不需要优化**（[p1c 报告](./research/p1c-multifile-large-project.md)）。遗留：多文件项目的**编译期**表现、`Ctrl+F`/大范围替换、可信堆读数（dev 下 `performance.memory` 抖动到出负值） |
 | 17 | 大纲只在**编译成功**时刷新 | 编译一直失败时大纲停在旧结构（旧行为保留）。⑦a 的缓存已让"按保存触发刷新"变便宜（8–10ms/次），但有失败编译时的刷新时机/节流策略需要单独定（未做） |
 | 18 | `texpresso-mcp.exe` 被常驻进程占用 | 接了 DSH 的 `mcp-texpresso` 之后，该进程会**锁住二进制**：`cargo build -p texpresso-server` 报「failed to remove file … 拒绝访问」(os error 5)。绕行：只跑 lib（`--lib`）或用独立 `CARGO_TARGET_DIR`（见 [troubleshooting.md](./troubleshooting.md)） |
 
@@ -860,7 +860,7 @@ settings-changed: Settings
 | 类型检查与构建 | `npm run build` |
 | 只有真实窗口能验的部分 | [troubleshooting.md](./troubleshooting.md) §真机验收清单（tauri server MCP 驱动） |
 | 产品级实测数字与结论 | [design.md](./design.md)（延迟预算、预览重载、编辑期单趟收益、SyncTeX 精度、构建确定性） |
-| 编辑器侧大文档性能（每击键 / 折叠 / 大纲往返） | [research/p1-large-doc-editor-analysis.md](./research/p1-large-doc-editor-analysis.md)（真机探针方法 + 数据；口径待固化为 `scripts/editor-report.mjs`） |
+| 编辑器侧大文档性能（每击键 / 折叠 / 大纲往返 / 多文件大项目） | [research/p1-large-doc-editor-analysis.md](./research/p1-large-doc-editor-analysis.md)（单文件探针方法与数据）+ [research/p1c-multifile-large-project.md](./research/p1c-multifile-large-project.md)（多文件夹具/口径/门槛）。口径已固化：`node scripts/gen-large-project.mjs`（三档夹具）→ `VITE_TEXPRESSO_PROJECT=<...> npm run tauri dev` → `node scripts/editor-report.mjs --tier multi20 --json out.json`（WS 直驱真机、零第三方依赖、超门槛退出码 1；`--eval-file` 可当调试入口） |
 | DVI/XDV 产物本身（页索引 / 页级差分 / 截断可读性） | `node scripts/xdv-report.mjs <tmp/*.xdv>`（页数可与 `pdfinfo` 对拍；`--diff` 页级差分、`--truncate-at` 半成品、`--watch` 编译期可用性）；结论见 [research/g2-byte-offset-resync.md](./research/g2-byte-offset-resync.md) |
 | 引擎到底读了什么（依赖集合 / 为什么找不到文件） | `node scripts/fls-report.mjs <tmp/main.fls> --fdb <tmp/main.fdb_latexmk>`（`.fls`=引擎实际打开；`.fdb_latexmk`=latexmk 依赖图含 md5 与 bibtex 步骤；差集=只在后者的输入）；失败的查找尝试用 `KPATHSEA_DEBUG=32`；结论见 [research/g1-read-interception-feasibility.md](./research/g1-read-interception-feasibility.md) |
 | 已完成项及其证据 | [roadmap §1 基线](./research/tex-ide-roadmap-priority.md) |

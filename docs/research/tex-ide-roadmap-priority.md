@@ -7,7 +7,7 @@
 > **ID 稳定约定**：①…㉗ 沿用历史编号（`modules.md` / `troubleshooting.md` / `design.md` / 源码注释里的「roadmap P0-①」「P0-②-1」「roadmap ④」等引用因此不失效）；新增项从 **㉘** 起续编。已完成项**保留 ID 并移入 §1 基线**，不再占用待办位次。
 > **证据约定**：**实测** = 可复现的本机结果（命令见各报告）；**[推断]** = 未实测的判断；未标注的规划项一律视为未实现。
 >
-> **当前下一步**：**⑦c**（先建"≥20 文件 × 大文件"夹具与测量口径，见 §6.2）→ **⑧⑨ 语义层**（合并里程碑）→ **⑩⑪㉖**；⑦b（折叠增量）视 ⑦c 的数字再定。§3 是唯一的排序来源，§4 说明批次与出口条件。
+> **当前下一步**：**⑧⑨ 语义层**（合并里程碑，见 §6.3）→ **⑩⑪㉖**；⑦c 已完成（夹具 + 口径 + 数据，结论是"不需要优化"，见 §1 与 [p1c 报告](./p1c-multifile-large-project.md)）。§3 是唯一的排序来源，§4 说明批次与出口条件。
 
 ## 1. 已完成基线（保留 ID 与证据指针）
 
@@ -30,6 +30,7 @@
 | ㉚ | 构建确定性验证 | 2026-09 | `scripts/check-determinism.mjs`；实测：不固定 `SOURCE_DATE_EPOCH` 时两次编译不一致（只差 trailer `/ID`：Quick 首差 @92143 共 67 字节），固定后 **3 档 × 2 路径逐字节一致**；顺带排除"会影响 `\today`"的顾虑。见 design.md §构建确定性 |
 | ㉛ | 编译决策日志 | 2026-09 | 触发侧打"不触发"的三类原因（无根文件 / 项目外 / 被忽略）；调度侧打 开始(root/kind/timeout)、入队等待、合并替换、直接执行最新、成功(draft)/失败(kind)、终止清队。core 加 `tracing` facade（非 IO，ADR-0006 仍成立） |
 | 阶段 2 | 引擎子进程 + 流式输出（上游实时渲染路线的吸收项，§5.3 / §5.8） | 2026-09 | 管道已接（`Stdio::piped()`）+ 尾随 `tmp/<stem>.log`（三条读任务 → 同一状态机）→ 状态栏「已排版 N 页」+ 错误列表**编译还没结束**就报致命错误。中间态走**独立事件**（`compile-progress` / `compile-errors`），前端按 `phase` 守卫——终态 `errors-updated` 不被晚到的中间态覆盖。真机实测（400KB / 162 页 ctexbook 首编）：`1.7s running → 3.4–4.8s 页数 2→162 → 8.2s success`；插错后 `41.5s` 收到实时错误、`42.3s` 出终态（37 条含警告）。**落地时才实测到的两条**：引擎输出在非 TTY 下是 4KB 块缓冲（按页 flush 的日志才是主力通道）、中间态可能晚于终态抵达。契约见 [modules.md](../modules.md) §2.4 / §2.6.1 |
+| ⑦c | 多文件大项目（编辑器侧）：夹具 + 口径 + 数据 | 2026-09 | 三档夹具（9/21/41 文件 × 2.2–5.5 MB，后两档**同总量双倍文件数**以分离变量）+ 口径脚本 `scripts/editor-report.mjs`（WS 直驱真机、零第三方依赖、超门槛退出码 1）。**五项门槛全过**：每击键净开销 **0.077–0.097 ms 绝对值恒定**（与文件数/总量无关）、无 >50 ms longtask、折叠 0.73–1.45 ms/MB、大纲往返 5.07–6.41 ms/MB（门槛 20）、20×1 MB model 22–46 ms（门槛 100）；21 个标签全关后 model 25→4、缓冲 0 → **无泄漏**。**结论：不需要优化**。见 [p1c 报告](./p1c-multifile-large-project.md) |
 
 > 同期完成的**非 roadmap 工程项**（记录以免重复提议）：`texpresso-infra` 拆分（ADR-0010）、大纲解析下沉 Rust、架构图与渲染脚本、MCP Bridge 0.12→0.13 升级、真机验收清单固化、**为 DVI/G2 研究新增 `scripts/xdv-report.mjs`**。
 
@@ -52,7 +53,6 @@
 
 | ID | 事项 | W | D | C | V | P | 档 | 依据与下一步 |
 |---|---|---|---|---|---|---|---|---|
-| ⑦c | 多文件大项目（编辑器侧）：**先建夹具与口径** | 5 | 4 | 1 | 2 | **3.00** | **P0\*** | ⑦a 已完成。⑦c 先只做"≥20 文件 × 大文件"夹具 + 口径（C1）；优化本身 C 待测——**没有数字就不投入**（§6.2） |
 | ㉜ | **非 `.tex` 输入变化不触发编译**（改了 `.bib`/图片没反应） | 3 | 2 | 1 | 1 | **2.50** | P1 | G1 研究实测（[报告](./g1-read-interception-feasibility.md) §5.1）：`watch.rs:178` 只认 `.tex` 扩展名；改**被 `\bibliography` 引用**的 `refs.bib` → 全部 tmp 产物 mtime 纹丝不动。修法 C1：把非 `.tex` 输入纳入触发集合（最省：项目内非忽略文件变化即触发，交给 latexmk 自己判定） |
 | ⑧ | 跨文件 LaTeX 语义操作 | 4 | 5 | 4 | 3 | **1.29** | P1 | P10：VS Code 明确缺失（§6.3） |
 | ⑩ | 深色主题（Candy Desk 暗色） | 3 | 2 | 2 | 2 | **1.25** | P1 | 配置类第一痛点：206 票 / 23 万浏览（§6.4） |
@@ -77,7 +77,7 @@
 |---|---|---|---|
 | **Batch 1 收口** | 快速通道 ㉓㉚㉗㉑㉛ | 小项各自独立可交付 | ✅ 2026-09 达成 |
 | **Batch 2 攻核心承诺** | ⑥ CLI + MCP | Agent 能驱动「改 → 编 → 验」闭环 | ✅ 2026-09 达成（真机走通 + 回归固化） |
-| **Batch 3 硬骨头** | ⑦a ✅ → **⑦c**（建夹具出数）→ ⑧⑨ 语义层（合并）→ ⑩⑪㉖ | 交互期无 >50ms 长任务（⑦c）；跨文件重命名可用（⑧⑨）；主题一致（⑩）；带 rc 的模板编译路径有结论（㉖） | 🟡 进行中（⑦a 已完成） |
+| **Batch 3 硬骨头** | ⑦a ✅ → ⑦c ✅ → **⑧⑨ 语义层（合并）** → ⑩⑪㉖ | 交互期无 >50ms 长任务（⑦c ✅：三档夹具五项门槛全过）；跨文件重命名可用（⑧⑨）；主题一致（⑩）；带 rc 的模板编译路径有结论（㉖） | 🟡 进行中（⑦a / ⑦c 已完成） |
 | **独立里程碑** | ⑫ TinyTeX 捆绑 | 干净 Windows 机器零预装可用 | ⬜ 未开始 |
 
 ## 5. 外部方案与产物格式评估（否决与吸收都在这里）
@@ -198,20 +198,20 @@
 - **尚未定位**：用精简 rc 复刻关键行跑最小工程仍能恢复 → **没有可复现的 rc 最小组合**；最小复现与绕过（`\include` → `\input`）见 [troubleshooting.md](../troubleshooting.md)。
 - **出口条件**：带 latexmkrc 的真实模板能编译成功，**或**产品给出明确可操作的诊断；③ 的 ">240s 未收敛" 记录在修好后用 `node scripts/bench.mjs --with-real --no-warmup` 重测。
 
-### 6.2 ⑦c 多文件大项目（P0，第一步只做夹具与口径）
+### 6.2 ⑦c 多文件大项目 —— ✅ 已完成（夹具 + 口径 + 数据，结论：**不需要优化**）
 
 背景：⑦（大文档编辑器侧性能）经真机实测拆成四份，只有 ⑦c 还是未知数——[p1 分析](./p1-large-doc-editor-analysis.md) 已证伪"竞品的架构病我们有"（每击键净开销 0.02–0.05ms 且不随规模增长），并把大纲重扫做成增量（⑦a ✅）。
 
 | 拆项 | 实测 | 状态 |
 |---|---|---|
 | ⑦a 大纲重扫增量 | 55.5ms → 9.7ms / 8.4ms（11 文件/436KB） | ✅ 已完成（§1） |
-| **⑦c 多文件大项目** | **未测**：调研 #4410 的症状是「20 文件 / 近 7000 页」，而本次只测过单文件（462KB/1.36MB）与临时的 11 文件/436KB | **下一步**：建"≥20 文件 × 大文件"夹具 + 口径（打开耗时、标签内存、树刷新、include 图解析），**再据数决定是否优化** |
-| ⑦b 折叠提供者增量 | 2.2ms@462KB → 3.7ms@1.36MB（折叠模型失效后重算一次） | 缓做：未越 60Hz 帧预算；144Hz + 多 MB 才明显 |
+| **⑦c 多文件大项目** | 三档夹具（9/21/41 文件 × 2.2–5.5MB）：每击键净 **0.077–0.097ms 绝对值恒定**、打开全部标签 252/507–536/675ms、大纲往返 14.1/28/27.9ms、无 longtask、关标签后无泄漏 | ✅ **已完成**（§1；[p1c 报告](./p1c-multifile-large-project.md)） |
+| ⑦b 折叠提供者增量 | 2.2ms@462KB → 3.7ms@1.36MB；⑦c 复测 0.2–0.3ms@282KB | 缓做：未越 60Hz 帧预算（多文件也不改变该判断） |
 | ⑦d 每击键省一次 `getValue` | 收益 ~0.05ms | **明确不做**（分数好看、用户无感） |
 
-**DoD 建议**：把测量固化为 `scripts/editor-report.mjs`（MCP 驱动真机，复用 p1 分析的探针）——门槛：`每击键净开销 ≤0.5ms@1MB`、`折叠重算 ≤2ms@1MB`、`大纲往返 ≤20ms@1MB`、`无 >50ms longtask`、`20 个 1MB model 创建 ≤100ms`。
+**DoD 已固化**为 `scripts/editor-report.mjs`（WS 直驱真机、零第三方依赖、超门槛退出码 1）+ `scripts/gen-large-project.mjs`（三档夹具）。门槛与结果：`每击键净开销 ≤0.5ms`（实测 0.077–0.097）、`折叠 ≤2ms/MB`（0.73–1.45）、`大纲往返 ≤20ms/MB`（5.07–6.41）、`无 >50ms longtask`（0 条）、`20 个 1MB model ≤100ms`（22–46）——**五项全过**。两条留给既有条目的观察：冷路径大纲全量 57–182ms 归入 ③ 的"打开耗时"口径；`>20 文件时编译期 watch 事件`未测（属 ③/流式输出的账）。
 
-**方法论教训（回写，避免重犯）**：① A/B 必须**顺序受控 + 预热丢弃**（首轮差 0.47ms，交替 3 轮后 0.02–0.05ms，单轮会高估 5–10 倍）；② 不能用 `slice()` 代理 `getValue()`（V8 SlicedString 是 O(1) 视图，实测 0.000ms）；③ MCP 的 `webview_keyboard type` **打不进 Monaco 0.56**（EditContext + `readonly` 的 IME textarea）——用"动态 import 已加载模块 + `editor.trigger('keyboard','type')`"。
+**方法论教训（回写，避免重犯）**：① A/B 必须**顺序受控 + 预热丢弃**（首轮差 0.47ms，交替 3 轮后 0.02–0.05ms，单轮会高估 5–10 倍；⑦c 用 5 轮弃首轮）；② 不能用 `slice()` 代理 `getValue()`（V8 SlicedString 是 O(1) 视图，实测 0.000ms）；③ MCP 的 `webview_keyboard type` **打不进 Monaco 0.56**（EditContext + `readonly` 的 IME textarea）——用"动态 import 已加载模块 + `editor.trigger('keyboard','type')`"；④ ⑦c 新增七条口径坑（Vite 预打包 URL、活动文件必须是**大文件**、`.length` ≠ 字节数、堆读数不可信、`editor.dispose()` 不 dispose model、`String.raw` 模板不能含反引号、门槛该用**绝对毫秒**而不是 ms/MB）全部记在 [p1c 报告](./p1c-multifile-large-project.md) §6。
 
 ### 6.3 ⑧⑨ 语义层（建议合并为一个里程碑）
 
@@ -268,7 +268,7 @@ C/V 全表最高（5/4）：干净 Windows 机器零预装可用。属"环境引
 | ⑤ SyncTeX | [ADR-0008](../adr/0008-synctex-via-cli-with-interface.md) + modules.md §5 + design.md §预览 + `scripts/synctex-report.mjs` |
 | ⑥ CLI + MCP（**已完成**） | [cli-mcp-plan.md](../cli-mcp-plan.md) + modules.md §8.1 + `crates/texpresso-server` |
 | ⑦a 大纲增量（**已完成**） | modules.md §3.5（缓存三不变量）/ §12.2 + `core::outline::{load_cached, OutlineCache}` + `src/stores/outline.ts` |
-| ⑦c / ⑦b（待办） | [p1-large-doc-editor-analysis.md](./p1-large-doc-editor-analysis.md)（实测方法 + 数据 + 拆分依据） |
+| ⑦c / ⑦b（**已完成 / 缓做**） | [p1-large-doc-editor-analysis.md](./p1-large-doc-editor-analysis.md)（拆分依据）+ [p1c-multifile-large-project.md](./p1c-multifile-large-project.md)（夹具/口径/数据）+ `scripts/{gen-large-project,editor-report}.mjs` |
 | ㉖ latexmkrc 交互 | 本文件 §6.1 + troubleshooting.md「`\include{子目录/文件}` + `-output-directory`」 |
 | ⑪ 预览状态保持 | design.md §预览 + 本文件 §5.7（页哈希差分候选） |
 | DVI/XDV 预览（**否决**） | [dvi-preview-feasibility.md](./dvi-preview-feasibility.md) |
@@ -282,7 +282,7 @@ C/V 全表最高（5/4）：干净 Windows 机器零预装可用。属"环境引
 **A. 会影响排期的未知**
 
 1. **㉖ 的触发条件未定位**：`\include{子目录}` + `-outdir=tmp` 的最小复现在**无 rc / 精简 rc** 下 latexmk 都能自愈；hithesis 那一档不自愈且挂起，**是 rc 的哪一行造成的还没定论**（已排除"单纯覆写 `$pdflatex` + 尾部 `;cp`"）。
-2. **⑦c 的多文件大项目全未测**：≥20 文件、打开全部标签的内存/耗时、树刷新、include 图解析规模。**它是 ⑦ 唯一剩下的未知数**（⑦a 已修，⑦b/⑦d 已有判定）。
+2. ~~**⑦c 的多文件大项目全未测**~~ **已补（2026-09，⑦c 完成）**：≥20 文件、打开全部标签的内存/耗时、树刷新、include 图解析规模均已测，五项门槛全过、结论"编辑器侧不需要优化"（[p1c 报告](./p1c-multifile-large-project.md)）；剩下的是**编译期**表现与可信堆读数（见 §10-B.21）。
 3. **⑥ 留了三个未做项**：MCP 状态订阅（notifications）、headless 与 GUI 并发编译同项目的锁（现约定 headless 独占）、headless `file_write` 不代建父目录（与 GUI 同契约）。
 4. **⑦a 留了一个开口**：大纲只在**编译成功**时刷新，编译一直失败时大纲停在旧结构；缓存已让"按保存触发"变便宜（8–10ms/次），但时机/节流策略未定（modules.md §12.1 #17）。
 
@@ -311,3 +311,4 @@ C/V 全表最高（5/4）：干净 Windows 机器零预装可用。属"环境引
 18. **`parse_log` 的文件栈错位（2026-09 落地阶段 2 时新发现，未修）**：TeX 日志把"关闭上一个文件 + 打开下一个文件"打在**同一行**（`[64]) (./ch_05.tex`），而扫描器只认行首 `(` / `)` → 文件归属错一章（实测：错误在 `ch_05.tex:164`，列表报 `./ch_04.tex:164`），错误列表的文件名与点击跳转目标都错。终态与流式共用同一解析器，两条路径都受影响；修法要按字符顺序做括号配对。见 [modules.md](../modules.md) §12.1 #22 与 [troubleshooting.md](../troubleshooting.md)。
 19. **精确失效的收益未在真实大文档上量化**（[G1 报告](./g1-read-interception-feasibility.md) §8.5）：只测到小探针"改无关文件 → 白编译一次"；真实收益 = 白编译频率 × 单次编译时长，两个因子都未统计。
 20. **`.fls` / `.fdb_latexmk` 当依赖源的边界未全测**（[G1 报告](./g1-read-interception-feasibility.md) §8）：多趟 xelatex 的 `.fls` 合并行为、biber/makeindex 等更多子步骤、编辑期写入时机，均未验证。
+21. **⑦c 的三条遗留**（[p1c 报告](./p1c-multifile-large-project.md) §8）：多文件大项目的**编译期**表现（watch 事件淹没）未测；`Ctrl+F`/大范围替换未测；堆内存没有可信读数（dev 下 `performance.memory` 抖动到出现负差值），且只测了 dev 模式、生产构建未测。
