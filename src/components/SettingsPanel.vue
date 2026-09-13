@@ -17,7 +17,7 @@ const MODES: { value: CompileMode; label: string; hint: string }[] = [
 ];
 const ENGINES: { value: Engine; label: string; hint: string }[] = [
   { value: "xelatex", label: "XeLaTeX", hint: "默认，中文支持最佳" },
-  { value: "lualatex", label: "LuaLaTeX", hint: "Lua 脚本、最新特性" },
+  { value: "lualatex", label: "LuaLaTeX", hint: "Lua 脚本、最新特性；比 XeLaTeX 慢，首次编译要建字体缓存" },
   { value: "pdflatex", label: "pdfLaTeX", hint: "传统引擎，中文需额外配置" },
 ];
 

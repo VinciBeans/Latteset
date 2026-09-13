@@ -309,6 +309,29 @@ xelatex -interaction=nonstopmode -synctex=1 -output-directory=tmp main.tex   # m
 
 **2026-09 补充：latexmk 的自动恢复不是普遍成立的。** 自建夹具（10 章 ctexbook，章节用 `\include{chapters/cNN}`，`tmp/` 为空）走 **Full**（latexmk 完整收敛）时并没有恢复：日志停在"写不出中间文件 `chapters/c01.aux`" + `Emergency stop`，latexmk 反复重跑同一处失败，直到 **120s 超时**（上面 §"为什么合成多文件档没事"里的 `tmp/sub` 被创建，在这里没有发生）。两次实验的差异未定位到判据（文档类/中文宏包/页数都可能相关），但"latexmk 会自动建目录并重跑"这句话**不能当作保证**。顺带这也是一次流式反馈的实战价值演示：实时错误在该次编译的 **68s** 就报出了这条诊断，而超时终态要到 **127s** 才出现（提前 59s）。
 
+## LuaLaTeX：切过去之后编译失败 / 第一次特别慢（2026-09 实测）
+
+引擎是设置面板里可选项（`xelatex` / `lualatex` / `pdflatex`），但 LuaLaTeX 有两个**环境前提**，不满足时的报错都长得不像"引擎问题"：
+
+**① `luaotfload` 需要一个可写的字体缓存目录**（不满足 → 引擎第一句就退出）：
+
+```
+luaotfload | load : FATAL ERROR
+luaotfload | load :   × Failed to load "fontloader" module "basics-gen".
+luaotfload | load :     × ".../luaotfload-init.lua:301: system : no writeable cache path, quiting"
+!  ==> Fatal error occurred, no output PDF file produced!
+```
+
+- 缓存落点是 **`TEXMFVAR`**（不是 `TEXMFCACHE`——实测只设后者不够），默认 `~/.texlive<年>/texmf-var`。
+  TeX Live 装在只读位置、或用户配置目录不可写（沙箱/受限账户）时会踩到。
+- 处置：把 `TEXMFVAR` 指到一个可写目录再启动应用（应用会把它继承给引擎）；或给该目录写权限。
+
+**② 第一次编译要建字体库**：全新缓存下第一次编译实测 **25.8 s**（产出 23.6 MB / 35 个文件，`luatex-cache/generic/{names,otl,luatexja}`），之后回落到正常耗时。设置面板的引擎提示已写明这一点。
+
+**③ 速度**：同一份 28 页中文论文单趟 **1870 ms（XeLaTeX）vs 6468 ms（LuaLaTeX）**，约 3.2–3.5×；且中文 LuaLaTeX **不产 DVI/XDV**（`luatexja`：`DVI output is not supported in LuaTeX-ja`），所以页级复用的"跳过转换/只重绘变化页"在它下面**不发生**（下游按"无法判定"保守全量刷新，功能正常、只是没有那层优化）。完整数据见 [现代引擎实测](./research/modern-engines-zh.md)。
+
+**④ 探针别忘 `-halt-on-error`**：LuaLaTeX 的启动期 Lua 错误在 `nonstopmode` 下会**无限刷屏**——本次实测把一份日志写到 **226 MB** 才被掐掉。所有非交互探针都要带 `-halt-on-error`。
+
 ## 引擎输出在非 TTY 下是 4KB 块缓冲：实时反馈要尾随 `.log`（2026-09 实测）
 
 **现象**：把引擎的 stdout/stderr 接成管道（`Stdio::piped()`）做"边编译边报错"后，短文档的**错误与页标记会一起在进程快结束时才到**——看起来像流式没生效。

@@ -17,7 +17,7 @@ use latteset_core::log_parser::{
 };
 use latteset_core::project::{collect_tex_files, FileSystem};
 use latteset_core::scheduler::{CompileProgress, CompileRunner};
-use latteset_core::types::{CompileKind, CompileOutcome, CompileRequest, ErrorEntry, ErrorKind};
+use latteset_core::types::{CompileKind, CompileOutcome, CompileRequest, Engine, ErrorEntry, ErrorKind};
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, warn};
@@ -196,13 +196,18 @@ fn fingerprint(entries: &[ErrorEntry]) -> u64 {
     h.finish()
 }
 
-/// 页哈希缓存路径（与 XDV 同目录：`tmp/<stem>.pages`）。
+/// 页哈希缓存路径（与 XDV 同目录：`tmp/<stem>.<引擎>.pages`）。
 ///
 /// 为什么放**磁盘**而不是 runner 内存（功能点 A 的设计取舍）：runner 保持无状态（`&self` 不可变、
 /// 一次调用完全独立，见 modules.md §2.6）；而且这份基线能被 Quick 与 Full 两条路径共享——
 /// 若各自记在内存里，两者交替时会把对方的产物当成"变了"，白白多转换一次。
-fn pages_cache_path(tmp_dir: &Path, stem: &str) -> PathBuf {
-    tmp_dir.join(format!("{stem}.pages"))
+///
+/// 为什么**带引擎名**（2026-09，已知债 #25）：页哈希的口径与引擎绑定。同一个 `main.tex` 换引擎后，
+/// 页内容必然不同；若共用一份缓存，跨引擎的"逐页相同"判断就是拿两套口径比大小。今天只有 XeLaTeX
+/// 产哈希（`Engine::writes_xdv`），但按引擎分文件后，将来给 LuaLaTeX 接**引擎内逐页指纹**
+/// 时两套哈希不会互相污染。
+fn pages_cache_path(tmp_dir: &Path, stem: &str, engine: Engine) -> PathBuf {
+    tmp_dir.join(format!("{stem}.{}.pages", engine.binary_name()))
 }
 
 fn root_stem(root_file: &Path) -> String {
@@ -237,8 +242,15 @@ fn compile_command(req: &CompileRequest, kind: CompileKind) -> tokio::process::C
         // latexmk 内部走的也是这条序列（`xelatex -no-pdf` → `xdvipdfmx -E -o …`，见 design.md）。
         CompileKind::Quick => {
             let mut c = tokio::process::Command::new(req.engine.binary_name());
-            c.arg("-no-pdf")
-                .arg("-interaction=nonstopmode")
+            // `-no-pdf`（2026-09，功能点 A）**只对 XeTeX 成立**：直调引擎只产 XDV，PDF 改由收尾时
+            // 按需调 `xdvipdfmx` 转换（"页哈希逐页相同"就整个跳过转换，省 0.65–1.4s/次，见 §已知债 #25）。
+            // 换别的引擎加这个参数只会坏事——实测（2026-09）：pdflatex 报 `unrecognized option
+            // '-no-pdf'`（Quick 直接跑不起来），lualatex 静默忽略它（照样写 PDF，白等一趟）。
+            // 非 XeTeX 引擎的 Quick 就是"引擎单趟直写 PDF"，收尾不做转换（见 finish_success）。
+            if req.engine.writes_xdv() {
+                c.arg("-no-pdf");
+            }
+            c.arg("-interaction=nonstopmode")
                 .arg("-synctex=1")
                 .arg(format!("-output-directory={OUT_DIR}"))
                 .arg(latexmk_input(&req.root_file, &req.project_root));
@@ -404,6 +416,9 @@ impl CompileRunner for LatexmkRunner {
 impl LatexmkRunner {
     /// 读 `tmp/<stem>.xdv` 算**页哈希**（顺序 = 页号）。
     ///
+    /// **只对产 XDV 的引擎有意义**（[`Engine::writes_xdv`]，已知债 #25）——调用方必须先过那道闸，
+    /// 否则会把上一次 XeLaTeX 留下的陈旧 XDV 当成本次产物。
+    ///
     /// 为什么需要它（docs/research/incremental-edit-x-dvi.md）：XDV 的页是自包含的字节区间，
     /// 页哈希相同 ⇔ 该页的排版结果逐字节未变。于是"这次编译到底改了什么"可以被精确判定，
     /// 下游据此跳过无谓工作——B：不发 `pdf-updated`；C：只重绘变化页；A：跳过 `xdvipdfmx` 转换。
@@ -426,8 +441,12 @@ impl LatexmkRunner {
     ///
     /// 功能点 A（docs/research/incremental-edit-x-dvi.md §2.2）就在这里落地：Quick 路径改用
     /// `-no-pdf` 后不再自己转 PDF，于是"本次 XDV 页哈希与上次**逐页相同**"时可以：
-    /// **跳过转换与拷贝，直接复用项目根已有的 PDF**（省 0.65–0.94s/次）。
+    /// **跳过转换与拷贝，直接复用项目根已有的 PDF**（省 0.65–1.4s/次）。
     /// Full（latexmk）自己会转换，不受影响。
+    ///
+    /// **引擎闸门**（已知债 #25）：页哈希与 `xdvipdfmx` 转换**只对 [`Engine::writes_xdv`] 为真的
+    /// 引擎成立**。非 XeTeX 引擎走"引擎自己写 PDF → 直接拷贝"这一条最朴素的路——不转换、不算哈希
+    /// （`page_hashes` 为空 ⇒ 下游按"无法判定"保守全量刷新）。
     ///
     /// 返回 `Err(message)` → 调用方包装成 `IoError`。
     async fn finish_success(
@@ -440,13 +459,22 @@ impl LatexmkRunner {
     ) -> Result<CompileOutcome, String> {
         // 页级差异的判据（B/C/A 三个功能点共用）：读本次产出的 XDV 算页哈希。
         // 读不到 → 空表 = "无法判定"，一切优化路径都不走（保守）。
-        let page_hashes = self.page_hashes(tmp_dir, stem).await;
-        let cache_path = pages_cache_path(tmp_dir, stem);
+        //
+        // **只对产 XDV 的引擎做**（已知债 #25）：非 XeTeX 引擎不写 `.xdv`，而 `tmp/` 里可能**留着**
+        // 上一次 XeLaTeX 的陈旧 XDV——若不设这道闸，收尾会把陈旧 XDV 当成本次产物：轻则多转换一次，
+        // 重则**用陈旧 XDV 的转换结果覆盖掉引擎刚写好的 PDF**（实测：LuaLaTeX 自己出 109,732 B，
+        // 被覆盖成 70,193 B 的 XeLaTeX 产物，还报"成功"）。
+        let page_hashes = if req.engine.writes_xdv() {
+            self.page_hashes(tmp_dir, stem).await
+        } else {
+            Vec::new()
+        };
+        let cache_path = pages_cache_path(tmp_dir, stem, req.engine);
         let prev = self.read_pages_cache(&cache_path).await;
         let unchanged = !page_hashes.is_empty() && prev.as_deref() == Some(page_hashes.as_slice());
         let pdf_src = tmp_dir.join(format!("{stem}.pdf"));
 
-        if kind == CompileKind::Quick {
+        if kind == CompileKind::Quick && req.engine.writes_xdv() {
             // 复用条件：内容逐页未变 **且** 项目根确实已经有上一次的 PDF（用户可能手删过）
             let reusable = unchanged && tokio::fs::try_exists(pdf_dst).await.unwrap_or(false);
             if reusable {
@@ -740,6 +768,42 @@ mod tests {
         );
     }
 
+    /// 已知债 #25：非 XeTeX 引擎**不能**加 `-no-pdf`——pdflatex 会报 `unrecognized option`（Quick
+    /// 直接跑不起来），lualatex 会静默忽略（照样写 PDF，等于白等一趟转换）。
+    #[test]
+    fn quick_command_omits_no_pdf_for_engines_without_xdv() {
+        for (engine, binary) in [
+            (latteset_core::types::Engine::LuaLaTeX, "lualatex"),
+            (latteset_core::types::Engine::PdfLaTeX, "pdflatex"),
+        ] {
+            let mut req = sample_req();
+            req.engine = engine;
+            let cmd = compile_command(&req, CompileKind::Quick);
+            assert_eq!(cmd.as_std().get_program().to_string_lossy(), binary);
+            assert_eq!(
+                argv(&cmd),
+                vec![
+                    "-interaction=nonstopmode",
+                    "-synctex=1",
+                    "-output-directory=tmp",
+                    "css/thesis.tex",
+                ],
+                "{binary} 的 Quick 必须是「引擎单趟直写 PDF」"
+            );
+        }
+    }
+
+    /// 已知债 #25：页哈希基线按引擎分文件——换引擎后不能拿旧口径的基线比大小。
+    #[test]
+    fn pages_cache_path_is_engine_scoped() {
+        let tmp = Path::new("/proj/tmp");
+        let xe = pages_cache_path(tmp, "main", latteset_core::types::Engine::XeLaTeX);
+        let lua = pages_cache_path(tmp, "main", latteset_core::types::Engine::LuaLaTeX);
+        assert_eq!(xe, PathBuf::from("/proj/tmp/main.xelatex.pages"));
+        assert_eq!(lua, PathBuf::from("/proj/tmp/main.lualatex.pages"));
+        assert_ne!(xe, lua, "两个引擎的页哈希基线必须互不覆盖");
+    }
+
     #[test]
     fn full_command_uses_latexmk_with_engine_flag() {
         let mut req = sample_req();
@@ -795,6 +859,16 @@ mod tests {
 
     fn latexmk_available() -> bool {
         std::process::Command::new("latexmk")
+            .arg("--version")
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status()
+            .map(|s| s.success())
+            .unwrap_or(false)
+    }
+
+    fn lualatex_available() -> bool {
+        std::process::Command::new("lualatex")
             .arg("--version")
             .stdout(std::process::Stdio::null())
             .stderr(std::process::Stdio::null())
@@ -868,6 +942,73 @@ mod tests {
         assert!(
             project.dir.join("main.pdf").exists(),
             "跳过转换后项目根的 PDF 必须仍然存在"
+        );
+    }
+
+    /// 已知债 #25 的回归：`engine=lualatex` 的 Quick 必须走"**引擎自己写 PDF → 直接拷贝**"，
+    /// 既不调 `xdvipdfmx`、也不读 XDV（读了就会把上一次 XeLaTeX 留下的陈旧 XDV 当成本次产物）。
+    ///
+    /// 两种原bug现场都覆盖：
+    /// ① 目录里**有**陈旧 XDV（先跑一次 XeLaTeX）——旧代码会拿它算页哈希并转出 PDF 覆盖 LuaLaTeX 的产出；
+    /// ② 目录里**没有** XDV（把 `.xdv` 删掉再跑）——旧代码会 `xdvipdfmx: Could not open specified DVI` 报失败。
+    ///
+    /// 前置：LuaLaTeX 要求**可写的 `TEXMFVAR`**（luaotfload 字体缓存；首次会花 ~26s 建库）。
+    /// 本机默认落在 `~/.texlive<年>/texmf-var`，沙箱/只读配置下不可写 → 跑本用例时用环境变量指到可写目录。
+    #[tokio::test]
+    #[ignore = "需要 lualatex + 可写 TEXMFVAR（字体缓存）；对应已知债 #25"]
+    async fn quick_with_lualatex_keeps_its_own_pdf() {
+        if !latexmk_available() || !lualatex_available() {
+            eprintln!("跳过：系统未安装 latexmk / lualatex（需要 TeX Live/MiKTeX）");
+            return;
+        }
+        let project = TempProject::new("lua-quick");
+        project.put(
+            "main.tex",
+            "\\documentclass{article}\n\\begin{document}\nLua engine isolation.\n\\end{document}\n",
+        );
+        let runner = LatexmkRunner::new(
+            std::sync::Arc::new(crate::fs::TokioFs),
+            std::sync::Arc::new(latteset_core::scheduler::NoProgress),
+        );
+        let lua_quick = || CompileRequest {
+            engine: latteset_core::types::Engine::LuaLaTeX,
+            kind: CompileKind::Quick,
+            ..req(&project)
+        };
+
+        // 现场 ①：XeLaTeX 先编一次，留下陈旧 XDV 与 XeLaTeX 版产物
+        let xe = runner.compile(req(&project), CancellationToken::new()).await;
+        assert!(matches!(xe, CompileOutcome::Success { .. }), "XeLaTeX 基线应成功：{xe:?}");
+        assert!(
+            project.dir.join("tmp/main.xdv").exists(),
+            "前置现场要求：XeLaTeX 必须留下 tmp/main.xdv"
+        );
+
+        let out = runner.compile(lua_quick(), CancellationToken::new()).await;
+        let CompileOutcome::Success { page_hashes, .. } = &out else {
+            panic!("LuaLaTeX 的 Quick 必须成功（引擎写了 PDF，不该因转换失败而报错）：{out:?}");
+        };
+        assert!(
+            page_hashes.is_empty(),
+            "没有 XDV 就不该有页哈希——读到陈旧 XDV 的哈希会让下游拿错口径判'未变'"
+        );
+        let root = std::fs::read(project.dir.join("main.pdf")).expect("项目根应有 PDF");
+        let tmp = std::fs::read(project.dir.join("tmp/main.pdf")).expect("引擎应写出 tmp/main.pdf");
+        assert_eq!(
+            root, tmp,
+            "项目根 PDF 必须就是引擎刚写出的 tmp/main.pdf（不能被陈旧 XDV 的转换结果覆盖）"
+        );
+        assert!(
+            !project.dir.join("tmp/main.lualatex.pages").exists(),
+            "无页哈希 → 不应写页哈希缓存（免得下次拿它当基线）"
+        );
+
+        // 现场 ②：把 XDV 彻底删掉（干净项目）→ Quick 仍必须成功
+        std::fs::remove_file(project.dir.join("tmp/main.xdv")).unwrap();
+        let clean = runner.compile(lua_quick(), CancellationToken::new()).await;
+        assert!(
+            matches!(clean, CompileOutcome::Success { .. }),
+            "没有 XDV 的干净项目里，LuaLaTeX 的 Quick 也必须成功：{clean:?}"
         );
     }
 

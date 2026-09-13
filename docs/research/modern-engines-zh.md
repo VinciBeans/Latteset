@@ -65,7 +65,11 @@
 
 ## 3. 对既有机制的影响（这才是取舍的关键）
 
-### 3.1 Quick 路径：实测坏了（两种失败模式）
+### 3.1 Quick 路径：实测坏了（两种失败模式）→ **已修（2026-09，见 [modules.md](../modules.md) §12 已知债 #25）**
+
+> 修法：`Engine::writes_xdv()` 作为唯一闸门（`-no-pdf`、页哈希、`xdvipdfmx` 三处都过它）＋ 页哈希缓存按引擎分文件。
+> 真机验证：engine=lualatex 编辑触发 → `draft=true` 编译成功、项目根得到 LuaLaTeX 自己的 65,813 B PDF（不再是陈旧 XDV 转出来的 40,6xx B）、不写 `.pages`；切回 XeLaTeX → 日志出现 `页哈希与上次逐页相同：跳过 xdvipdfmx 转换`（A 未回归）。
+> 下面保留**修复前**的现场记录，作为这道闸门的存在理由。
 
 代码上 Quick 固定给引擎加 `-no-pdf`（`crates/latteset-infra/src/runner.rs:238-246`），收尾时按需调 `xdvipdfmx`（同文件 `finish_success` / `convert_xdv`）。而 LuaHBTeX **忽略 `-no-pdf`**（§2），于是：
 
@@ -147,10 +151,7 @@ TeX Live 2026 的 LaTeX 内核（`ltluatex.lua`）向文档暴露 **70+ 个回�
    - **页级复用（B/C/A）在中文下失去输入**（`luatexja` 不支持 DVI），等于把我们刚做完的三个优化点清零。
    另外还有两个产品级成本：**首跑 26 s 建字体缓存**、**要求可写的 `TEXMFVAR`**。
 3. **真正值得吸收的是"引擎内回调"这条能力**（§3.3）：进程内拦截每一次 I/O、逐页/逐行钩子、结构化错误捕获、SyncTeX 收尾——这些正是上游阶段 6/7 与 G1 报告里我们只能"在进程外绕"的东西。若将来要认真做实时渲染，**"换 LuaLaTeX 拿回调"比"打补丁改 XeTeX"更现实**（无需自维护引擎分支），代价就是上面那三条。
-4. **近期该修的产品缺陷**（本次实测发现，已记入 [modules.md](../modules.md) §12 已知债）：
-   - Quick 路径的 `-no-pdf` 与 `xdvipdfmx` 收尾**只对 XeLaTeX 成立**；对 LuaLaTeX/pdfLaTeX 应跳过转换（或直接降级为 Full），否则用户切引擎后编辑期全是错误；
-   - `tmp/<stem>.xdv` + `tmp/<stem>.pages` **需要按引擎区分**（或至少在引擎变化时失效），否则跨引擎残留会互相污染（§3.1②）；
-   - 设置面板 `LuaLaTeX` 的提示（"Lua 脚本、最新特性"）应写明这些代价。
+4. **近期该修的产品缺陷**（本次实测发现）：~~Quick 路径的 `-no-pdf` 与 `xdvipdfmx` 收尾只对 XeLaTeX 成立~~ ✅ **已修（2026-09）**——`Engine::writes_xdv()` 闸门 + 页哈希缓存按引擎分文件，真机验证见 §3.1 顶部与 [modules.md](../modules.md) §12 #25；设置面板 LuaLaTeX 的提示也已写明速度与首次编译代价。
 
 ## 5. 复现方法
 

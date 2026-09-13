@@ -244,13 +244,18 @@ impl CompileRunner for LatexmkRunner {
 
 ```
 Full（默认）：latexmk -xelatex -outdir=tmp -synctex=1 -interaction=nonstopmode <root_file 相对项目根路径>
-Quick（编辑期）：xelatex **-no-pdf** -interaction=nonstopmode -synctex=1 -output-directory=tmp <root_file 相对项目根路径>
+Quick（编辑期）：<engine> [-no-pdf] -interaction=nonstopmode -synctex=1 -output-directory=tmp <root_file 相对项目根路径>
   —— 直调引擎单趟，不经 latexmk（实测省 40% 中位，见 design.md §延迟预算实测附节）
   —— 前置条件：tmp/<stem>.aux 存在（有上一趟产物）；否则 runner 自动升级为 Full
      （单趟在无 .aux/.toc 时会让引用全成 `??`），且 `Success{kind}` 报 Full
-  —— `-no-pdf`（2026-09，docs/research/incremental-edit-x-dvi.md 功能点 A）：只产 XDV，
-     PDF 由 runner 在收尾时**按需**调 `xdvipdfmx -q -o tmp/<stem>.pdf tmp/<stem>.xdv` 转换；
-     若本次页哈希与上次**逐页相同**则整个跳过转换与拷贝（复用项目根已有 PDF）
+  —— `-no-pdf` **只对产 XDV 的引擎加**（`Engine::writes_xdv()`，2026-09 已知债 #25）：
+     · XeLaTeX：只产 XDV，PDF 由 runner 在收尾时**按需**调
+       `xdvipdfmx -q -o tmp/<stem>.pdf tmp/<stem>.xdv` 转换；若本次页哈希与上次**逐页相同**
+       则整个跳过转换与拷贝（复用项目根已有 PDF，功能点 A）
+     · pdfLaTeX：加 `-no-pdf` 会被引擎判为**未识别选项**（实测 `unrecognized option '-no-pdf'`）；
+       LuaLaTeX：静默忽略它（照样直接写 PDF） ⇒ 这两个引擎的 Quick = **引擎自己写 PDF → 直接拷贝**，
+       不做转换、不读 XDV（页哈希为空 ⇒ 下游按"无法判定"保守全量刷新）
+  —— 页哈希缓存按引擎分文件：tmp/<stem>.<engine>.pages（跨引擎不共用基线）
 XeLaTeX → -xelatex / xelatex；PdfLaTeX → -pdf / pdflatex；LuaLaTeX → -lualatex / lualatex
 cwd = project_root（相对 input/include 才能解析）；输入用完整相对路径（嵌套根文件如 css/thesis.tex 也能编译）
 产物：tmp/<root>.pdf（原子拷贝到项目根）；tmp/<root>.synctex.gz（SyncTeX CLI 用）；tmp/<root>.log（解析用）
@@ -830,7 +835,7 @@ settings-changed: Settings
 | 22 | 错误条目的**文件归属**会错一章（`parse_log` 文件栈） | 实测（2026-09，流式验证的夹具）：错误写在 `ch_05.tex:164`，列表报 `./ch_04.tex:164`。机制已定位：TeX 日志把"关闭上一个文件 + 打开下一个文件"写在**同一行**（`[64]) (./ch_05.tex`），而 `RE_OPEN` 要求行首是 `(`、弹栈只认行首 `)` → `ch_05` 没入栈、`ch_04` 被弹出。影响：错误列表显示的文件名与点击跳转目标（`ErrorList.jump(entry.file, entry.line)`）都错位；终态与流式共用同一解析器，两者皆然。修法要按字符顺序做括号匹配，属独立任务（**未修**，见 roadmap §10-D） |
 | 23 | **触发面只认 `.tex`**（两侧都错）＋ 依赖信息未接线 | 实测（2026-09，[G1 研究](./research/g1-read-interception-feasibility.md) §5.1）：改**被引用**的 `.bib` → 所有 tmp 产物 mtime 不变（该触发不触发，roadmap ㉜）；改**未被引用**的 `.tex` → 白编译一次（`main.aux` 被重写，roadmap ㉝）。判据已在磁盘上：`.fls`（引擎实际打开，Quick 路径需补 `-recorder`）+ `.fdb_latexmk`（依赖图 + md5 + 子步骤），工具 `scripts/fls-report.mjs` 已就绪（**未接线**） |
 | 24 | 字节级 I/O 拦截（上游 G1 原义）**不做** | 三条现成通道都只到文件级；字节偏移需改引擎 / 文件系统驱动 / API hook（与 ADR-0003 不签名分发冲突），且**没有消费方**——上游唯一用途 seen 水位要"引擎进程活着且状态可回退"（G4 fork，Windows 无 `fork()`）。见 [G1 研究](./research/g1-read-interception-feasibility.md) §4 |
-| 25 | **Quick 路径只对 XeLaTeX 成立**（实测：LuaLaTeX 下是坏的） | Quick 固定给引擎加 `-no-pdf`、收尾按需调 `xdvipdfmx`（`runner.rs` 的 `compile_command`/`finish_success`），而 LuaHBTeX **静默忽略 `-no-pdf`**，中文下也**不产 XDV**（`luatexja`：`DVI output is not supported in LuaTeX-ja`）。2026-09 实测（`latteset-cli … compile --quick`，engine=lualatex）：① **干净项目** → `xdvipdfmx:fatal: Could not open specified DVI (or XDV) file` → 引擎其实成功了，编译却**报失败**（编辑期每次自动编译都会报错）；② 目录里留着上次 XeLaTeX 的 `.xdv` → 转换**覆盖** LuaLaTeX 刚写出的 PDF（70,193 B vs 它自己的 109,732 B）**并报成功**（拿到错引擎的产物）。⇒ 需修：非 XeLaTeX 引擎跳过转换（或降级 Full）、`tmp/<stem>.{xdv,pages}` 按引擎区分。数据见 [现代引擎实测](./research/modern-engines-zh.md) §3.1 |
+| 25 | ~~Quick 路径只对 XeLaTeX 成立~~ **已修（2026-09）** | 病根：Quick 无条件给引擎加 `-no-pdf`、收尾无条件调 `xdvipdfmx`，而这两样只有 XeTeX 成立（pdflatex 报 `unrecognized option '-no-pdf'`；lualatex 静默忽略且中文不产 DVI/XDV）。原bug两种现场：① 干净项目 → `xdvipdfmx: Could not open specified DVI (or XDV) file` **误报编译失败**；② 目录里留着上次 XeLaTeX 的 `.xdv` → 转换**覆盖** LuaLaTeX 刚写出的 PDF（70,193 B vs 它自己的 109,732 B）**并报成功**。修法：`Engine::writes_xdv()` 作为唯一闸门（`-no-pdf`、页哈希、`xdvipdfmx` 三处都过它）+ 页哈希缓存按引擎分文件 `tmp/<stem>.<engine>.pages`。验证：单测 3 个 + `#[ignore]` 真机用例 `quick_with_lualatex_keeps_its_own_pdf`（先测它在模拟旧行为下**会失败**）+ 真机 GUI（engine=lualatex 编辑触发 → `draft=true` 编译成功、产出 65,813 B 的 LuaLaTeX PDF、无 `.pages`；切回 XeLaTeX → 日志出现 `页哈希与上次逐页相同：跳过 xdvipdfmx 转换`）。数据见 [现代引擎实测](./research/modern-engines-zh.md) §3.1 |
 | 21 | 预览只能显示"编译完成的 PDF" | PDF 由 `xdvipdfmx` 在排版结束后产出（需完整 XDV + postamble）→ 编译期无图可显示。**可行性已验证**：页前缀 + 从零合成 postamble → `xdvipdfmx` 接受（页数正确、首页渲染一致），成本 0.65–0.94s/次；**未接线**（[阶段 2 报告](./research/stage2-streaming-feasibility.md) §3） |
 
 ### 12.2 跨模块不变量（改回去即复发）

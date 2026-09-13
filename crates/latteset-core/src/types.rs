@@ -41,6 +41,21 @@ impl Engine {
             Engine::LuaLaTeX => "lualatex",
         }
     }
+
+    /// 该引擎是否产出 **XDV**（页级复用 A/B/C 的唯一输入）。
+    ///
+    /// 只有 XeTeX 有 XDV 这个概念：`xelatex -no-pdf` 写 `tmp/<stem>.xdv`，PDF 再由 `xdvipdfmx`
+    /// 按需转换。另外两个引擎**没有**这个中间产物，实测（2026-09，见
+    /// [现代引擎实测](../../../docs/research/modern-engines-zh.md) §3.1）：
+    /// - **pdfLaTeX**：`-no-pdf` 是**未识别选项**（`unrecognized option '-no-pdf'`）→ Quick 直接跑不起来；
+    /// - **LuaLaTeX**：`-no-pdf` 被**静默忽略**（仍直接写 PDF），且中文下不可能有 DVI/XDV
+    ///   （`luatexja`：`DVI output is not supported in LuaTeX-ja`）。
+    ///
+    /// ⇒ 这两个引擎的 Quick 必须走"引擎自己写 PDF"的形态：不加 `-no-pdf`、不做 `xdvipdfmx` 转换，
+    /// 也没有页哈希可用（下游按"无法判定"保守全量刷新，见 `PdfUpdated.pages == 0` 的语义）。
+    pub fn writes_xdv(&self) -> bool {
+        matches!(self, Engine::XeLaTeX)
+    }
 }
 
 /// 编译强度（roadmap ㉘）。
@@ -295,6 +310,15 @@ mod tests {
         assert_eq!(Engine::XeLaTeX.binary_name(), "xelatex");
         assert_eq!(Engine::PdfLaTeX.binary_name(), "pdflatex");
         assert_eq!(Engine::LuaLaTeX.binary_name(), "lualatex");
+    }
+
+    #[test]
+    fn only_xelatex_writes_xdv() {
+        // 页级复用（A/B/C）依赖 `-no-pdf` + `xdvipdfmx`，而这两样只有 XeTeX 有：
+        // pdflatex 会把 `-no-pdf` 当未识别选项，lualatex 静默忽略它（见方法文档）。
+        assert!(Engine::XeLaTeX.writes_xdv());
+        assert!(!Engine::PdfLaTeX.writes_xdv());
+        assert!(!Engine::LuaLaTeX.writes_xdv());
     }
 
     #[test]
