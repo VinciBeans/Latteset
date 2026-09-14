@@ -485,11 +485,11 @@ lualatex -fmt="<abs>\partial.fmt" -interaction=nonstopmode -output-directory=tmp
 |---|---|
 | **中文正确性** | ✅ `--keep-logs` 里 **0 条** `Missing character`；`pdftotext` 出来就是中文正文（`引擎对比基准（中文）…`），28 页 |
 | **`--outfmt xdv`** | ✅ 产出 `main.xdv`（264,736 B；XeLaTeX 同文档是 261,776 B，同一格式） |
-| **我们的页哈希工具能否吃它** | ✅ `node scripts/xdv-report.mjs main.xdv` → **页数 28**、页字节 min/avg/max = 1038/9432/16101、解析 5.66 ms（44.6 MB/s）⇒ **A/B/C 三个功能点（跳过重载 / 只重绘变化页 / 跳过转换）在 Tectonic 上无需改代码** |
+| **我们的页哈希工具能否吃它** | ✅ **但只在 `--outfmt xdv` 档**：`node scripts/xdv-report.mjs main.xdv` → **页数 28**、页字节 min/avg/max = 1038/9432/16101、解析 5.66 ms（44.6 MB/s）。⚠️ **默认 PDF 档永不落 `.xdv`**（2026-09-14 两轮实测：默认与**加 `-k`** 都是「无 `.xdv`」，机制是转换后从内存文件表移除，`driver.rs:1985`）⇒ **PDF 与页级复用不可兼得**：走 PDF 档则 `page_hashes` 恒空（`pages == 0` = 无法判定 = 保守全量刷新），B/C 失效；若沿用旧 `.xdv` 还会把"陈旧页集"误判成"逐页未变"（比 `runner.rs:463-466` 的覆盖事故更隐蔽）。A（跳过转换）在 Tectonic 下**无对应物**（同进程完成；TL-less 机器也没有 `xdvipdfmx`） |
 | **构建确定性（㉚）** | ✅ `SOURCE_DATE_EPOCH=0` 连跑两次：**PDF 与 XDV 都逐字节一致**（80,203 B / 264,728 B，SHA-256 相同） |
-| **SyncTeX** | ✅ `--synctex` → `main.synctex.gz`（77,983 B） |
-| 产出与 XeLaTeX 的差异 | 28 页 vs 27 页、文本长度 15,227 vs 14,913：差异来自**跑了几趟**（Tectonic 内部做了 bibtex + 收敛，XeLaTeX 那档是单趟）——不是格式差异 |
-| 已知噪音 | 日志里有一行 `Fontconfig error: Cannot load default config file: No such file: (null)`，但中文渲染正常（0 缺字）⇒ **良性**；`refs.bib` 的 bibtex 报错默认被**忽略**（要看需 `--print`/`--keep-logs`，这点与 latexmk 的行为不同） |
+| **SyncTeX** | ✅ `--synctex` → `main.synctex.gz`（77,983 B）；⚠️ 但我们**自己的** forward/inverse 走外部 `synctex.exe`（TeX Live-only）⇒ 免装 TL 时该链路不可用 |
+| 产出与 XeLaTeX 的差异 | 28 页 vs 27 页、文本长度 15,227 vs 14,913：两者**都含参考文献**（已核：Tectonic `.bbl` 680 B / 9 条 `\bibitem`，PDF 文末有 `参考文献` + `[1]`…`[9]`），差异来自**趟数与 bibtex 次数**（Tectonic 那档跑了 9 次 bibtex + 内部收敛，`xelatex` 基线是单趟）⇒ 该计时对 Tectonic **保守** |
+| 已知噪音（2026-09-14 更正） | ① `Fontconfig error: Cannot load default config file: No such file: (null)` —— 中文渲染正常（0 缺字），**良性**；② **bibtex 其实成功了**：主调用产出完整 `.bbl`（9 条）与含参考文献的 PDF，Tectonic 那句 `errors were issued by BibTeX, but were ignored` 全部来自 **8 次章级良性调用**（无 `\bibdata` 的章级 aux 也跑 bibtex，属引擎行为差异）；③ **真正要记住的坑：`.blg` 尾部会在成功时也被截断**（缺 `You've used N entries` 摘要行，537 B 止于 `Database file #1: refs.bib`，且**零 error 行**）⇒ **任何按 `.blg` 判 bib 成败的工具都会误判**——判据必须落在**产物**（`.bbl` 条数 / PDF 文本）上 |
 
 ### 8.5 结论（相对我们的取舍）
 
