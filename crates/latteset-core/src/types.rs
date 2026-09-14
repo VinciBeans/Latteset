@@ -21,15 +21,25 @@ pub enum Engine {
     PdfLaTeX,
     #[serde(rename = "lualatex")]
     LuaLaTeX,
+    /// Tectonic（2026-09 引入；方案见 [tectonic-integration-plan.md](../../../docs/research/tectonic-integration-plan.md)）。
+    ///
+    /// 形态 = **子进程驱动官方 `tectonic.exe`**（路线①，`docs/research/tectonic-test-plan.md` §1.2 的 D2 裁决）：
+    /// 它自带 bundle、**不读用户 TeX Live**，自己出 PDF（`writes_xdv() == false`）⇒ 页级复用 A/B/C
+    /// 在该引擎下**不可用**（`page_hashes` 恒空 → 前端按"无法判定"保守全量刷新，A 无对应物）。
+    #[serde(rename = "tectonic")]
+    Tectonic,
 }
 
 impl Engine {
     /// latexmk 引擎开关（modules.md §2.6）。
+    ///
+    /// **Tectonic 不经 latexmk**（见 `compile_command` 的分支）：这里的值只出现在日志字段里。
     pub fn latexmk_flag(&self) -> &'static str {
         match self {
             Engine::XeLaTeX => "-xelatex",
             Engine::PdfLaTeX => "-pdf",
             Engine::LuaLaTeX => "-lualatex",
+            Engine::Tectonic => "tectonic",
         }
     }
 
@@ -39,19 +49,22 @@ impl Engine {
             Engine::XeLaTeX => "xelatex",
             Engine::PdfLaTeX => "pdflatex",
             Engine::LuaLaTeX => "lualatex",
+            Engine::Tectonic => "tectonic",
         }
     }
 
     /// 该引擎是否产出 **XDV**（页级复用 A/B/C 的唯一输入）。
     ///
     /// 只有 XeTeX 有 XDV 这个概念：`xelatex -no-pdf` 写 `tmp/<stem>.xdv`，PDF 再由 `xdvipdfmx`
-    /// 按需转换。另外两个引擎**没有**这个中间产物，实测（2026-09，见
-    /// [现代引擎实测](../../../docs/research/modern-engines-zh.md) §3.1）：
+    /// 按需转换。另外三个引擎**没有**这个中间产物，实测（2026-09，见
+    /// [现代引擎实测](../../../docs/research/modern-engines-zh.md) §3.1 / §8.4）：
     /// - **pdfLaTeX**：`-no-pdf` 是**未识别选项**（`unrecognized option '-no-pdf'`）→ Quick 直接跑不起来；
     /// - **LuaLaTeX**：`-no-pdf` 被**静默忽略**（仍直接写 PDF），且中文下不可能有 DVI/XDV
-    ///   （`luatexja`：`DVI output is not supported in LuaTeX-ja`）。
+    ///   （`luatexja`：`DVI output is not supported in LuaTeX-ja`）；
+    /// - **Tectonic**：`--outfmt xdv` 才产 XDV，**默认 PDF 档永不落 `.xdv`**（即使 `-k`；机制是转换后
+    ///   从内存文件表移除，`driver.rs:1985`）⇒ 走 PDF 档就没有页哈希（"要 PDF 就没有页级复用"）。
     ///
-    /// ⇒ 这两个引擎的 Quick 必须走"引擎自己写 PDF"的形态：不加 `-no-pdf`、不做 `xdvipdfmx` 转换，
+    /// ⇒ 这三个引擎的 Quick 必须走"引擎自己写 PDF"的形态：不加 `-no-pdf`、不做 `xdvipdfmx` 转换，
     /// 也没有页哈希可用（下游按"无法判定"保守全量刷新，见 `PdfUpdated.pages == 0` 的语义）。
     pub fn writes_xdv(&self) -> bool {
         matches!(self, Engine::XeLaTeX)
@@ -306,10 +319,11 @@ mod tests {
 
     #[test]
     fn engine_binary_names() {
-        // Quick 路径直调这些可执行文件（roadmap ㉘）
+        // Quick 路径直调这些可执行文件（roadmap ㉘）；Tectonic 也走直调（它没有 latexmk 外层）
         assert_eq!(Engine::XeLaTeX.binary_name(), "xelatex");
         assert_eq!(Engine::PdfLaTeX.binary_name(), "pdflatex");
         assert_eq!(Engine::LuaLaTeX.binary_name(), "lualatex");
+        assert_eq!(Engine::Tectonic.binary_name(), "tectonic");
     }
 
     #[test]
@@ -319,6 +333,17 @@ mod tests {
         assert!(Engine::XeLaTeX.writes_xdv());
         assert!(!Engine::PdfLaTeX.writes_xdv());
         assert!(!Engine::LuaLaTeX.writes_xdv());
+        // Tectonic：`--outfmt xdv` 才产 XDV，PDF 档**永不落 .xdv**（driver.rs:1985 内存移除）
+        assert!(!Engine::Tectonic.writes_xdv());
+    }
+
+    /// Tectonic（2026-09 引入）：设置里存 "tectonic"，且不经 latexmk（那个 flag 只进日志）。
+    #[test]
+    fn tectonic_serde_and_no_latexmk() {
+        let json = serde_json::to_string(&Engine::Tectonic).unwrap();
+        assert_eq!(json, "\"tectonic\"");
+        assert_eq!(serde_json::from_str::<Engine>(&json).unwrap(), Engine::Tectonic);
+        assert_eq!(Engine::Tectonic.latexmk_flag(), "tectonic");
     }
 
     #[test]

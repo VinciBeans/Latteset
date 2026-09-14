@@ -190,6 +190,13 @@ node scripts/bench.mjs --with-real         # 追加真实模板档（依赖本�
 - **系统 TeX Live 优先**；缺失时检测并引导安装
 - TinyTeX 内嵌兜底：后续实现
 - **默认引擎 xelatex**；后续按系统语言自适应（中文 → xelatex，其他 → pdflatex），引擎可配置
+- **Tectonic（2026-09 引入，`xelatex` 之外的第二形态）**：子进程驱动官方 `tectonic.exe`（路线①，D2 裁决）。
+  - 命令：`tectonic -C -k --keep-logs --synctex -p -o tmp [-r 0] <root>`（Quick 加 `-r 0` 单趟；Full 用默认收敛）。
+  - **代价（必须知道）**：它自带 bundle、**不读用户 TeX Live** ⇒ ㉒`.fls` 触发面 / ㉖模板 `.cls` 探测 / ㉗源码版模板提示在该模式下不适用；**页级复用 A/B/C 不可用**（PDF 档永不落 `.xdv` ⇒ 无页哈希，前端按"无法判定"全量刷新）；SyncTeX 正反向仍依赖本机 TL 的 `synctex.exe`。
+  - **`SOURCE_DATE_EPOCH` 按引擎分档**（D4 裁决）：Tectonic **不设**该变量（它把变量当引擎时间源，设 0 会让正文 `\today` 印成 1970-01-01；XeTeX 只动 PDF `/ID`）；其余引擎仍固定 0（㉚ 可复现前提）。
+  - **输出目录必须由产品自建**：Tectonic 不会创建 `-o` 指定的目录（实测 `error: output directory "tmp" does not exist`，且连 `.log` 都不落盘 ⇒ 报错无信息量）。runner 在编译前统一 `create_dir_all(tmp)`。
+  - 收益（同批实测，见 [research/realtime-preview-cost.md](./research/realtime-preview-cost.md)）：28 页中文夹具**单趟出 PDF 0.88–1.07 s**（现状 xelatex 两段 ≈1.96 s）；XDV 档 0.60 s。
+  - 未做（P1）：一键切引擎（INT-90/95/96）、`-b <ttb>` 离线 bundle、路线②（外部 `xdvipdfmx` + 页哈希）、bib 警告过滤（INT-43）。逐条判据见 [research/tectonic-test-plan.md](./research/tectonic-test-plan.md)。
 
 ## 编辑器
 

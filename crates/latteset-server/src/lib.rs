@@ -485,6 +485,7 @@ fn engine_name(s: &Settings) -> String {
         latteset_core::types::Engine::XeLaTeX => "xelatex",
         latteset_core::types::Engine::PdfLaTeX => "pdflatex",
         latteset_core::types::Engine::LuaLaTeX => "lualatex",
+        latteset_core::types::Engine::Tectonic => "tectonic",
     }
     .to_string()
 }

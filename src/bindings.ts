@@ -188,7 +188,15 @@ export type DirEntryInfo = {
 };
 
 /**  TeX 引擎（默认 xelatex，见 design.md）。 */
-export type Engine = "xelatex" | "pdflatex" | "lualatex";
+export type Engine = "xelatex" | "pdflatex" | "lualatex" | 
+/**
+ *  Tectonic（2026-09 引入；方案见 [tectonic-integration-plan.md](../../../docs/research/tectonic-integration-plan.md)）。
+ * 
+ *  形态 = **子进程驱动官方 `tectonic.exe`**（路线①，`docs/research/tectonic-test-plan.md` §1.2 的 D2 裁决）：
+ *  它自带 bundle、**不读用户 TeX Live**，自己出 PDF（`writes_xdv() == false`）⇒ 页级复用 A/B/C
+ *  在该引擎下**不可用**（`page_hashes` 恒空 → 前端按"无法判定"保守全量刷新，A 无对应物）。
+ */
+"tectonic";
 
 /**  错误列表条目（modules.md §4 契约）。 */
 export type ErrorEntry = {

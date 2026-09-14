@@ -19,6 +19,11 @@ const ENGINES: { value: Engine; label: string; hint: string }[] = [
   { value: "xelatex", label: "XeLaTeX", hint: "默认，中文支持最佳" },
   { value: "lualatex", label: "LuaLaTeX", hint: "Lua 脚本、最新特性；比 XeLaTeX 慢，首次编译要建字体缓存" },
   { value: "pdflatex", label: "pdfLaTeX", hint: "传统引擎，中文需额外配置" },
+  {
+    value: "tectonic",
+    label: "Tectonic",
+    hint: "免装 TeX Live（自带宏包）；首次编译要联网下载 bundle，可能数十秒；该引擎下不启用页级增量复用",
+  },
 ];
 
 const DEBOUNCE_MIN = 100;

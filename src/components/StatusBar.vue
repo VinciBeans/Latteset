@@ -40,6 +40,21 @@ const kindText = computed(() => {
 
 const isContinuous = computed(() => settings.settings?.compile.mode === "continuous");
 
+/**
+ * 当前引擎（D3 裁决，2026-09-14）：**不打开设置面板也要能看见用的哪个引擎**。
+ * 同时把编译强度体现在同一个位置——`compile.draft` 为真即本次是 Quick 草稿编译。
+ */
+const engineText = computed(() => {
+  const e = settings.settings?.compile.engine;
+  switch (e) {
+    case "xelatex": return "XeLaTeX";
+    case "lualatex": return "LuaLaTeX";
+    case "pdflatex": return "pdfLaTeX";
+    case "tectonic": return "Tectonic";
+    default: return e ?? "";
+  }
+});
+
 async function toggleMode() {
   await settings.update({ mode: isContinuous.value ? "on_save" : "continuous" });
 }
@@ -50,6 +65,10 @@ async function toggleMode() {
     <span class="phase" :class="compile.phase">
       <span class="phase-dot" />
       {{ phaseText }}{{ kindText }}
+    </span>
+    <!-- D3（2026-09-14）：当前引擎常驻可见——不打开设置面板也知道在用什么引擎 -->
+    <span v-if="engineText" class="engine" :title="`当前引擎：${engineText}${compile.draft ? '（本次为 Quick 草稿编译）' : ''}`">
+      {{ engineText }}
     </span>
     <!-- 流式进度（阶段 2）：只在"排版中"且已有页输出时显示，避免闪烁 -->
     <span v-if="compile.phase === 'running' && compile.pages > 0" class="pages">
@@ -139,6 +158,14 @@ async function toggleMode() {
   border-radius: 5px;
 }
 /* 草稿编译提示（roadmap ㉘）：编辑期单趟出图，目录/引用页码可能落后一趟 */
+.engine {
+  padding: 1px 7px;
+  border-radius: 999px;
+  background: rgba(93, 95, 239, 0.10);
+  color: var(--blueberry);
+  font-size: 11.5px;
+  font-weight: 600;
+}
 .draft {  background: rgba(255, 181, 74, 0.18);
   color: #b8791a;
   padding: 2px 9px;

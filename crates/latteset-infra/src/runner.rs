@@ -251,29 +251,37 @@ fn compile_command(req: &CompileRequest, kind: CompileKind) -> tokio::process::C
         // `xdvipdfmx` 转换——这样"页哈希与上次逐页相同"时就能整个跳过转换（省 0.65–0.94s/次）。
         // latexmk 内部走的也是这条序列（`xelatex -no-pdf` → `xdvipdfmx -E -o …`，见 design.md）。
         CompileKind::Quick => {
-            let mut c = tokio::process::Command::new(req.engine.binary_name());
-            // `-no-pdf`（2026-09，功能点 A）**只对 XeTeX 成立**：直调引擎只产 XDV，PDF 改由收尾时
-            // 按需调 `xdvipdfmx` 转换（"页哈希逐页相同"就整个跳过转换，省 0.65–1.4s/次，见 §已知债 #25）。
-            // 换别的引擎加这个参数只会坏事——实测（2026-09）：pdflatex 报 `unrecognized option
-            // '-no-pdf'`（Quick 直接跑不起来），lualatex 静默忽略它（照样写 PDF，白等一趟）。
-            // 非 XeTeX 引擎的 Quick 就是"引擎单趟直写 PDF"，收尾不做转换（见 finish_success）。
-            if req.engine.writes_xdv() {
-                c.arg("-no-pdf");
+            if req.engine == latteset_core::types::Engine::Tectonic {
+                tectonic_command(req, true)
+            } else {
+                let mut c = tokio::process::Command::new(req.engine.binary_name());
+                // `-no-pdf`（2026-09，功能点 A）**只对 XeTeX 成立**：直调引擎只产 XDV，PDF 改由收尾时
+                // 按需调 `xdvipdfmx` 转换（"页哈希逐页相同"就整个跳过转换，省 0.65–1.4s/次，见 §已知债 #25）。
+                // 换别的引擎加这个参数只会坏事——实测（2026-09）：pdflatex 报 `unrecognized option
+                // '-no-pdf'`（Quick 直接跑不起来），lualatex 静默忽略它（照样写 PDF，白等一趟）。
+                // 非 XeTeX 引擎的 Quick 就是"引擎单趟直写 PDF"，收尾不做转换（见 finish_success）。
+                if req.engine.writes_xdv() {
+                    c.arg("-no-pdf");
+                }
+                c.arg("-interaction=nonstopmode")
+                    .arg("-synctex=1")
+                    .arg(format!("-output-directory={OUT_DIR}"))
+                    .arg(latexmk_input(&req.root_file, &req.project_root));
+                c
             }
-            c.arg("-interaction=nonstopmode")
-                .arg("-synctex=1")
-                .arg(format!("-output-directory={OUT_DIR}"))
-                .arg(latexmk_input(&req.root_file, &req.project_root));
-            c
         }
         CompileKind::Full => {
-            let mut c = tokio::process::Command::new("latexmk");
-            c.arg(req.engine.latexmk_flag())
-                .arg(format!("-outdir={OUT_DIR}"))
-                .arg("-synctex=1")
-                .arg("-interaction=nonstopmode")
-                .arg(latexmk_input(&req.root_file, &req.project_root));
-            c
+            if req.engine == latteset_core::types::Engine::Tectonic {
+                tectonic_command(req, false)
+            } else {
+                let mut c = tokio::process::Command::new("latexmk");
+                c.arg(req.engine.latexmk_flag())
+                    .arg(format!("-outdir={OUT_DIR}"))
+                    .arg("-synctex=1")
+                    .arg("-interaction=nonstopmode")
+                    .arg(latexmk_input(&req.root_file, &req.project_root));
+                c
+            }
         }
     };
     // 构建确定性（roadmap ㉚，2026-09 实测）：不设这个变量时，同一份源码连跑两次产出的 PDF
@@ -282,8 +290,42 @@ fn compile_command(req: &CompileRequest, kind: CompileKind) -> tokio::process::C
     // 这是"输出 diff / 只重排变化页"这类优化的前提：字节不同就分不清"真变了"还是"ID 抖了"。
     // 副作用实测：**XeTeX 的 `\today` 不受它影响**（仍打印构建当天日期），PDF 里也不会因此多出
     // `/CreationDate`——所以固定成 0（reproducible-builds 惯例）只影响 ID，不污染文档内容。
-    cmd.env("SOURCE_DATE_EPOCH", EPOCH_FOR_REPRODUCIBLE_BUILD);
+    //
+    // **按引擎分档（2026-09-14 裁决 D4，别改回无条件设置）**：Tectonic 把这个变量当**引擎时间源**
+    // 喂给 `\today` —— 设 0 时**正文**会印成 `1970 年 1 月 1 日`（实测；而 XeTeX 只动 PDF `/ID`、
+    // 正文零变化）。所以 **Tectonic 进程不设**它；不设时 Tectonic 的 XDV 仍逐字节稳定（264,736 B），
+    // 页哈希判据不受影响。依据与代价见 docs/research/tectonic-test-plan.md §5.4 D4 与
+    // docs/research/page-hash-prev-quant.md。
+    if req.engine != latteset_core::types::Engine::Tectonic {
+        cmd.env("SOURCE_DATE_EPOCH", EPOCH_FOR_REPRODUCIBLE_BUILD);
+    }
     cmd
+}
+
+/// Tectonic 命令（路线①；`docs/research/tectonic-test-plan.md` §1.2 / INT-20）。
+///
+/// 参数按测试方案定为**必带**：
+/// - `-C`：只用缓存资源（离线，不联网下载）；
+/// - `-k`：保留中间产物（`.aux`/`.toc`/`.bbl`）—— Quick 的前置条件（`tmp/<stem>.aux`）与 bib 判据都要它；
+/// - `--keep-logs`：保留 `.log`（Tectonic 的日志本来只在内存、收尾才落盘）；
+/// - `--synctex`：产出 `.synctex.gz`（我们的正反向仍走外部 `synctex.exe`，需要本机 TeX Live）；
+/// - `-p`：页进度走 **stdout 的 `[N]`** —— 这是 Tectonic 下唯一的实时页通道；
+/// - `-r 0`（仅 Quick）：单趟不收敛（Full 用默认收敛趟数）；
+/// - `-o tmp`：产物目录与其它引擎一致（`tmp/<stem>.pdf`）。
+fn tectonic_command(req: &CompileRequest, quick: bool) -> tokio::process::Command {
+    let mut c = tokio::process::Command::new(req.engine.binary_name());
+    c.arg("-C")
+        .arg("-k")
+        .arg("--keep-logs")
+        .arg("--synctex")
+        .arg("-p")
+        .arg("-o")
+        .arg(OUT_DIR);
+    if quick {
+        c.arg("-r").arg("0");
+    }
+    c.arg(latexmk_input(&req.root_file, &req.project_root));
+    c
 }
 
 /// 固定时间戳（0 = 1970-01-01，reproducible-builds 惯例）：只用来让引擎的 `/ID` 不随时钟抖动。
@@ -295,6 +337,15 @@ impl CompileRunner for LatexmkRunner {
         let stem = root_stem(&req.root_file);
         let tmp_dir = req.project_root.join(OUT_DIR);
         let pdf_dst = req.project_root.join(format!("{stem}.pdf"));
+
+        // 输出目录由**产品自建**（tectonic-test-plan P-G4，2026-09 实测）：
+        // latexmk / `xelatex -output-directory` 会自己建 `tmp/`，但 **Tectonic 不会**——
+        // 目录不存在时它直接 `error: output directory "tmp" does not exist`（exit 1），
+        // 而且**连 .log 都不落盘** ⇒ 用户看到的是"编译失败且无法读取日志"这种没有信息量的报错。
+        // 三个引擎都走这一步（幂等；真建不出来时后面的编译自会以更具体的方式失败）。
+        if let Err(e) = tokio::fs::create_dir_all(&tmp_dir).await {
+            debug!(dir = %tmp_dir.display(), "创建输出目录失败（继续尝试编译）：{e}");
+        }
 
         // 强度决策（roadmap ㉘）：编辑触发的 Quick 走「直调引擎单趟」；其余走完整 latexmk。
         // 但 **Quick 需要已有构建产物**才有意义（单趟依赖上一趟的 .aux/.toc）；首次编译无 aux 时
@@ -311,6 +362,9 @@ impl CompileRunner for LatexmkRunner {
         let mut cmd = compile_command(&req, kind);
         match kind {
             CompileKind::Quick => debug!(engine = req.engine.binary_name(), "Quick 编译（单趟直调引擎）"),
+            CompileKind::Full if req.engine == latteset_core::types::Engine::Tectonic => {
+                debug!(engine = "tectonic", "Full 编译（Tectonic 自带收敛，不经 latexmk）")
+            }
             CompileKind::Full => debug!(engine = req.engine.latexmk_flag(), "Full 编译（完整 latexmk 收敛）"),
         }
         cmd.current_dir(&req.project_root)
@@ -326,10 +380,15 @@ impl CompileRunner for LatexmkRunner {
             Ok(c) => c,
             Err(e) => {
                 return CompileOutcome::IoError {
-                    message: match kind {
-                        CompileKind::Quick =>
+                    message: match (kind, req.engine) {
+                        // INT-16：Tectonic 未装时的文案必须**指对方向**（不是"TeX Live 未安装"——
+                        // 它自带 bundle、本来就不依赖 TL）。
+                        (_, latteset_core::types::Engine::Tectonic) => format!(
+                            "无法启动 tectonic（Tectonic 未安装，或不在 PATH 里）：{e}"
+                        ),
+                        (CompileKind::Quick, _) =>
                             format!("无法启动 {}（TeX Live 未安装？）：{e}", req.engine.binary_name()),
-                        CompileKind::Full => format!("无法启动 latexmk（TeX Live 未安装？）：{e}"),
+                        (CompileKind::Full, _) => format!("无法启动 latexmk（TeX Live 未安装？）：{e}"),
                     },
                 }
             }
@@ -813,6 +872,98 @@ mod tests {
                 "{binary} 的 Quick 必须是「引擎单趟直写 PDF」"
             );
         }
+    }
+
+    /// Tectonic（2026-09 引入）：自己的命令形态（**不经 latexmk、不走我们的 xdvipdfmx**），参数按
+    /// 测试方案必带；**且不能给它设 `SOURCE_DATE_EPOCH`**（D4 裁决：它把该变量当引擎时间源，
+    /// 设 0 会让正文 `\today` 印成 1970-01-01；XeTeX 只动 PDF `/ID`）。
+    #[test]
+    fn tectonic_command_and_epoch_scoping() {
+        let mut req = sample_req();
+        req.engine = latteset_core::types::Engine::Tectonic;
+
+        // Quick = 单趟（-r 0）
+        let quick = compile_command(&req, CompileKind::Quick);
+        assert_eq!(quick.as_std().get_program().to_string_lossy(), "tectonic");
+        assert_eq!(
+            argv(&quick),
+            vec![
+                "-C",
+                "-k",
+                "--keep-logs",
+                "--synctex",
+                "-p",
+                "-o",
+                "tmp",
+                "-r",
+                "0",
+                "css/thesis.tex",
+            ],
+            "Tectonic Quick 必须是「离线缓存 + 保留中间产物 + 页进度 + 单趟」"
+        );
+        // Full = 收敛（不传 -r，用引擎默认趟数）
+        let full = compile_command(&req, CompileKind::Full);
+        assert_eq!(full.as_std().get_program().to_string_lossy(), "tectonic");
+        assert_eq!(
+            argv(&full),
+            vec!["-C", "-k", "--keep-logs", "--synctex", "-p", "-o", "tmp", "css/thesis.tex"]
+        );
+
+        // 环境变量分档（D4）
+        let has_epoch = |c: &tokio::process::Command| {
+            c.as_std()
+                .get_envs()
+                .any(|(k, v)| k.to_string_lossy() == "SOURCE_DATE_EPOCH" && v.is_some())
+        };
+        assert!(!has_epoch(&quick), "Tectonic 不能设 SOURCE_DATE_EPOCH");
+        assert!(!has_epoch(&full), "Tectonic 不能设 SOURCE_DATE_EPOCH");
+        for engine in [
+            latteset_core::types::Engine::XeLaTeX,
+            latteset_core::types::Engine::LuaLaTeX,
+            latteset_core::types::Engine::PdfLaTeX,
+        ] {
+            let mut r2 = sample_req();
+            r2.engine = engine;
+            assert!(
+                has_epoch(&compile_command(&r2, CompileKind::Quick)),
+                "{engine:?} 仍必须固定 epoch（㉚ 的可复现前提）"
+            );
+            assert!(has_epoch(&compile_command(&r2, CompileKind::Full)), "{engine:?} Full 同");
+        }
+    }
+
+    /// Tectonic 端到端（`#[ignore]`，需要装好 `tectonic`）：走**完整 runner 路径**跑一次中文文档，
+    /// 断言"出 PDF + **无页哈希**"——Tectonic 的 PDF 档永不落 `.xdv`，页级复用 A/B/C 在该引擎下不可用
+    /// （下游按"无法判定"保守全量刷新）。这条用例同时真机复核了命令构造（`-C -k --keep-logs --synctex -p`）。
+    #[tokio::test]
+    #[ignore]
+    async fn tectonic_compiles_cjk_pdf_without_page_hashes() {
+        if std::process::Command::new("tectonic").arg("--version").output().is_err() {
+            eprintln!("跳过：未安装 tectonic（或不在 PATH 上）");
+            return;
+        }
+        let project = TempProject::new("tectonic-e2e");
+        project.put(
+            "main.tex",
+            "\\documentclass[12pt]{ctexart}\n\\begin{document}\n你好，世界。Tectonic 端到端用例。\n\\end{document}\n",
+        );
+        let runner = LatexmkRunner::new(
+            std::sync::Arc::new(crate::fs::TokioFs),
+            std::sync::Arc::new(latteset_core::scheduler::NoProgress),
+        );
+        let mut r = req(&project); // Full（收敛）
+        r.engine = latteset_core::types::Engine::Tectonic;
+        let out = runner.compile(r, CancellationToken::new()).await;
+        let CompileOutcome::Success { pdf_path, page_hashes, .. } = &out else {
+            panic!("Tectonic 编译应成功，实际：{out:?}");
+        };
+        assert!(pdf_path.exists(), "项目根应有 PDF：{}", pdf_path.display());
+        let size = std::fs::metadata(pdf_path).expect("读 PDF 元数据").len();
+        assert!(size > 1000, "PDF 太小（{size} B），像是失败产物");
+        assert!(
+            page_hashes.is_empty(),
+            "Tectonic 的 PDF 档没有 XDV ⇒ 页哈希必须为空（前端据此按'无法判定'全量刷新）"
+        );
     }
 
     /// 已知债 #25：页哈希基线按引擎分文件——换引擎后不能拿旧口径的基线比大小。
