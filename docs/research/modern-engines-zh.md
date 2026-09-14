@@ -486,7 +486,7 @@ lualatex -fmt="<abs>\partial.fmt" -interaction=nonstopmode -output-directory=tmp
 | **中文正确性** | ✅ `--keep-logs` 里 **0 条** `Missing character`；`pdftotext` 出来就是中文正文（`引擎对比基准（中文）…`），28 页 |
 | **`--outfmt xdv`** | ✅ 产出 `main.xdv`（264,736 B；XeLaTeX 同文档是 261,776 B，同一格式） |
 | **我们的页哈希工具能否吃它** | ✅ **但只在 `--outfmt xdv` 档**：`node scripts/xdv-report.mjs main.xdv` → **页数 28**、页字节 min/avg/max = 1038/9432/16101、解析 5.66 ms（44.6 MB/s）。⚠️ **默认 PDF 档永不落 `.xdv`**（2026-09-14 两轮实测：默认与**加 `-k`** 都是「无 `.xdv`」，机制是转换后从内存文件表移除，`driver.rs:1985`）⇒ **PDF 与页级复用不可兼得**：走 PDF 档则 `page_hashes` 恒空（`pages == 0` = 无法判定 = 保守全量刷新），B/C 失效；若沿用旧 `.xdv` 还会把"陈旧页集"误判成"逐页未变"（比 `runner.rs:463-466` 的覆盖事故更隐蔽）。A（跳过转换）在 Tectonic 下**无对应物**（同进程完成；TL-less 机器也没有 `xdvipdfmx`） |
-| **构建确定性（㉚）** | ✅ `SOURCE_DATE_EPOCH=0` 连跑两次：**PDF 与 XDV 都逐字节一致**（80,203 B / 264,728 B，SHA-256 相同） |
+| **构建确定性（㉚）** | ✅ `SOURCE_DATE_EPOCH=0` 连跑两次：**PDF 与 XDV 都逐字节一致**（80,203 B / 264,728 B，SHA-256 相同）。⚠️ **但这个变量在 Tectonic 上会改正文**（`\today` → 1970）⇒ 见 §8.6 |
 | **SyncTeX** | ✅ `--synctex` → `main.synctex.gz`（77,983 B）；⚠️ 但我们**自己的** forward/inverse 走外部 `synctex.exe`（TeX Live-only）⇒ 免装 TL 时该链路不可用 |
 | 产出与 XeLaTeX 的差异 | 28 页 vs 27 页、文本长度 15,227 vs 14,913：两者**都含参考文献**（已核：Tectonic `.bbl` 680 B / 9 条 `\bibitem`，PDF 文末有 `参考文献` + `[1]`…`[9]`），差异来自**趟数与 bibtex 次数**（Tectonic 那档跑了 9 次 bibtex + 内部收敛，`xelatex` 基线是单趟）⇒ 该计时对 Tectonic **保守** |
 | 已知噪音（2026-09-14 更正） | ① `Fontconfig error: Cannot load default config file: No such file: (null)` —— 中文渲染正常（0 缺字），**良性**；② **bibtex 其实成功了**：主调用产出完整 `.bbl`（9 条）与含参考文献的 PDF，Tectonic 那句 `errors were issued by BibTeX, but were ignored` 全部来自 **8 次章级良性调用**（无 `\bibdata` 的章级 aux 也跑 bibtex，属引擎行为差异）；③ **真正要记住的坑：`.blg` 尾部会在成功时也被截断**（缺 `You've used N entries` 摘要行，537 B 止于 `Database file #1: refs.bib`，且**零 error 行**）⇒ **任何按 `.blg` 判 bib 成败的工具都会误判**——判据必须落在**产物**（`.bbl` 条数 / PDF 文本）上 |
@@ -504,3 +504,28 @@ lualatex -fmt="<abs>\partial.fmt" -interaction=nonstopmode -output-directory=tmp
    **落地计划、摩擦点清单与明天的四件事见 [tectonic-integration-plan.md](./tectonic-integration-plan.md)。**
 4. **仍未测**：真实学位论文模板（图表/公式密集）上的表现；bibtex/biber 全链路；`--bundle` 指的本地 bundle 实测；
    与 Latteset 现有"打开项目 → 探测根文件 → SyncTeX"链路的端到端适配成本。
+
+### 8.6 `SOURCE_DATE_EPOCH` 的引擎语义差异与裁决 (b)（2026-09-14 追加）
+
+**同一个环境变量在两个引擎上不是同一件事**——这是本节唯一重要的一句：
+
+| | 固定 `SOURCE_DATE_EPOCH=0` 的效果 |
+|---|---|
+| XeLaTeX / pdfLaTeX / LuaLaTeX | **只动 PDF 的 `/ID` 与时间戳**，正文零变化 ⇒ `\today` 仍印当天（实测：同一轮设了 epoch 的 XeLaTeX 输出印 `2026 年 9 月 13 日`） |
+| Tectonic 0.17 | **改正文** —— 该变量被 `build_date_from_env`（`compile.rs:206` → `driver.rs:995-1010`）当作**引擎时间源**喂给 `\today`：设 `0` 印 `1970 年 1 月 1 日`、设 `1700000000` 印 `2023 年 11 月 15 日`；不设则 fallback `SystemTime::now()` |
+
+本仓的 `compile_command` 是**无条件**设置该变量（`crates/latteset-infra/src/runner.rs:275`，Quick/Full、与引擎无关）⇒ 照抄给 Tectonic 会让**每一份用 `\today` 的文档**（含学位论文标题页）印 1970。
+
+**不固定 epoch 时到底丢什么**（实测：最小文档 + 28 页样本 / 264,736 B XDV）：
+
+| 对照 | XDV | PDF |
+|---|---|---|
+| 不设 epoch，同日连跑两次 | **逐字节相同**（SHA-256 相等） | 不同：**56 / 80,509 B（0.07%）**，全部落在 `/ID` 与 Info 时间戳区，**长度相同、`pdftotext` 文本相同** |
+| 不印 `\today` 的文档，epoch `0` vs `1700000000` | **逐字节相同**，正文相同 | 仅元数据不同 |
+| 印 `\today` 的文档，epoch 变化（= 跨天） | 不同：页 1 因日期串**多一位数字长 10 B**；**页 2 逐字节相同**；**页 3..N 长度全同、唯一差异在页内偏移 43–44** | 同上 |
+
+⇒ **页级复用（A/B/C）吃的是 XDV，而不固定 epoch 时 XDV 依然稳定**；固定该变量对 Tectonic 唯一"买"到的是 **PDF 的逐字节可复现**，代价却是把正文日期压成 1970。
+
+**页哈希口径（`bop` 的 prev 指针）**：上表第三行的偏移 43–44 就是 DVI/XDV 每页头 45 B `bop` 的**最后一个 i32 = 前一页 `bop` 的绝对字节偏移**；页 1 变长 ⇒ 页 3 起每页的 prev 跟着移动 ⇒ 25/26 页被判"变化"（**并非每页内容都变了**）。本仓 `crates/latteset-core/src/xdv.rs:211` 的 `hash_page(&bytes[bop..p])` 是**原始口径**（含 prev），已登记为已知债 **#26**（[modules.md](../modules.md) §12.1）。触发频率差别：XeLaTeX 固定 epoch ⇒ 该债几乎不触发；Tectonic 选 (b) ⇒ **会印日期的文档每天触发一次**（而其内容本就该变）。
+
+**裁决（用户，2026-09-14）：选 (b) —— Tectonic 档不固定 `SOURCE_DATE_EPOCH`。** 落地口径是**按子进程施加**：Tectonic 进程不设（保正文日期）；同一次编译里若还要调外部 `xdvipdfmx`（路线②）则**该进程设 `0`**，㉚ 的逐字节确定性由它承担。现实现是无条件设置（`runner.rs:275`），**接入 Tectonic 时必须改**。附带推论（**待实测**，计划文档 U-31）：路线② 因此有望同时拿到"日期正确 + PDF 逐字节可复现"。逐条计划与判据见 [tectonic-test-plan.md](./tectonic-test-plan.md) §5.4 / E3.7 / E3.8 / P-G19。
