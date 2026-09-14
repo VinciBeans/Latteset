@@ -529,3 +529,12 @@ lualatex -fmt="<abs>\partial.fmt" -interaction=nonstopmode -output-directory=tmp
 **页哈希口径（`bop` 的 prev 指针）**：上表第三行的偏移 43–44 就是 DVI/XDV 每页头 45 B `bop` 的**最后一个 i32 = 前一页 `bop` 的绝对字节偏移**；页 1 变长 ⇒ 页 3 起每页的 prev 跟着移动 ⇒ 25/26 页被判"变化"（**并非每页内容都变了**）。本仓 `crates/latteset-core/src/xdv.rs:211` 的 `hash_page(&bytes[bop..p])` 是**原始口径**（含 prev），已登记为已知债 **#26**（[modules.md](../modules.md) §12.1）。触发频率差别：XeLaTeX 固定 epoch ⇒ 该债几乎不触发；Tectonic 选 (b) ⇒ **会印日期的文档每天触发一次**（而其内容本就该变）。
 
 **裁决（用户，2026-09-14）：选 (b) —— Tectonic 档不固定 `SOURCE_DATE_EPOCH`。** 落地口径是**按子进程施加**：Tectonic 进程不设（保正文日期）；同一次编译里若还要调外部 `xdvipdfmx`（路线②）则**该进程设 `0`**，㉚ 的逐字节确定性由它承担。现实现是无条件设置（`runner.rs:275`），**接入 Tectonic 时必须改**。附带推论（**待实测**，计划文档 U-31）：路线② 因此有望同时拿到"日期正确 + PDF 逐字节可复现"。逐条计划与判据见 [tectonic-test-plan.md](./tectonic-test-plan.md) §5.4 / E3.7 / E3.8 / P-G19。
+
+**同族事实（2026-09-14 实测，来自 #26 量化工作）：时间派生字节并不都在 `SOURCE_DATE_EPOCH` 管辖内。**
+
+| 引擎 | XDV `pre` 注释（`pre` 区第 15 字节起的长度前缀 + 字符串） | 后果 |
+|---|---|---|
+| Tectonic | 长度 `08` + 固定串 `tectonic` | XDV **无时钟派生字节**（epoch 互换实验：`\today`-free 文档逐字节相同） |
+| TeX Live `xelatex` | 长度 `1d`(29) + `" XeTeX output 2026.09.14:2040"`（**本地墙钟到分钟**） | XDV **整文件 SHA 跨分钟变化**，`SOURCE_DATE_EPOCH` 管不住；**页切片不受影响** |
+
+⇒ 任何"**整文件**逐字节可复现"的断言、或整文件指纹式缓存，都必须**排除/归一化 `pre` 注释**；页级判据（页哈希、A/B/C）不因此改变。证据：`test_file/research-26/data/**`（42/42 用例的整文件 SHA 与基线不同而「首 BOP→EOF」全同）与队长对两侧 `pre` 区原始字节的复算。
