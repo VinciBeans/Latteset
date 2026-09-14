@@ -743,6 +743,9 @@ useAutoSave 依赖 editorStore.dirty + settingsStore（读）
 - **页高是布局的唯一驱动**：`.page-wrap` 高度绑定 `pageH1[n]×scale`（`pageWrapHeight(n)`），不依赖 canvas 尺寸。两类复发路径：① 释放/重建把 canvas 置 0×0 时页-wrap 塌缩到只剩边距 → `scrollHeight` 变短（滚动条拖不到真实末尾），且 `renderNearViewport` 用 `getBoundingClientRect`（0 高）把近页误判为远页而释放（PDF 消失）；② `pageH1`/`prefixH1` 是普通数组（非响应式），页高变化必须靠 `layoutRev` 自增让相关 computed 重算。`.page-wrap canvas { display:block }` 消除内联 canvas 在强制高度下的基线缝隙。
 - **跳转先预热页高**：`renderPage` 返回渲染链 promise（`await` 真正完成 + `setHeight` 记录页高），跳转前预热目标页及之前页高并 `nextTick`，用瞬间定位（`behavior:"auto"`）——平滑滚动会在中途布局变化下跳不到位。页码输入与 SyncTeX 正向共用 `goToPage(n)`（展开窗口 + 预热 + 渲染 + 居中）。
 - 插桩：`window.__previewLastReload` + 控制台 `[preview] reload#N`（真机验收清单第 6 项读它）；耗时基线见 [design.md](./design.md) §预览。**`pagesReused`**（2026-09）与 `pagesRendered` 并列——"复用了多少页"是功能点 C 的判据。
+- **草案层（2026-09，实时预览 v1）**：编辑缓冲变更 → **30ms 去抖** → 用"上次成功编译后建立的 **PDF 文本行索引**"（`buildLineIndex`：逐页 `getTextContent()` → `linesOfPage()` 按基线聚行）定位**改动前那一行**（`firstChangedLine()` 找首处 diff + `findAnchor()` 匹配）→ 在该页 overlay canvas（`.draft-layer`，`pointer-events:none`）上**白底重绘新行**并画草稿下划线；`pdf-updated`（重载或跳过重载）时清草案并刷新 diff 基线 `compiledText`。
+  **失败一律静默**（无 diff / 找不到锚点 / 索引未就绪 ⇒ 不画、不报错、不阻塞输入）；纯逻辑在 `src/services/draftPatch.ts`（单测 `src/services/__tests__/draftPatch.spec.ts`），插桩 `window.__lattesetDraftMs`（改动→草案可见毫秒）与 `__lattesetDraftDbg`（含 bail 原因）。
+  **真机实测**（28 页中文夹具、索引 594 行）：改动→草案可见 **31–34 ms**；索引构建 **164–173 ms**（编译成功后后台做）；草案存活窗口 = 到下次 `pdf-updated`（约 1.5–3 s）。**已知限制（v1）**：只画**第一处**改动的行；新增行（旧行为空）无锚点；跨行粘贴/重排不模拟；未做字体匹配（用系统字体栈，字形与最终排版不同）。口径与成本实测见 [realtime-preview-cost.md](./research/realtime-preview-cost.md) §6。
 
 ### 9.5 编辑器语言特性（latexSuggest.ts / texParse.ts）
 

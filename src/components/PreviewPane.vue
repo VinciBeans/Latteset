@@ -12,9 +12,18 @@ import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue"
 import { convertFileSrc } from "@tauri-apps/api/core";
 import * as pdfjsLib from "pdfjs-dist";
 import { usePreviewStore } from "../stores/preview";
+import { useEditorStore } from "../stores/editor";
 import { useSyncTex } from "../composables/useSyncTex";
+import {
+  draftGeometry,
+  findAnchor,
+  firstChangedLine,
+  linesOfPage,
+  type PdfLine,
+} from "../services/draftPatch";
 
 const preview = usePreviewStore();
+const editor = useEditorStore();
 const { inverse } = useSyncTex();
 
 // SyncTeX 提示（roadmap ⑤）自动消失：长时间挂着会变成"常驻噪音"，5s 足够读到
@@ -92,6 +101,170 @@ let pagesRenderedThisLoad = 0;
  * 未变化的页其 canvas 位图仍然有效 → 不必重画。
  */
 let pagesReusedThisLoad = 0;
+
+// ---------- 草案层（v1）：把刚改动的那一行近似画回预览 ----------
+//
+// 口径（docs/research/realtime-preview-cost.md §6、design.md §延迟预算）：**允许不精确**。
+// 用户改动 → 30ms 去抖 → 在"编译成功后建立的 PDF 文本行索引"里找到**改动前那一行**的位置 →
+// 在该页 overlay 上白底重绘这一行（带草稿下划线）。下一次 `pdf-updated` 清草案、换真画面。
+// **找不到锚点就静默不画**：这条路径绝不阻塞输入、绝不报错、绝不改真实画面。
+let compiledText = ""; // 上次成功编译时活动缓冲的快照（逐行 diff 的基线）
+const lineIndex: PdfLine[] = []; // 各页文本行索引（PDF 用户空间坐标）
+let indexDocPath = ""; // 索引对应的 PDF 路径
+let indexBuilding = false;
+let draft: { page: number; x: number; y: number; w: number; size: number; text: string } | null = null;
+const draftEpoch = ref(0); // 草案变化 → 触发重画（overlay 是命令式 canvas）
+const pageDraftCanvases: (HTMLCanvasElement | null)[] = [];
+let draftTimer: ReturnType<typeof setTimeout> | undefined;
+/** 最近一次"缓冲变更 → 草案可见"的毫秒数（插桩：验收与诊断用）。 */
+let lastDraftLatencyMs = 0;
+
+function setDraftCanvasEl(n: number, el: HTMLCanvasElement | null) {
+  pageDraftCanvases[n] = el;
+}
+
+/** 建立文本行索引（后台做；换文档或内容重载后重建）。失败静默 ⇒ 草案层自动停用。 */
+async function buildLineIndex(force = false) {
+  if (!doc || indexBuilding) return;
+  if (!force && indexDocPath === lastDocPath) return;
+  indexBuilding = true;
+  const target = lastDocPath;
+  const total = numPages.value;
+  try {
+    lineIndex.length = 0;
+    const t0 = performance.now();
+    for (let i = 1; i <= total; i++) {
+      const page = await doc.getPage(i);
+      const tc = await page.getTextContent();
+      const items = tc.items as unknown as Parameters<typeof linesOfPage>[1];
+      lineIndex.push(...linesOfPage(i, items));
+    }
+    indexDocPath = target;
+    console.debug(
+      `[draft] 文本行索引就绪：${lineIndex.length} 行 / ${total} 页，${Math.round(performance.now() - t0)}ms`
+    );
+  } catch (e) {
+    console.debug("[draft] 文本行索引构建失败（草案层停用）：", e);
+  } finally {
+    indexBuilding = false;
+  }
+}
+
+/** 清掉草案（不动真实画面）。 */
+function clearDraft() {
+  draft = null;
+  for (const c of pageDraftCanvases) {
+    if (!c) continue;
+    const ctx = c.getContext("2d");
+    if (ctx) ctx.clearRect(0, 0, c.width, c.height);
+  }
+  draftEpoch.value++;
+}
+
+/** 把草案画到对应页的 overlay 上（该页未挂载 ⇒ 什么都不做，等挂载再画）。 */
+async function paintDraft() {
+  if (!draft || !doc) return;
+  const canvas = pageDraftCanvases[draft.page];
+  if (!canvas) return;
+  const page = await doc.getPage(draft.page);
+  const viewport = page.getViewport({ scale: scale.value });
+  const dpr = window.devicePixelRatio || 1;
+  const pw = Math.floor(viewport.width * dpr);
+  const ph = Math.floor(viewport.height * dpr);
+  if (canvas.width !== pw || canvas.height !== ph) {
+    canvas.width = pw;
+    canvas.height = ph;
+    canvas.style.width = `${viewport.width}px`;
+    canvas.style.height = `${viewport.height}px`;
+  }
+  const ctx = canvas.getContext("2d");
+  if (!ctx) return;
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.clearRect(0, 0, viewport.width, viewport.height);
+  const [cx, cy] = viewport.convertToViewportPoint(draft.x, draft.y);
+  const s = viewport.scale;
+  const sizePx = draft.size * s;
+  // 白底盖住原行（纸是白的；上下各留 ~30% 字高）
+  ctx.fillStyle = "#ffffff";
+  ctx.fillRect(cx - 2, cy - sizePx * 1.05, draft.w * s + 4, sizePx * 1.45);
+  // 画新行（草稿允许字形不同：找不到 PDF 内嵌字体就用系统字体栈）
+  ctx.fillStyle = "#1c1a24";
+  ctx.font = `${sizePx}px "Microsoft YaHei", "Noto Sans CJK SC", "Songti SC", serif`;
+  ctx.textBaseline = "alphabetic";
+  const maxW = Math.max(viewport.width - cx - 4, 20);
+  let text = draft.text.replace(/\s+/g, " ").trim();
+  if (ctx.measureText(text).width > maxW) {
+    while (text.length > 1 && ctx.measureText(`${text}…`).width > maxW) text = text.slice(0, -1);
+    text = `${text}…`;
+  }
+  ctx.fillText(text, cx, cy);
+  // 草稿标记：细下划线（明确"这一行是近似预览"，非最终排版）
+  const lineW = Math.min(Math.max(ctx.measureText(text).width, 8), maxW);
+  ctx.strokeStyle = "rgba(93, 95, 239, 0.55)";
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.moveTo(cx, cy + sizePx * 0.2);
+  ctx.lineTo(cx + lineW, cy + sizePx * 0.2);
+  ctx.stroke();
+}
+
+/** 缓冲变更 → 计算并绘制草案（去抖 30ms；任何一步失败都静默）。 */
+function scheduleDraft() {
+  clearTimeout(draftTimer);
+  const t0 = performance.now();
+  draftTimer = setTimeout(() => {
+    const path = editor.activePath;
+    // 诊断插桩（静默失败必须可观测；口径见 docs/research/realtime-preview-cost.md）
+    const dbg = {
+      fired: true,
+      path: path ?? null,
+      hasDoc: !!doc,
+      idx: lineIndex.length,
+      compiledLen: compiledText.length,
+      curLen: 0,
+      changed: null as number | null,
+      anchor: null as number | null,
+      reason: "" as string,
+    };
+    (window as unknown as Record<string, unknown>).__lattesetDraftDbg = dbg;
+    if (!path || !doc || lineIndex.length === 0) {
+      dbg.reason = `bail:path=${!!path},doc=${!!doc},idx=${lineIndex.length}`;
+      return;
+    }
+    const cur = editor.buffers.get(path) ?? "";
+    dbg.curLen = cur.length;
+    const changed = firstChangedLine(compiledText, cur);
+    if (!changed) {
+      dbg.reason = "bail:no-diff";
+      if (draft) clearDraft();
+      return;
+    }
+    dbg.changed = changed.lineNo;
+    const anchor = findAnchor(lineIndex, changed.oldLine);
+    if (!anchor) {
+      dbg.reason = `bail:no-anchor(oldLine=${changed.oldLine.slice(0, 24)})`;
+      if (draft) clearDraft();
+      return;
+    }
+    dbg.anchor = anchor.page;
+    const avgCharW = anchor.text.length > 0 ? anchor.w / anchor.text.length : anchor.size * 0.5;
+    const g = draftGeometry(anchor, changed.newLine, avgCharW);
+    draft = {
+      page: anchor.page,
+      x: anchor.x,
+      y: anchor.y,
+      w: g.coverW,
+      size: g.size,
+      text: changed.newLine,
+    };
+    draftEpoch.value++;
+    void paintDraft();
+    lastDraftLatencyMs = performance.now() - t0;
+    (window as unknown as Record<string, unknown>).__lattesetDraftMs = Math.round(lastDraftLatencyMs);
+    dbg.reason = "ok";
+    console.debug(`[draft] 改动→草案可见 ${Math.round(lastDraftLatencyMs)}ms（第 ${anchor.page} 页）`);
+  }, 30);
+}
 
 // ---------- 页高缓存（scale=1）与前缀和：虚拟化占位 + 窗口计算 + 滚动保持 ----------
 /** 各页 scale=1 高度（下标 1..N，0 占位）。同文件内容重载保留 → 布局稳定。 */
@@ -452,6 +625,10 @@ async function load() {
     }
     const totalPages = doc.numPages;
     numPages.value = totalPages;
+    // 草案层：本次 PDF 就是"当前真值" ⇒ 清草案、把缓冲快照设为 diff 基线、后台重建文本行索引
+    clearDraft();
+    compiledText = editor.buffers.get(editor.activePath ?? "") ?? "";
+    void buildLineIndex(true);
     // 页高数组补足到新总页数（同文件重载保留已有页高 → 布局/滚动稳定）
     if (pageH1.length < totalPages + 1) pageH1.length = totalPages + 1;
     // 哪些页需要重绘？
@@ -645,6 +822,24 @@ onBeforeUnmount(() => {
   loadingTask = null;
   doc = null;
 });
+// ---------- 草案层接线（放在脚本末尾：依赖 mountedPages / scale 等，避免 TDZ） ----------
+/** 缓冲变更（活动文件）→ 计划草案。 */
+watch(
+  () => editor.buffers.get(editor.activePath ?? ""),
+  (v) => {
+    if (v !== undefined) scheduleDraft();
+  }
+);
+/** 编译结束（重载或跳过重载）⇒ 草案让位给真画面，并刷新 diff 基线。 */
+watch([() => preview.reloadKey, () => preview.skippedReloads], () => {
+  clearDraft();
+  compiledText = editor.buffers.get(editor.activePath ?? "") ?? "";
+});
+/** 页挂载窗口 / 缩放变化 ⇒ 草案按新坐标重画（未挂载时 paintDraft 自己跳过）。 */
+watch([mountedPages, () => scale.value, draftEpoch], () => {
+  if (draft) void paintDraft();
+});
+onBeforeUnmount(() => clearTimeout(draftTimer));
 </script>
 
 <template>
@@ -699,6 +894,8 @@ onBeforeUnmount(() => {
           :ref="(el) => setPageEl(n, el as HTMLElement)"
         >
           <canvas :ref="(el) => setCanvasEl(n, el as HTMLCanvasElement)" @click="onCanvasClick(n, $event)" />
+          <!-- 草案层（v1）：改动行的近似预览，压在真画面之上；pointer-events: none，不挡点击定位 -->
+          <canvas class="draft-layer" :ref="(el) => setDraftCanvasEl(n, el as HTMLCanvasElement)" />
           <div class="highlight" :ref="(el) => setHighlightEl(n, el as HTMLElement)" />
         </div>
         <!-- 底部占位：撑住窗口之后页面的高度 -->
@@ -803,6 +1000,14 @@ onBeforeUnmount(() => {
 }
 /* canvas 块级、充满 .page-wrap 保留高度；避免内联基线缝隙（releasePage 置 0×0 时仅影响宽高，布局仍由 wrap 高度驱动） */
 .page-wrap canvas { display: block; }
+/* 草案层：改动行的近似预览（白底重绘 + 草稿下划线）。absolute 叠在页 canvas 上；
+   pointer-events: none ⇒ 不挡 canvas 的点击反向定位。 */
+.draft-layer {
+  position: absolute;
+  left: 0;
+  top: 0;
+  pointer-events: none;
+}
 .highlight {
   display: none;
   position: absolute;
