@@ -10,6 +10,12 @@
 //! 边界，不解释指令内容。长度表与 `scripts/xdv-report.mjs`（研究/诊断工具，Node）逐条一致；
 //! 那个工具用于产出研究数据，本模块是**产品路径**。
 //!
+//! **页哈希口径 = V1（2026-09，已知债 #26）**：哈希范围是"`bop` 头去掉尾部 4 B `prev`" + 页体。
+//! `prev` 是**上一页 `bop` 的文件偏移**（派生量），任何"前面某页变长"都会让它整体平移，从而把
+//! **内容未变的页**也标成"变了"——42 用例矩阵实测：长度类编辑产生 Σ375 页假阳性、raw 精确率
+//! 仅 9.64%（改 V1 后假阴性 0、V1 集合 = 渲染真值集合 42/42）。机制、口径定义与量化见
+//! `docs/research/page-hash-prev-quant.md`；`scripts/xdv-report.mjs` 仍以 raw 为默认口径（研究工具）。
+//!
 //! **容错**：末尾截断、未知 opcode → 丢弃该页（前 N 页仍然可用——页包自包含，见 G2 报告 §3.3）。
 //! 两个边界判据是 2026-09 修 bug 时确定的，复现它们的行为很重要：
 //! ① 消费一条指令前校验 `end <= len`；② 页完整的**唯一**判据是"见到 EOP"。
@@ -152,9 +158,28 @@ fn payload_len(buf: &[u8], p: usize) -> Option<usize> {
     }
 }
 
+/// `bop` 头长度：1 opcode + 10×i32 计数器 + i32 `prev`（载荷 44 B，见 `payload_len` 的 `139` 分支）。
+const BOP_LEN: usize = 45;
+/// `bop` 尾部的 `prev` 字段长度。
+///
+/// `prev` 是**上一页 `bop` 的文件偏移**（页 1 为 −1），属**派生量**：任何"前面某页变长"都会让它
+/// 整体平移，从而把**内容未变的页**也标成"变了"——实测（42 用例矩阵）长度类编辑由此产生
+/// Σ375 页假阳性、raw 精确率仅 9.64%。故页哈希口径丢掉这 4 B，**保留** opcode 与 10×i32 计数器
+/// （其中 `c0` = `\count0` 页号）。机制、量化与假阴性证据见 `docs/research/page-hash-prev-quant.md`
+/// 与 `docs/modules.md` 已知债 #26。
+const BOP_PREV_LEN: usize = 4;
+
+/// 单页的哈希（口径 **V1**：`bop` 头去掉 `prev`，其余原样）。
+/// 单页的哈希（口径 **V1**：`bop` 头去掉 `prev`，其余原样）。
 fn hash_page(slice: &[u8]) -> u64 {
     let mut h = DefaultHasher::new();
-    slice.hash(&mut h);
+    if slice.len() >= BOP_LEN {
+        slice[..BOP_LEN - BOP_PREV_LEN].hash(&mut h); // opcode + 计数器
+        slice[BOP_LEN..].hash(&mut h); // 页体（含结尾的 EOP）
+    } else {
+        // 正常路径不可达（调用点已校验 `p + 45 <= len`）；真出现结构异常时按整段算，方向保守。
+        slice.hash(&mut h);
+    }
     h.finish()
 }
 
@@ -340,5 +365,104 @@ mod tests {
         assert_eq!(changed_pages(Some(&a), &[1, 2]), vec![1, 2]);
         // 无法判定（cur 为空）→ 保守全刷（以 cur 长度计，为 0 页时返回空）
         assert_eq!(changed_pages(Some(&a), &[]), Vec::<u32>::new());
+    }
+
+    /// 带**真实 `prev` 链**的 XDV（`minimal_xdv` 的加强版）：`prev_i` = 第 i−1 页 `bop` 的偏移，
+    /// 页 1 = −1（与 XeTeX 实际产物一致）。返回 (bytes, 每页 `bop` 偏移)。
+    fn chain_xdv(bodies: &[&[u8]]) -> (Vec<u8>, Vec<usize>) {
+        let mut v = vec![247u8, 7];
+        v.extend_from_slice(&[0u8; 12]); // num / den / mag
+        v.push(0); // comment 长度 0
+        let mut offsets = Vec::new();
+        let mut prev: i32 = -1;
+        for body in bodies {
+            let bop = v.len();
+            offsets.push(bop);
+            v.push(BOP);
+            v.extend_from_slice(&[0u8; 40]); // 10×i32 计数器（c0 = \count0）
+            v.extend_from_slice(&prev.to_be_bytes());
+            v.extend_from_slice(body);
+            v.push(EOP);
+            prev = bop as i32;
+        }
+        v.push(POST);
+        v.extend_from_slice(&[0u8; 28]);
+        (v, offsets)
+    }
+
+    /// 页内 EOP 的下标（页体长度已知时）。
+    fn eop_index(bop: usize, body_len: usize) -> usize {
+        bop + 45 + body_len
+    }
+
+    /// **旧口径**（2026-09 之前）：哈希整页，含 45 B `bop` 头（`prev` 在内）。
+    /// 只用于对拍"修掉了什么"——产品路径已不用它（见 [`hash_page`] 的口径注释）。
+    fn old_scope_hash(bytes: &[u8], bop: usize, eop: usize) -> u64 {
+        let mut h = DefaultHasher::new();
+        bytes[bop..=eop].hash(&mut h);
+        h.finish()
+    }
+
+    /// 已知债 #26 的核心修复：`prev` 改动**不再**被当成"页内容变了"。
+    #[test]
+    fn prev_only_change_is_not_a_page_change() {
+        let bodies: &[&[u8]] = &[&[1, 2], &[3, 4, 5], &[6]];
+        let (a, off_a) = chain_xdv(bodies);
+        let (mut b, off_b) = chain_xdv(bodies);
+        // 只改第 2 页 `prev` 的最高字节（页内偏移 41）——页体一字未动
+        b[off_b[1] + 41] = 0x7f;
+        assert_ne!(a, b, "两份 XDV 的字节确实不同");
+        assert_eq!(
+            page_hashes(&a),
+            page_hashes(&b),
+            "V1：逐页相同 ⇒ B 可跳过重载"
+        );
+        assert_eq!(
+            changed_pages(Some(&page_hashes(&a)), &page_hashes(&b)),
+            Vec::<u32>::new()
+        );
+        // 旧口径（含 prev）会把第 2 页判成"变了"——#26 的病根（回归锚点：改回去即复发）
+        assert_ne!(
+            old_scope_hash(&a, off_a[1], eop_index(off_a[1], bodies[1].len())),
+            old_scope_hash(&b, off_b[1], eop_index(off_b[1], bodies[1].len())),
+            "旧口径确实会判第 2 页变了"
+        );
+    }
+
+    /// 前面某页变长 ⇒ 后续页的 `prev` 整体平移：V1 只报**那一页**，旧口径会把第 3 页起全部打脏
+    /// （实测 25/26 页，见 `docs/research/page-hash-prev-quant.md` §1）。
+    #[test]
+    fn page_growth_only_marks_the_grown_page() {
+        let b1: &[u8] = &[1, 2, 3];
+        let b1_long: &[u8] = &[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13]; // 长 10 B
+        let b2: &[u8] = &[138, 7, 7];
+        let b3: &[u8] = &[4, 4, 4];
+        let b4: &[u8] = &[5, 5];
+        let (a, off_a) = chain_xdv(&[b1, b2, b3, b4]);
+        let (b, off_b) = chain_xdv(&[b1_long, b2, b3, b4]);
+        let (ha, hb) = (page_hashes(&a), page_hashes(&b));
+        assert_eq!((ha.len(), hb.len()), (4, 4));
+        assert_eq!(
+            changed_pages(Some(&ha), &hb),
+            vec![1],
+            "V1：只报内容真的变了的第 1 页"
+        );
+        assert_eq!(
+            ha[1], hb[1],
+            "第 2 页的 prev 指向第 1 页起点（未移动）⇒ 逐字节相同"
+        );
+        assert_eq!(ha[2], hb[2], "V1：第 3 页的 prev 位移被忽略");
+        assert_eq!(ha[3], hb[3], "V1：第 4 页的 prev 位移被忽略");
+        // 旧口径的现场：第 3、4 页的 prev 指向移动了的页 ⇒ 被判"变了"
+        assert_ne!(
+            old_scope_hash(&a, off_a[2], eop_index(off_a[2], b3.len())),
+            old_scope_hash(&b, off_b[2], eop_index(off_b[2], b3.len())),
+            "旧口径确实会把第 3 页打脏"
+        );
+        assert_ne!(
+            old_scope_hash(&a, off_a[3], eop_index(off_a[3], b4.len())),
+            old_scope_hash(&b, off_b[3], eop_index(off_b[3], b4.len())),
+            "旧口径确实会把第 4 页打脏"
+        );
     }
 }

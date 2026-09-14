@@ -210,6 +210,16 @@ fn pages_cache_path(tmp_dir: &Path, stem: &str, engine: Engine) -> PathBuf {
     tmp_dir.join(format!("{stem}.{}.pages", engine.binary_name()))
 }
 
+/// 页哈希缓存的**口径版本**（写进文件首行；读侧不匹配即当"无法判定"）。
+///
+/// 2026-09 页哈希口径改为 **V1**（`bop` 头去掉 4 B `prev`，见
+/// `docs/research/page-hash-prev-quant.md` 与已知债 #26）：老缓存里存的是 raw 口径哈希，与
+/// 新口径逐页都不相等。这里用**首行标记**把两者一次性区分开——老文件首行是 16 进制哈希，
+/// 读侧取不到 `v1` ⇒ `None` ⇒ 只退化**一轮**（该轮多转换一次 `xdvipdfmx` + 视窗全量重绘，
+/// 随后写回新格式即自愈），**不会**被误判成"逐页相同"。反向（回滚老二进制读新文件）同样
+/// 只退化一轮。标记**只此一处定义**，避免漏写造成"永远首轮"（A 面每轮白跑 0.65–0.94 s）。
+const PAGES_CACHE_VERSION: &str = "v1";
+
 fn root_stem(root_file: &Path) -> String {
     root_file
         .file_stem()
@@ -548,13 +558,18 @@ impl LatexmkRunner {
         Ok(())
     }
 
-    /// 读上一次的页哈希缓存（`tmp/<stem>.pages`）。
+    /// 读上一次的页哈希缓存（`tmp/<stem>.<引擎>.pages`）。
     ///
-    /// 缺失/损坏 → `None` = **无法判定** → 不做任何"跳过"优化（保守）。
+    /// **首行必须是口径标记**（[`PAGES_CACHE_VERSION`]）；老格式（首行直接是 16 进制哈希）与任何
+    /// 截断/损坏都当 `None` = **无法判定** → 不做任何"跳过"优化（保守，只多转换一轮）。
     async fn read_pages_cache(&self, path: &Path) -> Option<Vec<u64>> {
         let text = self.fs.read_to_string(path).await.ok()?;
+        let mut lines = text.lines();
+        if lines.next()?.trim() != PAGES_CACHE_VERSION {
+            return None; // 口径不符（含 2026-09 之前的 raw 缓存）
+        }
         let mut out = Vec::new();
-        for line in text.lines() {
+        for line in lines {
             let t = line.trim();
             if t.is_empty() {
                 continue;
@@ -569,11 +584,18 @@ impl LatexmkRunner {
     }
 
     /// 写页哈希缓存（失败只记 debug：它是优化判据，不该让编译失败——最坏结果是下次多转换一次）。
+    ///
+    /// 首行写口径标记（`v1`），其后每页一行 `{h:016x}`；读侧见 [`Self::read_pages_cache`]。
     async fn write_pages_cache(&self, path: &Path, hashes: &[u64]) {
         if hashes.is_empty() {
             return; // "无法判定"不写缓存，免得把下一次也带偏
         }
-        let body: String = hashes.iter().map(|h| format!("{h:016x}\n")).collect();
+        let mut body = String::with_capacity(PAGES_CACHE_VERSION.len() + 1 + hashes.len() * 17);
+        body.push_str(PAGES_CACHE_VERSION);
+        body.push('\n');
+        for h in hashes {
+            body.push_str(&format!("{h:016x}\n"));
+        }
         if let Err(e) = self.fs.write(path, &body).await {
             debug!(path = %path.display(), "写页哈希缓存失败（下次会多转换一次）：{e}");
         }
@@ -802,6 +824,122 @@ mod tests {
         assert_eq!(xe, PathBuf::from("/proj/tmp/main.xelatex.pages"));
         assert_eq!(lua, PathBuf::from("/proj/tmp/main.lualatex.pages"));
         assert_ne!(xe, lua, "两个引擎的页哈希基线必须互不覆盖");
+    }
+
+    /// 页哈希缓存的**口径标记**（2026-09，已知债 #26 的迁移方案 B）：老格式（首行直接是哈希）
+    /// 必须 fail-closed 成 `None`（只退化一轮），**绝不能**被当成"逐页相同"或"零页变化"。
+    #[tokio::test]
+    async fn pages_cache_requires_scope_marker_and_rejects_legacy() {
+        let project = TempProject::new("pages-cache-scope");
+        let runner = LatexmkRunner::new(
+            std::sync::Arc::new(crate::fs::TokioFs),
+            std::sync::Arc::new(latteset_core::scheduler::NoProgress),
+        );
+        let path = project.dir.join("tmp/main.xelatex.pages");
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+
+        // ① 老格式：首行就是 16 进制哈希（2026-09 之前的 raw 缓存）⇒ 无法判定
+        std::fs::write(&path, "0123456789abcdef\nfedcba9876543210\n").unwrap();
+        assert_eq!(
+            runner.read_pages_cache(&path).await,
+            None,
+            "老格式必须 fail-closed"
+        );
+
+        // ② 空 / 只有标记 / 坏行：都不 panic，一律"无法判定"
+        std::fs::write(&path, "").unwrap();
+        assert_eq!(runner.read_pages_cache(&path).await, None);
+        std::fs::write(&path, "v1\n").unwrap();
+        assert_eq!(
+            runner.read_pages_cache(&path).await,
+            None,
+            "只有标记没有页 = 无法判定"
+        );
+        std::fs::write(&path, "v1\nnot-a-hex\n").unwrap();
+        assert_eq!(
+            runner.read_pages_cache(&path).await,
+            None,
+            "坏行 → 无法判定"
+        );
+
+        // ③ 新格式往返（首行标记 + 每页一行十六进制）
+        runner.write_pages_cache(&path, &[1u64, 0xdead_beef]).await;
+        let text = std::fs::read_to_string(&path).unwrap();
+        assert!(text.starts_with("v1\n"), "首行必须是口径标记：{text:?}");
+        assert_eq!(
+            runner.read_pages_cache(&path).await,
+            Some(vec![1, 0xdead_beef])
+        );
+
+        // ④ 空表不写盘（"无法判定"不能被固化成"零页变化"）
+        let empty = project.dir.join("tmp/empty.pages");
+        runner.write_pages_cache(&empty, &[]).await;
+        assert!(!empty.exists(), "空表不应写缓存");
+    }
+
+    /// 已知债 #26 的**真机回归**（`#[ignore]`，需要 TeX Live）：在真实多页项目上，编辑第 1 页
+    /// 插 1 个汉字只应报**少数几页**变化。旧口径（页哈希含 `bop` 尾部的 `prev`）会报"第 3 页起
+    /// 全部变了"——实验室实测 25/26 页（`docs/research/page-hash-prev-quant.md` §3）。
+    #[tokio::test]
+    #[ignore]
+    async fn page_growth_edit_marks_few_pages_on_real_project() {
+        if !latexmk_available() {
+            eprintln!("跳过：系统未安装 latexmk（需要 TeX Live/MiKTeX）");
+            return;
+        }
+        let project = TempProject::new("prev-scope-real");
+        // 20 个 `\newpage` 段落：每段自成页，插入 1 个汉字只应影响第 1 页
+        let mut tex = String::from("\\documentclass[12pt]{ctexart}\n\\begin{document}\n");
+        for i in 1..=20 {
+            tex.push_str(&format!(
+                "第 {i} 页的内容，用来占满一行并保证分页稳定。\\newpage\n"
+            ));
+        }
+        tex.push_str("\\end{document}\n");
+        project.put("main.tex", &tex);
+
+        let runner = LatexmkRunner::new(
+            std::sync::Arc::new(crate::fs::TokioFs),
+            std::sync::Arc::new(latteset_core::scheduler::NoProgress),
+        );
+        // 1) Full 建产物；2) Quick 立基线
+        assert!(
+            matches!(
+                runner.compile(req(&project), CancellationToken::new()).await,
+                CompileOutcome::Success { .. }
+            ),
+            "Full 应成功"
+        );
+        let CompileOutcome::Success {
+            page_hashes: base, ..
+        } = runner
+            .compile(quick_req(&project), CancellationToken::new())
+            .await
+        else {
+            panic!("基线 Quick 应成功");
+        };
+        assert!(base.len() >= 10, "夹具应有多页，实际 {} 页", base.len());
+
+        // 3) 编辑：第 1 页正文插 1 个汉字（页长 +3B ⇒ 触发 prev 链整体平移）
+        project.put("main.tex", &tex.replacen("第 1 页的内容", "第 1 页的内容啊", 1));
+        let CompileOutcome::Success {
+            page_hashes: after, ..
+        } = runner
+            .compile(quick_req(&project), CancellationToken::new())
+            .await
+        else {
+            panic!("编辑后的 Quick 应成功");
+        };
+
+        let changed = latteset_core::xdv::changed_pages(Some(&base), &after);
+        assert!(changed.contains(&1), "插入点所在页必须被判变化：{changed:?}");
+        assert!(
+            changed.len() <= 3,
+            "只应报编辑处附近的少数页，实际 {} 页（共 {} 页）：{changed:?}；\
+             旧口径含 bop.prev 时会报第 3 页起全部",
+            changed.len(),
+            after.len()
+        );
     }
 
     #[test]

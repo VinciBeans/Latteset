@@ -334,6 +334,9 @@ const v2  = sha(buf.subarray(b + 45, e + 1));
 * **不采纳的替代**：① 整篇 XDV 指纹式缓存/比较（跨分钟必失效，§6.3）；② D 双写双读（复杂度与收益不匹配）；③ 只改缓存文件名/版本号而不改哈希取字节范围（不够——切片长度一变，哈希必然不同，`[t1] §3.1`）。
 * **工具侧（仅回归/诊断，未实施）**：`scripts/xdv-report.mjs` 建议加 `--hash-scope=raw|v1|v2`（`parseXdv(buf, { hashScope })` 并**始终**返回 `hashRaw/hashV1/hashV2`、`hash` 保持 raw 不破坏调用方），`--json` 的 `pagesDetail` 增 `prev`/`counters`，`--diff` 标出"差异是否只在 `bop` 头内的 `prev`"。最小改动（1+2）约 20 行。**注意**：Rust 用 `DefaultHasher`、Node 侧无法复现哈希**值**，工具与产品只能对拍口径/边界/变化页集合（`[t1] §5`）。
 
+> **已落地（2026-09-14）**：口径取 **V1**、缓存取**方案 B**（首行标记 `v1`）。实现：`crates/latteset-core/src/xdv.rs`（`BOP_LEN`/`BOP_PREV_LEN` + `hash_page`）与 `crates/latteset-infra/src/runner.rs`（`PAGES_CACHE_VERSION`，读侧 fail-closed）。回归：`prev_only_change_is_not_a_page_change`、`page_growth_only_marks_the_grown_page`（**两者先在旧口径下跑红**）、`pages_cache_requires_scope_marker_and_rejects_legacy`、`#[ignore]` 真机 `page_growth_edit_marks_few_pages_on_real_project`。
+> **真机 GUI 实测**（28 页 thesis 干净副本）：首编 `changed=[1..28]` → 首章正文插 1 个汉字 ⇒ **`changed=[4]`（1 页；旧口径为 23 页）**，缓存逐行对拍独立复现 `[4]` → 追加注释 ⇒ `changed=[]`（`rendered 0 reused 6`，日志「复用现有产物」= A 跳过转换）→ 手动 Full ⇒ `changed=[]`（Quick↔Full 基线共享成立）。
+
 ### 7.2 「若改」的必过测试清单（每条给命令 + 期望）
 
 | # | 测试 | 命令 / 入口 | 期望 |
