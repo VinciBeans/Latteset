@@ -83,6 +83,15 @@ test_file/texmf/
 test_file/tectonic-src/
 test_file/tectonic-install/
 
+# ============ AgentTeams 运行期状态（团队/任务/邮箱，属本地状态勿上传） ============
+.agent-teams/
+
+# ============ 团队产出的中间 part（正式副本由 T5 落到 docs/research/tectonic-plan-parts/） ============
+test_file/tectonic-plan-parts/
+
+# ============ 本地排查小工具（会话转录解压等一次性辅助脚本） ============
+test_file/tools/
+
 # ============ Logo 工具临时产物（临时目录 + 预览页，勿上传） ============
 *.tmpdir/
 __logo_preview*.html

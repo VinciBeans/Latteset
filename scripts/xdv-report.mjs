@@ -270,25 +270,49 @@ const isMain = process.argv[1] && import.meta.url === pathToFileURL(process.argv
 if (isMain) await cli();
 async function cli() {
 const argv = process.argv.slice(2);
-const file = argv.find((a) => !a.startsWith('--'));
-if (!file) {
-  console.error('用法：node scripts/xdv-report.mjs <file.xdv> [--json] [--opcodes] [--truncate-at=N] [--diff other.xdv] [--watch=ms]');
-  process.exit(2);
-}
+// 参数解析：`--name=value` 与 `--name value` 两种形态都接受。
+// 为什么必须两种都认（2026-09 修）：文件头一度写的是 `--diff <b.xdv>`（空格），而解析只认 `--diff=`，
+// 于是空格形式**静默不生效**——exit 0、没有任何差分输出，按文件头写的用例会永远绿。
+// 同一条教训的另一半：**未知/多余参数一律报错退出**，不静默忽略。
+const consumed = new Set();
 const flag = (name, dflt = null) => {
-  const hit = argv.find((a) => a.startsWith(`--${name}=`));
-  return hit ? hit.slice(name.length + 3) : dflt;
+  const eq = argv.findIndex((a) => a.startsWith(`--${name}=`));
+  if (eq >= 0) { consumed.add(eq); return argv[eq].slice(name.length + 3); }
+  const sp = argv.indexOf(`--${name}`);
+  if (sp >= 0) {
+    const next = argv[sp + 1];
+    if (next === undefined || next.startsWith('--')) {
+      console.error(`用法错误：--${name} 需要一个值（写成 --${name}=<值> 或 --${name} <值>）`);
+      process.exit(2);
+    }
+    consumed.add(sp); consumed.add(sp + 1);
+    return next;
+  }
+  return dflt;
 };
 const truncateAt = flag('truncate-at');
 const diffWith = flag('diff');
 const watchMs = flag('watch');
+const budget = flag('budget', '60000');
 const json = argv.includes('--json');
 
+// 位置参数只能是**一个**输入文件；其余未识别的一律报错（不静默）
+const positional = argv.filter((a, i) => !a.startsWith('--') && !consumed.has(i));
+if (positional.length > 1) {
+  console.error(`用法错误：只能给一个输入文件，收到 ${positional.length} 个：${positional.join(', ')}`);
+  process.exit(2);
+}
+const file = positional[0];
+if (!file) {
+  console.error('用法：node scripts/xdv-report.mjs <file.xdv> [--json] [--pages] [--opcodes] [--truncate-at=N|--truncate-at N] [--diff=other.xdv|--diff other.xdv] [--watch=ms] [--budget=ms]');
+  process.exit(2);
+}
+
 if (watchMs) {
-  const tl = await watch(file, Number(watchMs) || 200, Number(flag('budget', '60000')));
+  const tl = await watch(file, Number(watchMs) || 200, Number(budget));
   console.log(`页可用时间线（每 ${watchMs}ms 轮询）：`);
   for (const t of tl) console.log(`  第 ${String(t.page).padStart(3)} 页完整可见 @ ${String(t.atMs).padStart(5)}ms（文件 ${(t.fileBytes / 1048576).toFixed(2)} MB）`);
-  console.log(`共 ${tl.length} 页；总预算 ${flag('budget', '60000')}ms`);
+  console.log(`共 ${tl.length} 页；总预算 ${budget}ms`);
   process.exit(0);
 }
 
