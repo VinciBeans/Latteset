@@ -188,7 +188,7 @@ node scripts/bench.mjs --with-real         # 追加真实模板档（依赖本�
 ## 工具链
 
 - **系统 TeX Live 优先**；缺失时检测并引导安装
-- TinyTeX 内嵌兜底：后续实现
+- **Tectonic 库形态集成（原「TinyTeX 内嵌兜底」已于 2026-09 改判）**：默认走**子进程形态**（已落地，`Engine::Tectonic`）；**库内嵌**（`IoProvider` 直喂编辑器缓冲 / 常驻 format / `XdvEvents` 页事件与逐字形坐标）列为**独立里程碑 ⑫**，准入判据、代价与实测见 [roadmap §6.5](./research/tex-ide-roadmap-priority.md) 与 [成本实测](./research/realtime-preview-cost.md)。
 - **默认引擎 xelatex**；后续按系统语言自适应（中文 → xelatex，其他 → pdflatex），引擎可配置
 - **Tectonic（2026-09 引入，`xelatex` 之外的第二形态）**：子进程驱动官方 `tectonic.exe`（路线①，D2 裁决）。
   - 命令：`tectonic -C -k --keep-logs --synctex -p -o tmp [-r 0] <root>`（Quick 加 `-r 0` 单趟；Full 用默认收敛）。
@@ -209,7 +209,7 @@ node scripts/bench.mjs --with-real         # 追加真实模板档（依赖本�
 
 **MVP 包含**：项目打开 + 文件树 + 标签页 + 编辑（高亮/查找替换）+ 双模式编译 + 调度全套（队列/超时/手动终止/错误分类）+ 错误列表跳转 + 内嵌预览（含 SyncTeX）。
 
-**MVP 后未做（规划中/后置）**：LSP（v1.1）、外部查看器、TinyTeX 兜底、自动更新、代码签名证书。已落地项见 [roadmap §1 基线](./research/tex-ide-roadmap-priority.md)。
+**MVP 后未做（规划中/后置）**：LSP（v1.1）、外部查看器、**Tectonic 库形态集成**（原 TinyTeX 兜底，2026-09 改判——子进程形态已落，见 §工具链）、自动更新、代码签名证书。已落地项见 [roadmap §1 基线](./research/tex-ide-roadmap-priority.md)。
 
 **已否决**：引擎语言自适应（见文末「后置/未决清单」）｜ 增量编译（latexmk 的"增量" = 整份文档重跑单遍，属引擎上限，见 ADR-0005）。
 
@@ -235,6 +235,6 @@ node scripts/bench.mjs --with-real         # 追加真实模板档（依赖本�
 
 ## 后置/未决清单
 
-多窗口与多项目 ｜ 外部查看器 ｜ TinyTeX 捆绑 ｜ 自动更新 ｜ 代码签名证书 ｜ 冲突对话框（v1 以状态栏「外部修改」点击重载替代，独立对话框后置）｜ 多面板布局 ｜ LSP 具体集成（v1.1 规划，monaco-languageclient 需专项研究）
+多窗口与多项目 ｜ 外部查看器 ｜ Tectonic 库内嵌（原 TinyTeX 捆绑，2026-09 改判） ｜ 自动更新 ｜ 代码签名证书 ｜ 冲突对话框（v1 以状态栏「外部修改」点击重载替代，独立对话框后置）｜ 多面板布局 ｜ LSP 具体集成（v1.1 规划，monaco-languageclient 需专项研究）
 
 **已否决**：引擎语言自适应规则（19 个真实模板双引擎实测中 **0 例**因默认 XeLaTeX 选错、`\RequirePDFTeX` 为 0/7374、文档口径 19/19 兼容 XeLaTeX——"引擎自动推断"解决的是不存在的问题；唯一两种引擎都不行的是日文 `jsarticle`，需 platex，不在三引擎范围内。见 [research/template-corpus-survey.md](./research/template-corpus-survey.md)）｜ **DVI/XDV 作为预览格式**（2026-09 实测：产物→屏幕比"xdvipdfmx + pdf.js"慢 **57–68×**——121 页 44.06s vs 0.65s+115ms；XDV 体积不定（0.15×–29× PDF）；未写完的 DVI 无 postamble 直接解析失败。唯一值得吸收的是"编译期页完成度进度信号"，见 [research/dvi-preview-feasibility.md](./research/dvi-preview-feasibility.md)）｜ 增量编译具体策略（latexmk 增量 = 整份单遍重排，属引擎上限，见 ADR-0005）
