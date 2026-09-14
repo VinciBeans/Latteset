@@ -18,6 +18,7 @@ import {
   draftGeometry,
   findAnchor,
   firstChangedLine,
+  latexToDraftText,
   linesOfPage,
   type PdfLine,
 } from "../services/draftPatch";
@@ -247,15 +248,23 @@ function scheduleDraft() {
       return;
     }
     dbg.anchor = anchor.page;
+    // **近似成排版结果的样子**再画：直接画源码会把公式显示成 `$E = mc^2$` 这种代码状态
+    // （真机反馈的毛病）。全无可近似内容（纯标记行/纯注释）⇒ 不画，而不是把源码糊上去。
+    const draftText = latexToDraftText(changed.newLine);
+    if (!draftText) {
+      dbg.reason = "bail:no-drawable-text";
+      if (draft) clearDraft();
+      return;
+    }
     const avgCharW = anchor.text.length > 0 ? anchor.w / anchor.text.length : anchor.size * 0.5;
-    const g = draftGeometry(anchor, changed.newLine, avgCharW);
+    const g = draftGeometry(anchor, draftText, avgCharW);
     draft = {
       page: anchor.page,
       x: anchor.x,
       y: anchor.y,
       w: g.coverW,
       size: g.size,
-      text: changed.newLine,
+      text: draftText,
     };
     draftEpoch.value++;
     void paintDraft();

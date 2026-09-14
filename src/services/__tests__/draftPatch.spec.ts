@@ -3,6 +3,7 @@ import {
   draftGeometry,
   findAnchor,
   firstChangedLine,
+  latexToDraftText,
   linesOfPage,
   normalizeForMatch,
   type PdfLine,
@@ -61,5 +62,35 @@ describe("draftPatch（草案补丁的纯逻辑）", () => {
 
   it("normalizeForMatch：去空白与花括号", () => {
     expect(normalizeForMatch("\\section{标题} 与 空格")).toBe("\\section标题与空格");
+  });
+
+  describe("latexToDraftText（草稿层显示的是排版结果的样子，不是源码）", () => {
+    it("行内公式：去定界符 + 上标映射", () => {
+      expect(latexToDraftText("设 $E = mc^2$ 为质能方程")).toBe("设 E = mc² 为质能方程");
+    });
+    it("分式/希腊字母/下标/算符", () => {
+      expect(latexToDraftText("\\frac{a+b}{c} 与 \\alpha_1 \\times \\beta^2")).toBe(
+        "(a+b)/(c) 与 α₁ × β²"
+      );
+    });
+    it("装饰命令保留内容；引用与交叉引用给占位", () => {
+      expect(latexToDraftText("\\textbf{重点}：见 \\cite{ref1} 与 \\ref{eq:1}")).toBe(
+        "重点：见 [?] 与 [?]"
+      );
+    });
+    it("注释被去掉；根号与关系符映射", () => {
+      expect(latexToDraftText("推导 % 这是注释")).toBe("推导");
+      expect(latexToDraftText("\\sqrt{x^2+y^2} \\le r")).toBe("√x²+y² ≤ r");
+    });
+    it("纯标记行返回空串 ⇒ 调用方不画草案（而不是把源码糊上去）", () => {
+      expect(latexToDraftText("\\begin{equation}")).toBe("");
+      expect(latexToDraftText("\\end{equation}")).toBe("");
+      expect(latexToDraftText("\\label{eq:1}")).toBe("");
+      expect(latexToDraftText("% 只有注释")).toBe("");
+    });
+    it("未知命令不泄漏标记：带参数的保留参数、无参数的丢掉", () => {
+      // 注意空白折叠：`\noindent` 被丢掉后留下的双空格会被压成单空格
+      expect(latexToDraftText("\\weirdcmd{内容} 与 \\noindent 续")).toBe("内容 与 续");
+    });
   });
 });
