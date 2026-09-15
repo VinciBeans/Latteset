@@ -104,19 +104,19 @@ pub fn cache_dir_from_env() -> Option<std::path::PathBuf> {
     }
 }
 
-/// 页哈希支持位（方案 §5.3 / 任务判据 6）：**库形态本阶段不产出页哈希**。
+/// 页哈希支持位（方案 §5.3 / 任务判据 6）：**已支持**（2026-09-15，任务 3）。
 ///
-/// 理由（可核）：路径 B 把 XDV 拿在我们自己的 I/O 层里（`main.xdv` 在内存文件表中），
-/// 但它**不落盘**、也不含子进程档 `tmp/<stem>.xdv` 的"最后一次成功编译产物"语义 ⇒
-/// `CompileOutcome::Success::page_hashes` 必须显式给空表（= 「无法判定」，下游保守全量刷新），
-/// 而不是"静默跳过"。等 P5 的自建输出层探针接上 `XdvParser` 后，这里改为按块解析产出页表。
-/// 依据：t5 §4.1/§4.2（`XdvParser::parse` 逐块可行）、方案 §5.3、`crates/latteset-core/src/types.rs:288-293`。
-pub const PAGE_HASH_SUPPORTED: bool = false;
-
-/// 页哈希不可得时的**登记文案**（写进日志/文档，便于复核者一眼看到这是显式决定，不是漏做）。
-pub const PAGE_HASH_NOTE: &str =
-    "Tectonic 库形态（路径 B）本阶段不产出页哈希：XDV 只在自持 I/O 层的内存文件表里 → \
-     Success.page_hashes 显式给空表（= 无法判定，下游按保守全量刷新处理）";
+/// 路径 B 的 XDV 本来就在我们的捕获表里（`main.xdv`），所以**连盘都不用读**：直接把那份字节喂给
+/// [`latteset_core::xdv::page_hashes`] —— 与子进程档**同一个函数、同一份数据** ⇒ 两个形态产出的
+/// 页哈希**逐页可比**。这一点很重要：若两套口径不同，用户换形态时前端会把整篇判成"变了"（全量重绘）。
+///
+/// 由此库形态档也能吃 **A/B/C** 三个功能点：**A** = 页逐页相同 + 项目根已有 PDF ⇒ 跳过
+/// `XdvipdfmxEngine` 转换与拷贝（只对 Quick，与子进程档同闸门）；**B/C** 由前端按
+/// `changed_pages` 决定是否重载/只重绘变化页。判据缓存 = `tmp/<stem>.tectonic.pages`
+/// （`<engine>` 带引擎名，已知债 #25；口径定义在 core，两档共用）。
+///
+/// 空表仍然只表示**无法判定**（XDV 缺失/损坏）——调用方必须保守全量刷新，不是"零页"。
+pub const PAGE_HASH_SUPPORTED: bool = true;
 
 /// **bib 趟支持位**（t24 / V-03 的收口）：**已支持**（2026-09-15）。
 ///

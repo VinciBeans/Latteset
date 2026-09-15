@@ -9,7 +9,9 @@
 //!    **下一个 I/O 回调**处返回错误（[`crate::io::CANCEL_MESSAGE`]），引擎随即中止该趟
 //!    ——不再是"放弃等待、引擎跑完当前趟"。**中止延迟的上界 = 一次输出写 / 输入打开回调的间隔**
 //!    （实测数字 `[未测到]`：本机没有可用 bundle，跑不了真编；补测前提同 P0/t10）。
-//! 2. **页哈希显式不支持**（本阶段）：见 [`crate::PAGE_HASH_NOTE`]。
+//! 2. **页哈希已支持**（2026-09-15，任务 3）：XDV 就在捕获表里，喂
+//!    [`latteset_core::xdv::page_hashes`] —— 与子进程档同一函数 ⇒ 页哈希**逐页可比**，
+//!    A/B/C 三个功能点在库形态档同样成立（A 只对 Quick，见 ⑥ 段）。
 //! 3. **`.log` 落盘**：靠本层把输出镜像到 `tmp/`（≡ 子进程档的 `--keep-logs`）。
 //! 4. **超时不重试、失败不回退**（D1/㉕ 同口径）：库形态失败**不**自动切回子进程。
 //! 5. **bib 趟已支持**（2026-09-15 收口 V-03）：`.aux` 出现 `\bibdata` 时跑 `BibtexEngine`
@@ -33,7 +35,7 @@ use async_trait::async_trait;
 use latteset_core::log_parser::{MessageKind, diagnose, parse_log};
 use latteset_core::project::FileSystem;
 use latteset_core::scheduler::{CompileProgress, CompileRunner};
-use latteset_core::types::{CompileKind, CompileOutcome, CompileRequest, ErrorEntry, ErrorKind};
+use latteset_core::types::{CompileKind, CompileOutcome, CompileRequest, Engine, ErrorEntry, ErrorKind};
 use tectonic_bridge_core::{CoreBridgeLauncher, MinimalDriver};
 use tectonic_engine_bibtex::{BibtexEngine, BibtexOutcome};
 use tectonic_engine_xdvipdfmx::XdvipdfmxEngine;
@@ -44,7 +46,6 @@ use tracing::{debug, info, warn};
 use crate::bundle::{BundleSource, bundle_digest, open_bundle};
 use crate::io::{SharedCapture, TectonicIo, new_capture};
 use crate::status::ProgressStatus;
-use crate::{PAGE_HASH_NOTE, PAGE_HASH_SUPPORTED};
 
 /// 中间产物目录（与子进程档 `-o tmp` 一致）。
 const OUT_DIR: &str = "tmp";
@@ -179,6 +180,20 @@ fn seed_previous_intermediates(shared: &SharedCapture, tmp_dir: &Path) {
 /// 捕获表里某个输出已写的字节数。
 fn capture_len(shared: &SharedCapture, name: &str) -> usize {
     shared.lock().unwrap_or_else(|e| e.into_inner()).files.get(name).map_or(0, Vec::len)
+}
+
+/// 功能点 **A** 的判据：页逐页相同 **且** 项目根确实已有 PDF **且** 本次是 Quick。
+///
+/// 闸门与子进程档一致（`latteset-infra/src/runner.rs` 的 `finish_success`）：只对 Quick 跳过
+/// 转换与拷贝 —— Full 的语义就是"完整刷新一遍"。`prev` 为 `None`（首轮/口径不符）或页数不同
+/// 一律不复用（`prev == Some(hashes)` 同时挡住这两种）。
+fn should_reuse_pdf(wants_full: bool, hashes: &[u64], prev: Option<&[u64]>, pdf_exists: bool) -> bool {
+    !wants_full && !hashes.is_empty() && prev == Some(hashes) && pdf_exists
+}
+
+/// 捕获表里某个输出的字节（页哈希要用**原始字节**，不能走文本解码）。
+fn capture_bytes(shared: &SharedCapture, name: &str) -> Option<Vec<u8>> {
+    shared.lock().unwrap_or_else(|e| e.into_inner()).files.get(name).cloned()
 }
 
 /// 捕获表里某个输出的文本（有损解码：`.blg`/`.log` 不保证合法 UTF-8）。
@@ -382,6 +397,9 @@ fn run_engines(
         crate::FORMAT_NAME,
     )
     .ok();
+    // 页哈希缓存落点（A 的判据）：**必须先算** —— `tmp_dir` 紧接着就被 `TectonicIo` 拿走了。
+    // 引擎取 `Tectonic`（缓存文件名带引擎名，已知债 #25）；口径定义在 core，与子进程档共用。
+    let pages_cache = latteset_core::xdv::pages_cache_path(&tmp_dir, &stem, Engine::Tectonic);
     let mut io = TectonicIo::new(
         project_root,
         Some(tmp_dir),
@@ -411,6 +429,9 @@ fn run_engines(
     // 是否真的收敛（决定 `Success.kind`）：闭包内赋值，收尾处读。
     let mut converged = false;
     let mut pass_count = 0usize;
+    // 页哈希与 A 的判定（闭包内赋值，收尾处用）：见 ⑥ 段。
+    let mut page_hashes: Vec<u64> = Vec::new();
+    let mut reuse_pdf = false;
     let engine_result: Result<(), String> = {
         let mut launcher = CoreBridgeLauncher::new(&mut driver, &mut status);
         (|| -> Result<(), String> {
@@ -556,11 +577,39 @@ fn run_engines(
             pass_count = passes;
             info!(passes, stable, converged, "库形态排版趟数");
 
-            // ⑥ 转换趟（§3.4 第 7 步）：XDV/PDF 以**我们 I/O 层的名字**可达；t5 §2.2 实测整份可行。
-            let mut pdf_engine = XdvipdfmxEngine::default();
-            pdf_engine
-                .process(&mut launcher, &xdv_name, &pdf_name)
-                .map_err(|e| format!("XDV→PDF 失败：{e:#}"))?;
+            // ⑥ 页哈希（A/B/C 三个功能点的共用判据）→ 转换趟（§3.4 第 7 步）。
+            //
+            // **必须与子进程档用同一个函数**（`latteset_core::xdv::page_hashes`）：若两套口径不同，
+            // 换形态时前端会把整篇判成"变了"（全量重绘）。所以我们**不另写解析器**，直接把捕获表里
+            // 的 XDV 字节喂给同一个函数 —— 与子进程档读 `tmp/<stem>.xdv` 拿到的是同一份数据。
+            // 这也解释了为什么这里没用 `XdvParser`：流式解析是「编译中页事件」（P5）的入口，
+            // 而 A/B/C 只要最终页表，用同一函数才能保证与子进程档**逐页可比**。
+            page_hashes = {
+                let bytes = capture_bytes(&shared, &xdv_name).unwrap_or_default();
+                latteset_core::xdv::page_hashes(&bytes)
+            };
+            let prev_pages = std::fs::read_to_string(&pages_cache)
+                .ok()
+                .and_then(|t| latteset_core::xdv::parse_pages_cache(&t));
+            // A：页逐字节未变 **且** 项目根确实已有 PDF（用户可能手删过）⇒ 跳过转换与拷贝。
+            // 闸门与子进程档一致：只对 **Quick**（编辑触发）做 —— Full 的语义就是"完整刷新一遍"。
+            reuse_pdf = should_reuse_pdf(
+                wants_full,
+                &page_hashes,
+                prev_pages.as_deref(),
+                pdf_dst.is_file(),
+            );
+            if reuse_pdf {
+                info!(
+                    pages = page_hashes.len(),
+                    "页哈希与上次逐页相同：跳过 XDV→PDF 转换与拷贝（复用现有产物）"
+                );
+            } else {
+                let mut pdf_engine = XdvipdfmxEngine::default();
+                pdf_engine
+                    .process(&mut launcher, &xdv_name, &pdf_name)
+                    .map_err(|e| format!("XDV→PDF 失败：{e:#}"))?;
+            }
             phase_ms.2 = t_start.elapsed().as_millis();
             Ok(())
         })()
@@ -581,38 +630,47 @@ fn run_engines(
 
     match engine_result {
         Ok(()) => {
-            let pdf = files.get(&pdf_name).map(Vec::as_slice).unwrap_or(&[]);
-            if pdf.is_empty() {
-                return CompileOutcome::IoError {
-                    message: format!(
-                        "库形态编译成功但 I/O 层没拿到 `{pdf_name}`（输入请求：{}）",
-                        summarize(&requests)
-                    ),
-                };
+            // A（复用现有 PDF）时跳过拷贝：产物是上一次那一个，页哈希已证明它与本次排版逐页等价。
+            if !reuse_pdf {
+                let pdf = files.get(&pdf_name).map(Vec::as_slice).unwrap_or(&[]);
+                if pdf.is_empty() {
+                    return CompileOutcome::IoError {
+                        message: format!(
+                            "库形态编译成功但 I/O 层没拿到 `{pdf_name}`（输入请求：{}）",
+                            summarize(&requests)
+                        ),
+                    };
+                }
+                // V-05：**原子替换**（写 `{stem}.pdf.tmp` → `rename` 覆盖）——与子进程档
+                // `crates/latteset-infra/src/runner.rs:615-630` 同口径，失败时旧 PDF 保持完整。
+                let pdf_tmp = pdf_dst.with_extension("pdf.tmp");
+                if let Err(e) =
+                    std::fs::write(&pdf_tmp, pdf).and_then(|()| std::fs::rename(&pdf_tmp, &pdf_dst))
+                {
+                    // V-05：失败时清理临时文件，**旧 PDF 不被截断**（与子进程档同口径）。
+                    let _ = std::fs::remove_file(&pdf_tmp);
+                    return CompileOutcome::IoError {
+                        message: format!(
+                            "拷贝 PDF 到项目根失败（原子替换 {} → {}）：{e}",
+                            pdf_tmp.display(),
+                            pdf_dst.display()
+                        ),
+                    };
+                }
             }
-            // V-05：**原子替换**（写 `{stem}.pdf.tmp` → `rename` 覆盖）——与子进程档
-            // `crates/latteset-infra/src/runner.rs:615-630` 同口径，失败时旧 PDF 保持完整。
-            let pdf_tmp = pdf_dst.with_extension("pdf.tmp");
-            if let Err(e) = std::fs::write(&pdf_tmp, pdf).and_then(|()| std::fs::rename(&pdf_tmp, &pdf_dst)) {
-                // V-05：失败时清理临时文件，**旧 PDF 不被截断**（与子进程档同口径）。
-                let _ = std::fs::remove_file(&pdf_tmp);
-                return CompileOutcome::IoError {
-                    message: format!(
-                        "拷贝 PDF 到项目根失败（原子替换 {} → {}）：{e}",
-                        pdf_tmp.display(),
-                        pdf_dst.display()
-                    ),
-                };
-            }
-            if !PAGE_HASH_SUPPORTED {
-                // 判据 6：不能拿就必须**显式登记**，不许静默跳过。
-                info!("{PAGE_HASH_NOTE}");
+            // 页哈希缓存（A 的判据，下一轮用）：失败只记 debug —— 它只是优化判据，
+            // 不该让编译失败（最坏结果是下次多转换一次）。
+            if let Some(body) = latteset_core::xdv::format_pages_cache(&page_hashes) {
+                if let Err(e) = std::fs::write(&pages_cache, body) {
+                    debug!(path = %pages_cache.display(), "写页哈希缓存失败（下次会多转换一次）：{e}");
+                }
             }
             debug!(
-                pdf_bytes = pdf.len(),
+                pages = page_hashes.len(),
+                reused_pdf = reuse_pdf,
                 log_bytes = log_text.len(),
                 input_requests = requests.len(),
-                "库形态编译完成（页哈希显式不支持：空表 = 无法判定）"
+                "库形态编译完成（页哈希 = 与子进程档同一函数产出）"
             );
             // 分阶段耗时（命中缓存时 format_ms = 0）：P2/P4 复核用的一行证据。
             let (n_ram, n_mem, n_disk, n_bundle, n_miss) = request_counts(&requests);
@@ -622,6 +680,9 @@ fn run_engines(
                 convert_ms = phase_ms.2.saturating_sub(phase_ms.1),
                 engine_total_ms = phase_ms.2,
                 format_cached,
+                passes = pass_count,
+                pages = page_hashes.len(),
+                reused_pdf = reuse_pdf,
                 req_ram = n_ram,
                 req_mem = n_mem,
                 req_disk = n_disk,
@@ -637,7 +698,9 @@ fn run_engines(
                 // - 其余（请求本就是 Quick 的编辑触发、或文档要外部工具而我们跑不了）⇒ `Quick`，
                 //   由 ㉘ 的「引用待更新」+ 空闲收敛兜底。
                 kind: if converged { CompileKind::Full } else { CompileKind::Quick },
-                page_hashes: Vec::new(),
+                // 页级复用 A/B/C 的输入：与子进程档**同一个函数**、同一份 XDV 数据。
+                // 空表仍然只表示"无法判定"（XDV 缺失/损坏），前端按保守全量刷新。
+                page_hashes,
             }
         }
         Err(msg) => {
@@ -774,6 +837,18 @@ mod tests {
         c
     }
 
+    /// 同上，但装**二进制**内容（页哈希那条路要原始字节）。
+    fn capture_with_bytes(files: &[(&str, Vec<u8>)]) -> SharedCapture {
+        let c = new_capture();
+        {
+            let mut g = c.lock().unwrap_or_else(|e| e.into_inner());
+            for (name, body) in files {
+                g.files.insert((*name).to_owned(), body.clone());
+            }
+        }
+        c
+    }
+
     /// 检出信号是 **`.aux` 里的 `\bibdata`**（上游 `is_bibtex_needed`），不是扫源码找 `\cite`。
     ///
     /// 这条同时是 V-03 的回归守卫：先前按源码扫 `\cite` 判，既会漏（`\cite` 只在注释里）又会白跑。
@@ -827,7 +902,7 @@ mod tests {
         assert!(crate::BIBER_PASS_MISSING_NOTE.contains("biber"), "{}", crate::BIBER_PASS_MISSING_NOTE);
     }
 
-    /// 支持位必须与实现一致：bib 已支持、biber 不支持、收敛**有条件**支持。
+    /// 支持位必须与实现一致：bib 已支持、biber 不支持、收敛**有条件**支持、页哈希已支持。
     #[test]
     fn support_flags_match_the_implementation() {
         assert!(crate::BIB_PASS_SUPPORTED, "bib 趟已实现 ⇒ 该位必须为 true");
@@ -837,6 +912,60 @@ mod tests {
             "重跑循环已实现（Full 请求下跑到中间产物稳定）⇒ 该位为 true；\
              但 Quick 请求与含 biber/makeindex 的文档仍会退回 Quick"
         );
+        assert!(
+            crate::PAGE_HASH_SUPPORTED,
+            "页哈希已接线（捕获表的 XDV → core::xdv::page_hashes）⇒ 该位为 true"
+        );
+    }
+
+    /// 最小 XDV：pre + n 页（bop + 44 B 计数器/prev + 1 B 页体 + eop）+ post。
+    /// 每页页体不同 ⇒ 每页哈希应当不同。
+    fn tiny_xdv(pages: usize) -> Vec<u8> {
+        let mut v = vec![247u8, 7];
+        v.extend_from_slice(&[0u8; 12]);
+        v.push(0);
+        for i in 0..pages {
+            v.push(139); // bop
+            v.extend_from_slice(&[0u8; 44]);
+            v.push(i as u8);
+            v.push(140); // eop
+        }
+        v.push(248); // post
+        v
+    }
+
+    /// **页哈希的接线**：捕获表里的 XDV → `core::xdv::page_hashes`。
+    ///
+    /// 与子进程档用同一个函数是硬要求（两套口径会让"换形态"被判成整篇都变了），
+    /// 所以这里断言的是"走的是 core 那条路 + 页数/页级差异正确"。
+    #[test]
+    fn page_hashes_come_from_the_captured_xdv_via_core() {
+        let c = capture_with_bytes(&[("main.xdv", tiny_xdv(3))]);
+        let bytes = capture_bytes(&c, "main.xdv").expect("捕获表里应当有 XDV");
+        let hashes = latteset_core::xdv::page_hashes(&bytes);
+        assert_eq!(hashes.len(), 3, "3 页就该给 3 个哈希");
+        assert_ne!(hashes[0], hashes[1], "页体不同 ⇒ 哈希必须不同");
+        assert_ne!(hashes[1], hashes[2]);
+
+        // 缺失 / 空 ⇒ 空表 = **无法判定**（不是"零页"）
+        assert!(latteset_core::xdv::page_hashes(&[]).is_empty());
+        assert!(capture_bytes(&c, "nope.xdv").is_none(), "没写过的名字要返回 None");
+    }
+
+    /// **A 的判据**（功能点 A）：四个条件缺一不可。
+    #[test]
+    fn reuse_pdf_requires_quick_unchanged_and_an_existing_pdf() {
+        let hashes = vec![1u64, 2, 3];
+        assert!(should_reuse_pdf(false, &hashes, Some(&hashes), true), "Quick + 逐页相同 + 有 PDF ⇒ 可复用");
+        assert!(!should_reuse_pdf(true, &hashes, Some(&hashes), true), "Full 不做跳过（语义是完整刷新）");
+        assert!(!should_reuse_pdf(false, &hashes, None, true), "首轮没有上一次的哈希 ⇒ 不复用");
+        assert!(!should_reuse_pdf(false, &hashes, Some(&[9, 9, 9]), true), "页变了 ⇒ 不复用");
+        assert!(
+            !should_reuse_pdf(false, &hashes, Some(&[1, 2]), true),
+            "页数变了 ⇒ 不复用（prev != cur）"
+        );
+        assert!(!should_reuse_pdf(false, &hashes, Some(&hashes), false), "项目根没有 PDF ⇒ 必须转换");
+        assert!(!should_reuse_pdf(false, &[], Some(&[]), true), "空表是'无法判定'，不得当成'零页相同'");
     }
 
     /// 重跑判据只覆盖会被回读的中间产物（不做无谓的大文件摘要）。

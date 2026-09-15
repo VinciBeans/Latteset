@@ -595,6 +595,30 @@ node scripts/validate-pdf.mjs --pdf <dir>\<stem>.pdf --expect-pages 1 --expect-t
    实测消掉两个症状：**Full 出来的参考文献表会在下一次 Quick 里消失**、以及**每次编译都从零开始 ⇒ 永远 2 趟**。
    编译开始时还会把这些副本预热进内存层，重跑判据才有"上一趟"可比较（否则重复编译永远 2 趟）。
 
+### §6.3 页哈希（任务 3 收口；A/B/C 在库形态档成立）
+
+**做法**：不另写解析器 —— XDV 本来就在捕获表里（`main.xdv`），**连盘都不用读**，直接把那份字节喂
+`latteset_core::xdv::page_hashes`，与子进程档**同一个函数、同一份数据**。这是硬要求：两套口径会让
+"换形态"被判成整篇都变了（全量重绘）。⇒ **`XdvParser` 不用于这条路**（流式解析是 P5「编译中页事件」的
+入口，A/B/C 只要最终页表，用同一函数才能与子进程档逐页可比）。
+
+**顺带修的一处口径重复**：缓存版本标记 / 路径 / 读写都从 `latteset-infra` **提到 `latteset_core::xdv`**
+（`PAGES_CACHE_VERSION`、`pages_cache_path`、`parse_pages_cache`、`format_pages_cache`）。理由：两个 runner
+都要用它，而库形态档在 `latteset-tectonic`、按 ADR-0012 **不依赖 infra** ⇒ 两处各写一份会漂移，代价是
+"永远首轮"（A 面每轮白跑 0.65–0.94 s）。infra 侧只留薄封装，既有测试全绿。
+
+**实测（release，28 页多文件中文夹具 `ctexbook` + 8 章 `\include` + toc + `\bibliography`）**：
+
+| 场景 | 结果 |
+|---|---|
+| 首次 Full | **3 趟**（tex→bibtex→tex→tex）、`pages=28`、1709 ms（排版 530 / 转换 1177） |
+| 再 Full（内容未变） | 2 趟、1122 ms、逐页哈希与上一轮**完全一致** |
+| **Quick（内容未变）** | **A 触发**：`convert_ms=0`、`reused_pdf=true`、**475 ms**（跳过转换与拷贝） |
+| **改中间一章的一个词** | 页数 28→28，**只有第 16 页变**（1/28）—— 债 #26 的 V1 口径端到端成立 |
+
+**边界**：空表仍只表示**无法判定**（XDV 缺失/损坏）⇒ 前端保守全量刷新；A **只对 Quick**（与子进程档同闸门，
+Full 的语义就是完整刷新一遍）。
+
 **性能口径（2026-09-15 实测，release，同一目录 bundle 与同一夹具）**：
 
 | 夹具 | 库形态（本 crate） | 子进程 `tectonic.exe -C -r 0` |

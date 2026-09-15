@@ -220,19 +220,15 @@ fn fingerprint(entries: &[ErrorEntry]) -> u64 {
 /// 页内容必然不同；若共用一份缓存，跨引擎的"逐页相同"判断就是拿两套口径比大小。今天只有 XeLaTeX
 /// 产哈希（`Engine::writes_xdv`），但按引擎分文件后，将来给 LuaLaTeX 接**引擎内逐页指纹**
 /// 时两套哈希不会互相污染。
-fn pages_cache_path(tmp_dir: &Path, stem: &str, engine: Engine) -> PathBuf {
-    tmp_dir.join(format!("{stem}.{}.pages", engine.binary_name()))
-}
-
-/// 页哈希缓存的**口径版本**（写进文件首行；读侧不匹配即当"无法判定"）。
+/// 页哈希缓存路径。
 ///
-/// 2026-09 页哈希口径改为 **V1**（`bop` 头去掉 4 B `prev`，见
-/// `docs/research/page-hash-prev-quant.md` 与已知债 #26）：老缓存里存的是 raw 口径哈希，与
-/// 新口径逐页都不相等。这里用**首行标记**把两者一次性区分开——老文件首行是 16 进制哈希，
-/// 读侧取不到 `v1` ⇒ `None` ⇒ 只退化**一轮**（该轮多转换一次 `xdvipdfmx` + 视窗全量重绘，
-/// 随后写回新格式即自愈），**不会**被误判成"逐页相同"。反向（回滚老二进制读新文件）同样
-/// 只退化一轮。标记**只此一处定义**，避免漏写造成"永远首轮"（A 面每轮白跑 0.65–0.94 s）。
-const PAGES_CACHE_VERSION: &str = "v1";
+/// **口径在 core**（[`latteset_core::xdv::pages_cache_path`]）：库形态档的 runner 在
+/// `latteset-tectonic`，按 ADR-0012 **不依赖 infra**，所以"带引擎名 + 首行口径标记"这套约定
+/// 必须有一处共同的定义（2026-09 提到 core）——两处各写一份就会漂移，而漂移的代价是
+/// "永远首轮"（A 面每轮白跑 0.65–0.94 s）。
+fn pages_cache_path(tmp_dir: &Path, stem: &str, engine: Engine) -> PathBuf {
+    latteset_core::xdv::pages_cache_path(tmp_dir, stem, engine)
+}
 
 fn root_stem(root_file: &Path) -> String {
     root_file
@@ -670,42 +666,22 @@ impl LatexmkRunner {
 
     /// 读上一次的页哈希缓存（`tmp/<stem>.<引擎>.pages`）。
     ///
-    /// **首行必须是口径标记**（[`PAGES_CACHE_VERSION`]）；老格式（首行直接是 16 进制哈希）与任何
-    /// 截断/损坏都当 `None` = **无法判定** → 不做任何"跳过"优化（保守，只多转换一轮）。
+    /// 解析口径在 core（[`latteset_core::xdv::parse_pages_cache`]）：**首行必须是口径标记**；
+    /// 老格式（首行直接是 16 进制哈希）与任何截断/损坏都当 `None` = **无法判定** →
+    /// 不做任何"跳过"优化（保守，只多转换一轮）。
     async fn read_pages_cache(&self, path: &Path) -> Option<Vec<u64>> {
         let text = self.fs.read_to_string(path).await.ok()?;
-        let mut lines = text.lines();
-        if lines.next()?.trim() != PAGES_CACHE_VERSION {
-            return None; // 口径不符（含 2026-09 之前的 raw 缓存）
-        }
-        let mut out = Vec::new();
-        for line in lines {
-            let t = line.trim();
-            if t.is_empty() {
-                continue;
-            }
-            out.push(u64::from_str_radix(t, 16).ok()?);
-        }
-        if out.is_empty() {
-            None
-        } else {
-            Some(out)
-        }
+        latteset_core::xdv::parse_pages_cache(&text)
     }
 
     /// 写页哈希缓存（失败只记 debug：它是优化判据，不该让编译失败——最坏结果是下次多转换一次）。
     ///
-    /// 首行写口径标记（`v1`），其后每页一行 `{h:016x}`；读侧见 [`Self::read_pages_cache`]。
+    /// 文本由 core 生成（[`latteset_core::xdv::format_pages_cache`]）：首行口径标记 `v1`，
+    /// 其后每页一行 `{h:016x}`；空表**不写**（免得把"无法判定"当成"零页"带给下一轮）。
     async fn write_pages_cache(&self, path: &Path, hashes: &[u64]) {
-        if hashes.is_empty() {
-            return; // "无法判定"不写缓存，免得把下一次也带偏
-        }
-        let mut body = String::with_capacity(PAGES_CACHE_VERSION.len() + 1 + hashes.len() * 17);
-        body.push_str(PAGES_CACHE_VERSION);
-        body.push('\n');
-        for h in hashes {
-            body.push_str(&format!("{h:016x}\n"));
-        }
+        let Some(body) = latteset_core::xdv::format_pages_cache(hashes) else {
+            return;
+        };
         if let Err(e) = self.fs.write(path, &body).await {
             debug!(path = %path.display(), "写页哈希缓存失败（下次会多转换一次）：{e}");
         }

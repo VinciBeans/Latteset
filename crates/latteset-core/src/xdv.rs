@@ -22,6 +22,9 @@
 
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
+use std::path::{Path, PathBuf};
+
+use crate::types::Engine;
 
 /// XDV 结构标记。
 const BOP: u8 = 139;
@@ -187,8 +190,7 @@ fn hash_page(slice: &[u8]) -> u64 {
 ///
 /// 返回 `Vec::new()` 表示**没有可用的页信息**（文件缺失/不是 XDV/首屏就损坏）——调用方
 /// 必须把这当作"无法判定"（前端保守地全量刷新），而不是"零页"。
-pub fn page_hashes(bytes: &[u8]) -> Vec<u64> {
-    let mut out = Vec::new();
+pub fn page_hashes(bytes: &[u8]) -> Vec<u64> {    let mut out = Vec::new();
     let mut p = 0usize;
     // 1) 前导：pre（可选；容忍缺失，与工具一致）
     if bytes.first() == Some(&247) {
@@ -257,9 +259,106 @@ pub fn changed_pages(prev: Option<&[u64]>, cur: &[u64]) -> Vec<u32> {
     }
 }
 
+/// 页哈希缓存的**口径版本**（写进文件首行；读侧不匹配即当"无法判定"）。
+///
+/// 2026-09 页哈希口径改为 **V1**（`bop` 头去掉 4 B `prev`，见
+/// `docs/research/page-hash-prev-quant.md` 与 `docs/modules.md` 已知债 #26）：老缓存里存的是 raw
+/// 口径哈希，与新口径逐页都不相等。这里用**首行标记**把两者一次性区分开——老文件首行是 16 进制
+/// 哈希，读侧取不到 `v1` ⇒ `None` ⇒ 只退化**一轮**（该轮多转换一次 + 视窗全量重绘，随后写回新格式
+/// 即自愈），**不会**被误判成"逐页相同"。反向（回滚老二进制读新文件）同样只退化一轮。
+///
+/// **口径只此一处定义**（2026-09 从 `latteset-infra` 提到 core）：两个 runner 都要用它 ——
+/// 子进程档在 `latteset-infra`，库形态档在 `latteset-tectonic`（按 ADR-0012 **不依赖 infra**）。
+/// 漏写标记的代价是"永远首轮"，A 面每轮白跑 0.65–0.94 s，所以不允许两处各写一份。
+pub const PAGES_CACHE_VERSION: &str = "v1";
+
+/// 页哈希缓存文件路径：`<tmp>/<stem>.<引擎>.pages`。
+///
+/// 为什么**带引擎名**（2026-09，已知债 #25）：页哈希的口径与引擎绑定。同一个 `main.tex` 换引擎后
+/// 页内容必然不同；若共用一份缓存，跨引擎的"逐页相同"判断就是拿两套口径比大小。今天只有产 XDV 的
+/// 引擎会写它，但按引擎分文件后，将来给别的引擎接**引擎内逐页指纹**时两套哈希不会互相污染。
+pub fn pages_cache_path(tmp_dir: &Path, stem: &str, engine: Engine) -> PathBuf {
+    tmp_dir.join(format!("{stem}.{}.pages", engine.binary_name()))
+}
+
+/// 解析页哈希缓存文本。
+///
+/// **首行必须是** [`PAGES_CACHE_VERSION`]；老格式（首行直接是 16 进制哈希）与任何截断/损坏都当
+/// `None` = **无法判定** → 不做任何"跳过"优化（保守，只多转换一轮）。
+pub fn parse_pages_cache(text: &str) -> Option<Vec<u64>> {
+    let mut lines = text.lines();
+    if lines.next()?.trim() != PAGES_CACHE_VERSION {
+        return None;
+    }
+    let mut out = Vec::new();
+    for line in lines {
+        let t = line.trim();
+        if t.is_empty() {
+            continue;
+        }
+        out.push(u64::from_str_radix(t, 16).ok()?);
+    }
+    (!out.is_empty()).then_some(out)
+}
+
+/// 生成页哈希缓存文本（首行口径标记，其后每页一行 `{h:016x}`）。
+///
+/// 空表 ⇒ `None`：**不写缓存**，免得把"无法判定"当成"零页"带给下一轮。
+pub fn format_pages_cache(hashes: &[u64]) -> Option<String> {
+    if hashes.is_empty() {
+        return None;
+    }
+    let mut body = String::with_capacity(PAGES_CACHE_VERSION.len() + 1 + hashes.len() * 17);
+    body.push_str(PAGES_CACHE_VERSION);
+    body.push('\n');
+    for h in hashes {
+        body.push_str(&format!("{h:016x}\n"));
+    }
+    Some(body)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// 页哈希缓存往返：`format_pages_cache` → `parse_pages_cache` 必须无损。
+    #[test]
+    fn pages_cache_round_trips() {
+        let hashes = vec![0u64, 1, 0xdead_beef, u64::MAX];
+        let text = format_pages_cache(&hashes).expect("非空表要给文本");
+        assert!(text.starts_with(PAGES_CACHE_VERSION), "首行必须是口径标记：{text}");
+        assert_eq!(parse_pages_cache(&text), Some(hashes));
+    }
+
+    /// 空表**不写**缓存：否则下一轮会把"无法判定"当成"零页"。
+    #[test]
+    fn empty_hashes_are_not_cached() {
+        assert_eq!(format_pages_cache(&[]), None);
+    }
+
+    /// 口径不符 / 损坏 / 空 ⇒ `None` = 无法判定（保守：不做任何"跳过"优化）。
+    #[test]
+    fn legacy_or_broken_cache_is_rejected() {
+        // 2026-09 之前的 raw 缓存：首行直接是 16 进制哈希
+        assert_eq!(parse_pages_cache("00000000deadbeef\n"), None);
+        // 标记对但内容空 ⇒ 依然是"无法判定"
+        assert_eq!(parse_pages_cache("v1\n"), None);
+        // 标记对但有一行不是十六进制 ⇒ 整份作废（不猜）
+        assert_eq!(parse_pages_cache("v1\n00ff\nzz\n"), None);
+        // 完全空
+        assert_eq!(parse_pages_cache(""), None);
+    }
+
+    /// 路径**带引擎名**（已知债 #25：页哈希口径与引擎绑定，跨引擎共缓存就是拿两套口径比大小）。
+    #[test]
+    fn pages_cache_path_is_engine_scoped() {
+        let tmp = std::path::Path::new("/tmp/x");
+        let xe = pages_cache_path(tmp, "main", Engine::XeLaTeX);
+        let tec = pages_cache_path(tmp, "main", Engine::Tectonic);
+        assert_eq!(xe.file_name().unwrap().to_string_lossy(), "main.xelatex.pages");
+        assert_eq!(tec.file_name().unwrap().to_string_lossy(), "main.tectonic.pages");
+        assert_ne!(xe, tec);
+    }
 
     /// 最小合法 XDV：pre + n 页（每页 = bop + [body] + eop）+ post。
     fn minimal_xdv(bodies: &[&[u8]]) -> Vec<u8> {
