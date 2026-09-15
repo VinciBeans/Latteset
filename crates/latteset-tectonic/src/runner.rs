@@ -14,9 +14,11 @@
 //!    A/B/C 三个功能点在库形态档同样成立（A 只对 Quick，见 ⑥ 段）。
 //! 3. **`.log` 落盘**：靠本层把输出镜像到 `tmp/`（≡ 子进程档的 `--keep-logs`）。
 //! 4. **超时不重试、失败不回退**（D1/㉕ 同口径）：库形态失败**不**自动切回子进程。
-//! 5. **bib 趟已支持**（2026-09-15 收口 V-03）：`.aux` 出现 `\bibdata` 时跑 `BibtexEngine`
-//!    并**重跑一趟 TeX**（上游 `default_pass` 同序）⇒ `\bibliography{...}` + `.bib` 的文档
-//!    引用会解析成编号、参考文献表会印出来。**biber 仍不支持**（biblatex 要外部 `biber`）：
+//! 5. **bib 趟已支持，且输入未变时跳过**（2026-09-15 收口 V-03）：`.aux` 出现 `\bibdata` 时跑
+//!    `BibtexEngine` 并**重跑一趟 TeX**（上游 `default_pass` 同序）⇒ `\bibliography{...}` + `.bib`
+//!    的文档引用会解析成编号、参考文献表会印出来。**输入没变就跳过**那条路见
+//!    [`bib_signature`]：bibtex 的输出只取决于引用集合与 `.bib` 状态，两者与产出 `.bbl` 那次一致时
+//!    重跑只会得到同一份 `.bbl`，却会连带多跑一趟排版。**biber 仍不支持**（biblatex 要外部 `biber`）：
 //!    检出 `<stem>.run.xml` 时显式 `warn!`，见 [`crate::BIBER_PASS_MISSING_NOTE`]。
 //! 6. **不做收敛判定**（t24 / V-04）：趟数 = 普通文档 1 趟、命中 bib 的 2 趟；但**不检查**
 //!    "是否需要再跑"（上游 `is_rerun_needed`）⇒ `CompileOutcome.kind` 继续报
@@ -161,17 +163,37 @@ fn rerun_snapshot(shared: &SharedCapture) -> std::collections::BTreeMap<String, 
 ///
 /// 与 [`TectonicIo::disk_path`] 的 `tmp/` 兜底是同一件事的两面：那个让引擎读得到，
 /// 这个让重跑判据看得见。两处都用 [`crate::RERUN_EXTENSIONS`]，不会漂移。
+///
+/// **必须递归**：`\include` 分章时子目录里也有要回读的中间产物（`chapters/chNN.aux`），
+/// 只看 `tmp/` 顶层会让它们每趟都算"新出现" ⇒ 多文件档永远收敛不了（实测：28 页 8 章档
+/// 去掉递归后每轮都稳定多跑一趟排版）。键要用引擎的**相对名**（正斜杠），
+/// 否则 `chapters\ch01.aux` 与引擎写的 `chapters/ch01.aux` 对不上、预热等于没做。
 fn seed_previous_intermediates(shared: &SharedCapture, tmp_dir: &Path) {
-    let Ok(entries) = std::fs::read_dir(tmp_dir) else {
-        return; // 首次编译没有 tmp/，正常
-    };
-    let mut c = shared.lock().unwrap_or_else(|e| e.into_inner());
-    for entry in entries.flatten() {
-        let name = entry.file_name().to_string_lossy().into_owned();
-        if !crate::RERUN_EXTENSIONS.iter().any(|ext| name.ends_with(ext)) {
-            continue;
+    let mut found: Vec<(String, PathBuf)> = Vec::new();
+    let mut stack = vec![tmp_dir.to_path_buf()];
+    while let Some(dir) = stack.pop() {
+        let Ok(entries) = std::fs::read_dir(&dir) else {
+            continue; // 首次编译没有 tmp/，正常
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                stack.push(path);
+                continue;
+            }
+            let Ok(rel) = path.strip_prefix(tmp_dir) else {
+                continue;
+            };
+            let name = rel.to_string_lossy().replace('\\', "/");
+            if crate::RERUN_EXTENSIONS.iter().any(|ext| name.ends_with(ext)) {
+                found.push((name, path));
+            }
         }
-        if let Ok(bytes) = std::fs::read(entry.path()) {
+    }
+    // 读盘在锁外做完再入库：捕获表的锁在编译期是热的，不该抱着它做 IO。
+    let mut c = shared.lock().unwrap_or_else(|e| e.into_inner());
+    for (name, path) in found {
+        if let Ok(bytes) = std::fs::read(&path) {
             c.files.insert(name, bytes);
         }
     }
@@ -255,6 +277,154 @@ fn aux_files_requesting_bibtex(shared: &SharedCapture, primary_aux: &str) -> Vec
 fn biber_requested(shared: &SharedCapture, stem: &str) -> bool {
     let name = format!("{stem}.run.xml");
     shared.lock().unwrap_or_else(|e| e.into_inner()).files.contains_key(&name)
+}
+
+// ---------------------------------------------------------------- bib 跳过（方案 §6.4 ④）
+
+/// BibTeX 实际会读的命令。`.aux` 的其余内容（`\@writefile`、`\setcounter`、`\bibcite`…）它一概不看，
+/// 所以签名只覆盖这三条 —— 覆盖多了会把"目录页码变了"误判成"要重跑 bibtex"。
+const BIB_COMMANDS: &[&str] = &["\\citation", "\\bibdata", "\\bibstyle"];
+
+/// bib 趟的**跳过判据**缓存：`tmp/<stem>.bibsig`。
+///
+/// 判据口径对齐 latexmk：`.bbl` 的输入是 ① 各 `.aux` 里的 BibTeX 命令（含 `\@input` 闭包里的
+/// `\citation`）② 每个 `\bibdata` 指向的 `.bib` 的当前状态。两者都与产出 `.bbl` 那次一致 ⇒
+/// 重跑 bibtex 只会得到同一份 `.bbl`，而它还会**强制多跑一趟排版**（上游 `RerunReason::Bibtex`）。
+fn bib_signature_path(tmp_dir: &Path, stem: &str) -> PathBuf {
+    tmp_dir.join(format!("{stem}.bibsig"))
+}
+
+/// 一次 bib 输入的状态。`commands` 覆盖 ①，`databases` 覆盖 ②。
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct BibSignature {
+    /// `\citation` / `\bibdata` / `\bibstyle` 三条命令的顺序化摘要（含 `\@input` 闭包）。
+    commands: u64,
+    /// `(相对路径, mtime_ns, size)`，按路径排序 ⇒ 顺序无关。
+    databases: Vec<(String, u128, u64)>,
+}
+
+impl BibSignature {
+    /// 一行一条，制表符分隔。`.bib` 名取**前 n-2 段**，所以名字里含制表符也不会错位。
+    fn format(&self) -> String {
+        let mut s = format!("v1\ncommands\t{:016x}\n", self.commands);
+        for (path, mtime_ns, size) in &self.databases {
+            s.push_str(&format!("db\t{path}\t{mtime_ns}\t{size}\n"));
+        }
+        s
+    }
+
+    /// 解析失败一律当"没有缓存"（⇒ 照旧跑 bibtex），不静默跳过。
+    fn parse(text: &str) -> Option<Self> {
+        let mut lines = text.lines();
+        if lines.next()? != "v1" {
+            return None;
+        }
+        let mut commands = None;
+        let mut databases = Vec::new();
+        for line in lines {
+            let f: Vec<&str> = line.split('\t').collect();
+            match f.first() {
+                Some(&"commands") if f.len() == 2 => {
+                    commands = u64::from_str_radix(f[1], 16).ok();
+                }
+                Some(&"db") if f.len() >= 4 => {
+                    let n = f.len();
+                    databases.push((
+                        f[1..n - 2].join("\t"),
+                        f[n - 2].parse().ok()?,
+                        f[n - 1].parse().ok()?,
+                    ));
+                }
+                _ => return None,
+            }
+        }
+        Some(Self { commands: commands?, databases })
+    }
+}
+
+/// 收集一个 `.aux` **及其 `\@input` 闭包**里 BibTeX 会读的命令（按 BibTeX 的读取顺序）。
+///
+/// 为什么必须跟闭包：`\bibdata`/`\bibstyle` 在主 aux，而 `\citation` 在**章 aux**（`\include` 分章时
+/// 每条 `\cite` 落在自己那章）。只看主 aux 会漏掉"新增一条引用"这件事 —— 那样 `.bbl` 少一条条目，
+/// 而排版趟不会报错（只报 `Citation undefined` 警告），属于**静默错误输出**。
+fn collect_bib_commands(
+    shared: &SharedCapture,
+    aux: &str,
+    out: &mut Vec<String>,
+    seen: &mut std::collections::BTreeSet<String>,
+) {
+    if !seen.insert(aux.to_owned()) {
+        return; // `\@input` 成环时防死循环
+    }
+    let Some(bytes) = capture_bytes(shared, aux) else {
+        return;
+    };
+    let text = String::from_utf8_lossy(&bytes);
+    for line in text.lines() {
+        let t = line.trim_end();
+        if BIB_COMMANDS.iter().any(|c| t.starts_with(c)) {
+            out.push(t.to_owned());
+        } else if let Some(rest) = t.trim_start().strip_prefix("\\@input{") {
+            if let Some(target) = rest.strip_suffix('}') {
+                collect_bib_commands(shared, target, out, seen);
+            }
+        }
+    }
+}
+
+/// 算出 bib 输入的当前签名；**任何一处判定不出来就返回 `None`**（⇒ 不跳过，宁可多跑一趟）。
+///
+/// 判不出来的情形都归到这里：`.bib` 不在项目磁盘上（由 bundle 提供、或路径带 kpathsea 展开）、
+/// 或者路径指向的是目录。
+fn bib_signature(
+    shared: &SharedCapture,
+    auxes: &[String],
+    project_root: &Path,
+) -> Option<BibSignature> {
+    use std::hash::{Hash, Hasher};
+    let mut commands = Vec::new();
+    let mut seen = std::collections::BTreeSet::new();
+    for aux in auxes {
+        collect_bib_commands(shared, aux, &mut commands, &mut seen);
+    }
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    commands.hash(&mut h);
+
+    // `\bibdata{a,b}` → `a.bib`、`b.bib`，相对项目根解析（BibTeX 也从那里读）。
+    let mut databases = Vec::new();
+    for line in commands.iter().filter(|l| l.starts_with("\\bibdata")) {
+        let braced = line.split_once('{')?.1.strip_suffix('}')?;
+        for name in braced.split(',').map(str::trim).filter(|s| !s.is_empty()) {
+            let rel = if name.to_ascii_lowercase().ends_with(".bib") {
+                name.to_owned()
+            } else {
+                format!("{name}.bib")
+            };
+            let md = std::fs::metadata(project_root.join(&rel)).ok()?;
+            if !md.is_file() {
+                return None;
+            }
+            let mtime_ns = md
+                .modified()
+                .ok()?
+                .duration_since(SystemTime::UNIX_EPOCH)
+                .ok()?
+                .as_nanos();
+            databases.push((rel, mtime_ns, md.len()));
+        }
+    }
+    databases.sort();
+    databases.dedup();
+    Some(BibSignature { commands: h.finish(), databases })
+}
+
+/// 跳过判定（纯函数）：三件事同时成立才跳 —— 缓存存在、签名一致、**每个** aux 的 `.bbl` 都在。
+fn bib_pass_skippable(
+    fresh: Option<&BibSignature>,
+    cached: Option<&BibSignature>,
+    all_bbls_present: bool,
+) -> bool {
+    all_bbls_present && fresh.is_some() && fresh == cached
 }
 
 /// 跑一趟 BibTeX，并把它自己的日志（`.blg`）作为**证据**：硬失败时附上尾部。
@@ -400,6 +570,9 @@ fn run_engines(
     // 页哈希缓存落点（A 的判据）：**必须先算** —— `tmp_dir` 紧接着就被 `TectonicIo` 拿走了。
     // 引擎取 `Tectonic`（缓存文件名带引擎名，已知债 #25）；口径定义在 core，与子进程档共用。
     let pages_cache = latteset_core::xdv::pages_cache_path(&tmp_dir, &stem, Engine::Tectonic);
+    // bib 判据缓存落点与 `.bib` 的解析根（同上：`project_root`/`tmp_dir` 紧接着被 `TectonicIo` 拿走）。
+    let bib_sig = bib_signature_path(&tmp_dir, &stem);
+    let bib_root = project_root.clone();
     let mut io = TectonicIo::new(
         project_root,
         Some(tmp_dir),
@@ -543,19 +716,54 @@ fn run_engines(
                 if wants_full && !bib_done {
                     let aux_needing_bib = aux_files_requesting_bibtex(&shared, &aux_name);
                     if !aux_needing_bib.is_empty() {
-                        for aux in &aux_needing_bib {
-                            run_bibtex_pass(&mut launcher, aux, &stem, &shared)?;
+                        let fresh = bib_signature(&shared, &aux_needing_bib, &bib_root);
+                        let cached = std::fs::read_to_string(&bib_sig)
+                            .ok()
+                            .and_then(|t| BibSignature::parse(&t));
+                        let all_bbls_present = aux_needing_bib.iter().all(|a| {
+                            capture_len(&shared, &a.replace(".aux", ".bbl")) > 0
+                        });
+                        if bib_pass_skippable(fresh.as_ref(), cached.as_ref(), all_bbls_present) {
+                            // 跳过的**不只是** bibtex：上游在 bib 之后无条件重跑一趟排版
+                            // （`RerunReason::Bibtex`），没有新 `.bbl` 要读就不该多跑那一趟。
+                            info!(
+                                aux = ?aux_needing_bib,
+                                "bib 趟跳过：引用集合 / `.bib` 状态与产出 `.bbl` 那次一致"
+                            );
+                            bib_done = true;
+                        } else {
+                            for aux in &aux_needing_bib {
+                                run_bibtex_pass(&mut launcher, aux, &stem, &shared)?;
+                            }
+                            // 签名记的是**产出这份 `.bbl` 的输入**；`.bib` 在编译期间不会变，
+                            // 所以用跑之前算的那份。判不出签名（`None`）时不写 ⇒ 下次照旧重跑。
+                            if let Some(sig) = &fresh {
+                                if let Err(e) = std::fs::write(&bib_sig, sig.format()) {
+                                    debug!(path = %bib_sig.display(), "写 bib 判据缓存失败（下次会多跑一次 bibtex）：{e}");
+                                }
+                            }
+                            debug!(aux = ?aux_needing_bib, passes, "bib 趟已完成");
+                            bib_done = true;
+                            // 上游 `Some(RerunReason::Bibtex)`：bib 之后**无条件**再跑一趟。
+                            force_rerun = true;
                         }
-                        debug!(aux = ?aux_needing_bib, passes, "bib 趟已完成");
-                        bib_done = true;
-                        // 上游 `Some(RerunReason::Bibtex)`：bib 之后**无条件**再跑一趟。
-                        force_rerun = true;
                     }
                 }
 
-                if !force_rerun && rerun_snapshot(&shared) == before {
-                    stable = true;
-                    break;
+                if !force_rerun {
+                    let now = rerun_snapshot(&shared);
+                    if now == before {
+                        stable = true;
+                        break;
+                    }
+                    // 决策日志（roadmap ㉛）：不点名是哪个中间产物在变，"永远 2 趟"就无从查起。
+                    let changed: Vec<&str> = before
+                        .keys()
+                        .chain(now.keys())
+                        .filter(|k| before.get(*k) != now.get(*k))
+                        .map(String::as_str)
+                        .collect();
+                    debug!(passes, changed = ?changed, force = force_rerun, "重跑：中间产物仍在变");
                 }
                 if passes >= MAX_TEX_PASSES {
                     warn!(
@@ -1009,6 +1217,148 @@ mod tests {
             g.files.insert("main.aux".to_owned(), b"\\relax\n\\bibcite{a}{1}\n".to_vec());
         }
         assert_ne!(rerun_snapshot(&c), first, "aux 变了必须判为变化（否则引用永远解析不出来）");
+    }
+
+    // ---- bib 跳过（方案 §6.4 ④）----
+
+    /// **递归预热**：`\include` 分章的子目录中间产物也要进捕获表，且键用正斜杠。
+    ///
+    /// 不递归的后果在 28 页 8 章档上实测是"每轮必多跑一趟排版"：那些 aux 每趟都被判成"新出现"。
+    #[test]
+    fn seeding_is_recursive_and_uses_forward_slash_keys() {
+        let dir = BibTempDir::new("seed");
+        std::fs::create_dir_all(dir.0.join("chapters")).expect("建子目录");
+        std::fs::write(dir.0.join("main.aux"), b"\\bibdata{refs}\n").expect("写夹具");
+        std::fs::write(dir.0.join("chapters/ch01.aux"), b"\\citation{a}\n").expect("写夹具");
+        std::fs::write(dir.0.join("main.pdf"), b"%PDF").expect("写夹具");
+
+        let c = capture_with(&[]);
+        seed_previous_intermediates(&c, &dir.0);
+        let keys: Vec<String> = c.lock().unwrap_or_else(|e| e.into_inner()).files.keys().cloned().collect();
+        assert!(keys.contains(&"main.aux".to_owned()), "{keys:?}");
+        assert!(
+            keys.contains(&"chapters/ch01.aux".to_owned()),
+            "子目录里的中间产物必须预热（键用正斜杠，与引擎写的名字一致）：{keys:?}"
+        );
+        assert!(!keys.iter().any(|k| k.ends_with(".pdf")), "`.pdf` 不该进捕获表：{keys:?}");
+    }
+    /// 临时项目目录（随用随建、Drop 时递归删）。
+    struct BibTempDir(PathBuf);
+
+    impl BibTempDir {
+        fn new(tag: &str) -> Self {
+            let dir = std::env::temp_dir().join(format!("latteset-tectonic-bibsig-{tag}"));
+            let _ = std::fs::remove_dir_all(&dir);
+            std::fs::create_dir_all(&dir).expect("建临时目录");
+            Self(dir)
+        }
+        fn write(&self, rel: &str, body: &str) {
+            std::fs::write(self.0.join(rel), body).expect("写夹具");
+        }
+    }
+
+    impl Drop for BibTempDir {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    /// 主 aux 只有 `\bibdata`/`\bibstyle`，`\citation` 在**章 aux**（`\include` 分章）。
+    fn split_aux_capture() -> SharedCapture {
+        capture_with(&[
+            (
+                "main.aux",
+                "\\relax\n\\@input{chapters/ch01.aux}\n\\bibstyle{plain}\n\\bibdata{refs}\n",
+            ),
+            ("chapters/ch01.aux", "\\relax\n\\citation{ref1}\n\\citation{ref2}\n"),
+        ])
+    }
+
+    /// **引用集合在章 aux 里**：签名必须跟 `\@input` 闭包，否则新增一条 `\cite` 会被判成"没变"，
+    /// `.bbl` 少一条条目而排版趟只报 `Citation undefined` 警告 —— 静默的错误输出。
+    #[test]
+    fn bib_signature_follows_the_input_closure() {
+        let dir = BibTempDir::new("closure");
+        dir.write("refs.bib", "@book{ref1, title={A}}\n");
+        let auxes = vec!["main.aux".to_owned()];
+
+        let before = bib_signature(&split_aux_capture(), &auxes, &dir.0).expect("签名");
+        // 章 aux 里多一条引用 ⇒ 签名必须变
+        let after_capture = split_aux_capture();
+        {
+            let mut g = after_capture.lock().unwrap_or_else(|e| e.into_inner());
+            g.files.insert(
+                "chapters/ch01.aux".to_owned(),
+                b"\\relax\n\\citation{ref1}\n\\citation{ref2}\n\\citation{ref3}\n".to_vec(),
+            );
+        }
+        let after = bib_signature(&after_capture, &auxes, &dir.0).expect("签名");
+        assert_ne!(before.commands, after.commands, "新增 \\cite 必须改变签名");
+
+        // 与 bibtex 无关的 aux 内容变化**不该**改变签名（否则每次改正文都白跑 bibtex）
+        let toc_capture = split_aux_capture();
+        {
+            let mut g = toc_capture.lock().unwrap_or_else(|e| e.into_inner());
+            g.files.insert(
+                "chapters/ch01.aux".to_owned(),
+                b"\\relax\n\\@writefile{toc}{\\contentsline {section}{x}{9}}\n\\citation{ref1}\n\\citation{ref2}\n".to_vec(),
+            );
+        }
+        assert_eq!(
+            before.commands,
+            bib_signature(&toc_capture, &auxes, &dir.0).expect("签名").commands,
+            "目录页码变了不该触发 bibtex（那是排版趟的事）"
+        );
+    }
+
+    /// `.bib` 的状态进了签名：内容变（size 变）⇒ 签名变；`.bib` 不在项目磁盘上 ⇒ **判不出来**。
+    #[test]
+    fn bib_signature_tracks_database_state_and_fails_open() {
+        let dir = BibTempDir::new("dbstate");
+        dir.write("refs.bib", "@book{ref1, title={A}}\n");
+        let c = split_aux_capture();
+        let auxes = vec!["main.aux".to_owned()];
+        let before = bib_signature(&c, &auxes, &dir.0).expect("签名");
+        assert_eq!(before.databases.len(), 1);
+        assert_eq!(before.databases[0].0, "refs.bib");
+
+        dir.write("refs.bib", "@book{ref1, title={A}}\n@book{ref2, title={B}}\n");
+        let after = bib_signature(&c, &auxes, &dir.0).expect("签名");
+        assert_ne!(before.databases, after.databases, "`.bib` 变了必须反映到签名里");
+
+        // 读不到 `.bib`（bundle 提供 / 路径展开）⇒ None ⇒ 调用方不跳过
+        let empty = BibTempDir::new("nodir");
+        assert!(bib_signature(&c, &auxes, &empty.0).is_none(), "判不出来就不能给签名");
+    }
+
+    /// 跳过判定：**三件事同时成立**才跳；`.bbl` 缺失一律不跳（没有产物可复用）。
+    #[test]
+    fn bib_pass_skips_only_on_a_matching_signature_with_bbl_present() {
+        let sig = BibSignature { commands: 7, databases: vec![("refs.bib".into(), 1, 2)] };
+        let other = BibSignature { commands: 8, databases: vec![("refs.bib".into(), 1, 2)] };
+
+        assert!(bib_pass_skippable(Some(&sig), Some(&sig), true));
+        assert!(!bib_pass_skippable(Some(&sig), Some(&other), true), "签名不同必须重跑");
+        assert!(!bib_pass_skippable(Some(&sig), None, true), "没有缓存必须重跑（首编）");
+        assert!(!bib_pass_skippable(Some(&sig), Some(&sig), false), "`.bbl` 不在必须重跑");
+        assert!(!bib_pass_skippable(None, Some(&sig), true), "判不出来必须重跑");
+    }
+
+    /// 缓存文本的往返：格式错一律当"没有缓存"（⇒ 重跑），不静默跳过。
+    #[test]
+    fn bib_signature_text_roundtrip_and_rejects_junk() {
+        let sig = BibSignature {
+            commands: 0xdead_beef,
+            databases: vec![("refs.bib".into(), 1_700_000_000_123_456_789, 2369)],
+        };
+        assert_eq!(BibSignature::parse(&sig.format()).as_ref(), Some(&sig));
+
+        for junk in ["", "v2\n", "v1\ncommands\tzz\n", "v1\ndb\trefs.bib\t1\n", "v1\nwhat\t1\n"] {
+            assert!(BibSignature::parse(junk).is_none(), "{junk:?} 不该被当成有效缓存");
+        }
+        // 名字里带制表符也不会错位（名字取前 n-2 段）
+        let weird = BibSignature { commands: 1, databases: vec![("a\tb.bib".into(), 5, 6)] };
+        assert_eq!(BibSignature::parse(&weird.format()).as_ref(), Some(&weird));
     }
 }
 
