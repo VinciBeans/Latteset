@@ -191,6 +191,8 @@ stderr 体积 = 1,010,462 字节/趟（≈1 MB）
 
 ### 5.1 精确失效：现在两个方向都是错的
 
+> **2026-09-15 更新**：**"该触发不触发"那一半已修**（roadmap **㉜**）—— 触发规则不再看扩展名，改为 `is_compile_trigger`（项目内任何带扩展名的非忽略文件，排除 tmp/、隐藏项与**本次编译自己在项目根的 `<stem>.pdf`**，后者不排除会自激）。真机复验：改 `refs.bib` → 触发编译 → PDF 里参考文献真的更新（bibtex 跑了）。**"不该触发却触发"那一半仍在**（非输入文件如 `notes.md` 会白编译一次），见 roadmap **㉝**（用本节给出的 `.fls`/`.fdb_latexmk` 依赖集合判据）。下文保留的是修复前的现场。
+
 `watch.rs:178` 只看扩展名：`if path.extension() == Some("tex") { 触发编译 }`。真机实测（`_g1-lab/watch-probe`：`main.tex` 引用 `used.tex`，另有 `unused.tex` 与 `refs.bib`）：
 
 | 操作 | 实际结果（tmp 产物 mtime） | 期望 | 判定 |

@@ -10,7 +10,7 @@ use crate::storage::SettingsStorage;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use latteset_core::compose::{compile_request_for_change, ComposeContext};
-use latteset_core::project::{is_ignored, is_tree_excluded, ProjectState};
+use latteset_core::project::{is_tree_excluded, ProjectState};
 use latteset_core::scheduler::SchedulerHandle;
 use latteset_core::settings::Settings;
 use latteset_core::types::FilesChanged;
@@ -166,23 +166,26 @@ fn handle_event(event: &notify::Event, state: Arc<WatchState>, project_root: Opt
             handle_settings_change(&path, state.clone());
             continue;
         }
-        // 2. .tex（排除 tmp/、隐藏项）→ 编译触发 + 广播
+        // 2. 项目内任何**非忽略**路径（tmp/、隐藏项除外）→ 尝试触发编译 + 广播。
+        //
+        // roadmap ㉜：**不再只认 `.tex`** —— `.bib`/图片/`.cls`/`.sty` 都是 latexmk 的输入
+        // （实测：改被 `\bibliography` 引用的 `refs.bib` 时全部 tmp 产物 mtime 纹丝不动 =
+        // 用户"改了没反应"）。"到底算不算输入"的最终判定在 core
+        // （`compose::compile_request_for_change` → `is_compile_trigger`）：那里拿得到根文件名，
+        // 也才排除得了**本次编译自己写在项目根的产物**（根 `<stem>.pdf`，不排除会自激）。
+        // 本层是同步的 notify 回调线程、读不到项目状态，所以只做 tmp/ 与隐藏项这道粗过滤。
         let Some(root) = project_root else {
             debug!("无项目根，跳过: {}", path.display());
             continue;
         };
-        if is_ignored(&path, root) {
+        if is_tree_excluded(&path, root) {
             debug!("忽略路径: {}", path.display());
             continue;
         }
-        if path.extension().and_then(|e| e.to_str()) == Some("tex") {
-            debug!("触发编译: {}", path.display());
-            trigger_compile(&path, state.clone());
-        }
-        // 3. 其余（含非 .tex、目录变化）→ 文件树刷新广播
-        if !is_tree_excluded(&path, root) {
-            broadcast_files_changed(&[path], &state, is_structural_event(event));
-        }
+        debug!("触发编译: {}", path.display());
+        trigger_compile(&path, state.clone());
+        // 3. 文件树刷新广播（内容修改 structural=false ⇒ 不重建树）
+        broadcast_files_changed(&[path], &state, is_structural_event(event));
     }
 }
 
@@ -344,7 +347,9 @@ async fn sync_project_root_file(state: &Arc<WatchState>) {
     }
 }
 
-/// 组合层翻译（D3）：.tex 变化 → CompileRequest → 调度器。
+/// 组合层翻译（D3）：变化路径 → CompileRequest → 调度器。
+///
+/// 路径**不限于 `.tex`**（roadmap ㉜）；是否真的触发由 core 判定，理由见 `handle_event` 第 2 步。
 fn trigger_compile(path: &Path, state: Arc<WatchState>) {
     let path = path.to_path_buf();
     let rt = state.rt.clone();
@@ -361,7 +366,9 @@ fn trigger_compile(path: &Path, state: Arc<WatchState>) {
                 debug!("构造编译请求: root={} engine={:?}", req.root_file.display(), req.engine);
                 state.scheduler.compile(req);
             }
-            None => warn!("变化不触发编译：{}（root_file={:?}）", path.display(), project.root_file),
+            // 不触发是**常态**（本次编译自己的 `<stem>.pdf`、`notes.md` 这类非输入）⇒
+            // 只到 debug；原因由 core 的 `compile_request_for_change` 逐条打出来（㉛）。
+            None => debug!("变化不触发编译：{}（root_file={:?}）", path.display(), project.root_file),
         }
     });
 }

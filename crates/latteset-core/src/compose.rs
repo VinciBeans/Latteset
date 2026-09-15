@@ -4,7 +4,7 @@
 //! 不认识文件/项目/设置。src-tauri 的 watch 调用本函数后把请求发给调度器。
 //! 放在 core 里是为了可测（信息局部性：每次构造都取快照拷贝，不持有引用）。
 
-use crate::project::{is_ignored, ProjectState};
+use crate::project::{is_compile_trigger, ProjectState};
 use crate::settings::Settings;
 use crate::types::{CompileKind, CompileRequest};
 use std::path::Path;
@@ -20,10 +20,11 @@ pub struct ComposeContext<'a> {
 
 /// 文件变化 → 编译请求；不满足触发条件返回 None。
 ///
-/// 触发条件（design.md：任何 .tex 文件变化都触发编译）：
+/// 触发条件：
 /// - 已确定根文件；
 /// - 变化路径在项目根内；
-/// - 未被忽略（排除 tmp/、隐藏项、非 .tex）。
+/// - 是**触发路径**（roadmap ㉜：项目内任何非忽略文件 —— `.bib`/图片/`.cls`/`.sty` 都算输入；
+///   排除 tmp/、隐藏项，以及**本次编译自己写在项目根的产物**，后者不排除会自激）。
 ///
 /// **强度 = Quick**（roadmap ㉘）：编辑期只要快速出图，引用/目录可能落后一趟；
 /// 由「空闲收敛」（前端在停手后调 `compile_request_manual`）与「首编」兜底正确性。
@@ -40,8 +41,11 @@ pub fn compile_request_for_change(ctx: ComposeContext<'_>, changed: &Path) -> Op
         debug!(changed = %changed.display(), "不触发编译：变化路径在项目根之外");
         return None;
     }
-    if is_ignored(changed, &ctx.project.root) {
-        debug!(changed = %changed.display(), "不触发编译：路径被忽略规则排除（tmp/、隐藏项或非 .tex）");
+    if !is_compile_trigger(changed, &ctx.project.root, ctx.project.root_file.as_deref()) {
+        debug!(
+            changed = %changed.display(),
+            "不触发编译：路径被排除（tmp/、隐藏项、无扩展名的目录/文件，或本次编译自己在项目根的产物如 <stem>.pdf）"
+        );
         return None;
     }
     debug!(
@@ -111,16 +115,35 @@ mod tests {
         );
     }
 
+    /// **roadmap ㉜**：非 `.tex` 的输入也要触发（过去只认 `.tex` ⇒ 改 `.bib` 没反应）。
     #[test]
-    fn non_tex_change_returns_none() {
+    fn non_tex_inputs_do_trigger() {
         let project = ProjectState {
             root: PathBuf::from("proj"),
             root_file: Some(PathBuf::from("proj/main.tex")),
         };
-        assert_eq!(
-            compile_request_for_change(ctx(&project, &settings()), Path::new("proj/notes.md")),
-            None
-        );
+        for p in ["proj/refs.bib", "proj/figures/plot.png", "proj/custom.sty"] {
+            assert!(
+                compile_request_for_change(ctx(&project, &settings()), Path::new(p)).is_some(),
+                "{p} 必须触发编译"
+            );
+        }
+    }
+
+    /// **防自激**：本次编译写在项目根的 `<stem>.pdf`（与原子替换的 `.tmp`）不得触发编译。
+    #[test]
+    fn own_root_pdf_does_not_trigger() {
+        let project = ProjectState {
+            root: PathBuf::from("proj"),
+            root_file: Some(PathBuf::from("proj/main.tex")),
+        };
+        for p in ["proj/main.pdf", "proj/main.pdf.tmp"] {
+            assert_eq!(
+                compile_request_for_change(ctx(&project, &settings()), Path::new(p)),
+                None,
+                "{p} 是自己的产物，不能触发（否则 编译→写 PDF→再编译）"
+            );
+        }
     }
 
     #[test]

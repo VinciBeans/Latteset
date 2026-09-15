@@ -2,7 +2,7 @@
 //!
 //! - [`fs`]：`FileSystem` trait——core 唯一的 IO 抽象（设计决策 D4）
 //! - [`model`]：项目状态与探测结果类型
-//! - [`scan`]：.tex 文件收集与忽略规则
+//! - [`scan`]：.tex 文件收集与编译触发/文件树忽略规则
 //! - [`root_detect`]：根文件探测（正则启发式，ADR-0009）+ `detect_root` IO 编排（命令面与 watch 共用）
 //! - [`paths`]：项目内路径解析（D8：canonicalize + 根内校验）
 
@@ -15,5 +15,5 @@ pub mod scan;
 pub use fs::{DirEntry, FileSystem};
 pub use model::{ProjectState, RootCandidate, RootResolution};
 pub use paths::{resolve_creatable_in_project, resolve_in_project, resolve_project_root, PathError};
-pub use scan::{collect_tex_files, is_ignored, is_tex_file, is_tree_excluded};
+pub use scan::{collect_tex_files, is_compile_trigger, is_tex_file, is_tree_excluded};
 pub use root_detect::{detect_root, find_candidates, resolve};

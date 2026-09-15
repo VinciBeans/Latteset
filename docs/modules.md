@@ -363,13 +363,19 @@ core 提供 `resolve_project_root` / `resolve_in_project`（已存在目标）/ 
 ```rust
 /// 递归收集项目内全部 .tex（排除 tmp/ 与隐藏目录），不跟随符号链接（防环）。
 pub async fn collect_tex_files(fs: &dyn FileSystem, root: &Path) -> io::Result<Vec<PathBuf>>;
-/// 忽略规则（与 watch 共用同一函数，单一事实来源）
-pub fn is_ignored(path: &Path, root: &Path) -> bool;   // tmp/ 前缀、.git 等隐藏目录、非 .tex
-/// 文件树忽略规则（只藏 tmp/ 与隐藏项，树展示所有扩展名；与 is_ignored 不同）
+/// **编译触发规则**（单一事实来源：watch 的粗过滤 + compose 的最终判定都用它）
+/// 触发 = 项目内**任何带扩展名**的非忽略文件（roadmap ㉜）；排除 tmp/、隐藏项与自己的产物
+pub fn is_compile_trigger(path: &Path, root: &Path, root_file: Option<&Path>) -> bool;
+/// 文件树忽略规则（只藏 tmp/ 与隐藏项，树展示所有扩展名）
 pub fn is_tree_excluded(path: &Path, root: &Path) -> bool;
 ```
 
-**算法**：DFS 递归；每个目录先 `read_dir`，逐项判定 `is_ignored`，目录递归、.tex 收集。**函数内**持有递归栈与缓冲；**模块内**无缓存（每次调用全量扫描——文件树重建与探测都调它，目录量大时再优化增量）。
+**算法**：DFS 递归；每个目录先 `read_dir`，逐项判定（`is_hidden_or_tmp` 跳过 `tmp/` 与隐藏项），目录递归、`.tex` 收集。**函数内**持有递归栈与缓冲；**模块内**无缓存（每次调用全量扫描——文件树重建与探测都调它，目录量大时再优化增量）。
+
+**触发规则的三条边界**（`is_compile_trigger`，roadmap ㉜）：
+1. **不再按扩展名白名单收窄**（过去只认 `.tex`）：`.bib`/图片/`.cls`/`.sty` 都是 latexmk 的输入。实测（[G1 报告](./research/g1-read-interception-feasibility.md) §5.1）：改被 `\bibliography` 引用的 `refs.bib` 时全部 tmp 产物 mtime 纹丝不动 ⇒ 用户"改了没反应"。
+2. **必须带扩展名**：目录不是输入，而 notify 在 Windows 上把目录增删报成 `Create(Any)/Remove(Any)`（实测：建一个目录走的就是 `Any`）⇒ 靠事件类型认不出，用"带扩展名"兜住（跨平台成立，且不碰文件系统）。代价是非输入文件（`notes.md`）也会触发一次 —— 精确失效是 **㉝**。
+3. **排除自己的产物**：根 `<stem>.pdf`（与原子替换的 `<stem>.pdf.tmp`）由每次编译写在项目根，不排除就会**自激**。只看项目根这一层、大小写不敏感；`figures/plot.pdf` 这类输入不受影响。
 
 ### 3.4 root_detect.rs — 根文件探测
 
@@ -624,10 +630,12 @@ compose.rs        —— 组合层：文件事件 → 编译请求（D3 的关�
 ```
 
 ```rust
-// watch.rs：notify 事件流 → 规范化 → 分类（忽略规则与 project::is_ignored 共用）
-//   .tex（排除 tmp/）        → compose::compile_request_for_change(path) → scheduler
+// watch.rs：notify 事件流 → 规范化 → 分类
+//   任意非忽略路径（tmp/、隐藏项除外）→ compose::compile_request_for_change(path) → scheduler
+//     ↑ roadmap ㉜：**不再只认 `.tex`**（`.bib`/图片/`.cls`/`.sty` 都是输入）；
+//       "算不算输入"的最终判定在 core（`is_compile_trigger`）—— 那里才拿得到根文件名、
+//       也才排除得了本次编译自己的产物（根 `<stem>.pdf`，不排除会自激）。
 //   settings.json（全局/项目）→ 热更新：is_self_write 过滤 → 重载 → 合并项目覆盖 → 广播 settings-changed
-//   其余                      → 丢弃
 // 每个被接受的事件同时旁路广播 files-changed{paths, structural}
 //   structural=true 仅限增/删/重命名（前端据此重建文件树）；内容修改为 false（跳过）
 // 结果经 WatchSink 回调送达 src-tauri，本 crate 不认识 Tauri（ADR-0010）
@@ -636,7 +644,8 @@ compose.rs        —— 组合层：文件事件 → 编译请求（D3 的关�
 pub struct ComposeContext<'a> { pub project: &'a ProjectState, pub settings: &'a Settings }
 
 pub fn compile_request_for_change(ctx: ComposeContext<'_>, changed: &Path) -> Option<CompileRequest>;
-//   触发条件全部收敛在此：已确定根文件 + changed 在项目根内 + 未被 is_ignored 排除；否则 None（不编译）
+//   触发条件全部收敛在此：已确定根文件 + changed 在项目根内 + is_compile_trigger 为真；否则 None（不编译）
+//     —— 不触发的**原因**逐条 debug 打出（㉛）：无根文件 / 项目外 / 被排除（tmp、隐藏项、无扩展名、自己的产物）
 //   强度 = Quick（编辑期快速出图；引用/目录可能落后一趟，由首编与空闲收敛兜底）
 pub fn compile_request_manual(ctx: ComposeContext<'_>) -> Option<CompileRequest>;
 //   手动「编译」与前端空闲收敛共用；强度 = Full（多趟 + bibtex/biber/索引）

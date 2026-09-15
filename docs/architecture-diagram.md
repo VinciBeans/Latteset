@@ -176,7 +176,7 @@ sequenceDiagram
   IPC->>CMD: invoke save_all
   CMD->>FS: 写盘 save_content
   FS-->>W: notify 事件（内容变化）
-  W->>W: 过滤：Access 事件跳过 / 忽略 tmp、隐藏项、非 .tex
+  W->>W: 过滤：Access 事件跳过 / 忽略 tmp、隐藏项、无扩展名；其余（含 .bib/图片）触发编译
   W->>CO: 变化路径 + 项目与设置快照
   CO->>SC: CompileRequest（root_file / engine / timeout）
   SC->>SC: 合并队列：待编译最多 1 条，新请求覆盖旧请求
