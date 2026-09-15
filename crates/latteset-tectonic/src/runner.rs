@@ -674,6 +674,11 @@ fn run_engines(
             );
             // 分阶段耗时（命中缓存时 format_ms = 0）：P2/P4 复核用的一行证据。
             let (n_ram, n_mem, n_disk, n_bundle, n_miss) = request_counts(&requests);
+            // LIB-2 的两段（我们 I/O 层能看到的）：bundle 读 + format 文件读。
+            let (bundle_ns, bundle_n, format_ns) = {
+                let c = shared.lock().unwrap_or_else(|e| e.into_inner());
+                (c.bundle_read_ns, c.bundle_read_n, c.format_read_ns)
+            };
             info!(
                 format_ms = phase_ms.0,
                 typeset_ms = phase_ms.1.saturating_sub(phase_ms.0),
@@ -688,6 +693,9 @@ fn run_engines(
                 req_disk = n_disk,
                 req_bundle = n_bundle,
                 req_miss = n_miss,
+                bundle_read_ms = bundle_ns as f64 / 1e6,
+                bundle_read_n = bundle_n,
+                format_read_ms = format_ns as f64 / 1e6,
                 "库形态分阶段耗时"
             );
             CompileOutcome::Success {

@@ -44,3 +44,8 @@ network-bundle = ["tectonic_bundles/geturl-reqwest"]
 
 [dev-dependencies]
 tokio = { version = "1", features = ["full"] }
+# `examples/bench.rs` 的 JSON 报告（P4 复核入口；只在示例里用，不进产品依赖图）
+serde_json = "1"
+# `examples/bench.rs` 要看到 runner 的 `info!`（尤其每轮的 `passes=` / `converged=`）：
+# 常驻档的退化到底是不是"趟数变多"，必须能从日志里读出来，不能靠猜。
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }

@@ -11,10 +11,16 @@
 //   可选：--json <out.json> 落盘原始样本；--warmup N（默认 1 次不计入）。
 //
 // 口径（必须与方案一起读）：
-// - `--mode fresh`：每次都用干净工作目录（首编）；`--mode resident`：复用同一进程/同一目录（常驻档）。
-//   常驻档的具体载荷由 `--lib` 里给的命令决定（本脚本不猜实现形态）。
+// - `--mode fresh`：每个样本另起一个**干净临时目录**（首编口径）；`--mode resident`：所有样本共用
+//   `--work` 目录。
+// - **本脚本是"每个样本起一个进程"的 harness**：它自己不表达"一个进程连续编译 N 次"。
+//   量**常驻档**（同进程连续编译；方案 §6 P4 / LIB-1）时让模板自带循环：
+//     --lib "<bench.exe> --root {root} --runs 8"   （一个样本 = 一个进程 × 8 次编译）
+//   量**每次起进程**（对照）时用 `--runs N` 且模板里 `--runs 1`。
+//   库形态的 `--example bench`（`crates/latteset-tectonic/examples/bench.rs`）两件事都能做。
+// - `{root}` 替换成的是**目录路径本身**，不是 `--root <dir>` 这个片段 —— 模板要自己写旗标
+//   （例如 `--root {root}`）。缺省时该目录 = `--work`（未给则建临时目录）。
 // - 所有时间都是**墙钟**；样本数、中位、最小/最大都打印出来，避免只报平均数。
-// - 命令模板里的 `{root}` 会被替换成 `--root <dir>`（缺省时用 `--work <dir>` 指定的临时目录）。
 
 import { spawnSync } from "node:child_process";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";

@@ -75,6 +75,13 @@ pub struct IoCapture {
     pub written: HashMap<String, usize>,
     /// 逐块通知（`name`, 累计字节）：P5 的 `XdvParser::parse(chunk)` 消费它。
     pub chunks: Vec<(String, usize)>,
+    /// **bundle 段累计耗时（纳秒）**：LIB-2 要的"bundle 缓存"分段证据。
+    /// 常驻档能不能省掉它，取决于 bundle 是否也常驻 —— 这个数字是那个决定的输入。
+    pub bundle_read_ns: u128,
+    /// bundle 段被读的次数（与 `bundle_read_ns` 一起给"每次多少 ns"）。
+    pub bundle_read_n: u64,
+    /// **format 段累计耗时（纳秒）**：只含我们 I/O 层读 `.fmt` 的部分（引擎解析在 C 侧，量不到）。
+    pub format_read_ns: u128,
 }
 
 impl IoCapture {
@@ -408,17 +415,28 @@ impl IoProvider for TectonicIo {
         }
         // ④ bundle（宏包/字体/cmap）
         match self.bundle.as_mut() {
-            Some(b) => match b.input_open_name(name, status) {
-                OpenResult::Ok(h) => {
-                    self.note(format!("bundle:{name}"));
-                    OpenResult::Ok(h)
+            Some(b) => {
+                // 计时（LIB-2 的 bundle 段）：常驻档能否省掉它，取决于 bundle 是否常驻。
+                let t = std::time::Instant::now();
+                let r = b.input_open_name(name, status);
+                let elapsed = t.elapsed().as_nanos();
+                {
+                    let mut c = self.shared.lock().unwrap_or_else(|e| e.into_inner());
+                    c.bundle_read_ns += elapsed;
+                    c.bundle_read_n += 1;
                 }
-                OpenResult::NotAvailable => {
-                    self.note(format!("missing:{name}"));
-                    OpenResult::NotAvailable
+                match r {
+                    OpenResult::Ok(h) => {
+                        self.note(format!("bundle:{name}"));
+                        OpenResult::Ok(h)
+                    }
+                    OpenResult::NotAvailable => {
+                        self.note(format!("missing:{name}"));
+                        OpenResult::NotAvailable
+                    }
+                    e => e,
                 }
-                e => e,
-            },
+            }
             None => {
                 self.note(format!("nobundle:{name}"));
                 OpenResult::NotAvailable
@@ -490,7 +508,15 @@ impl IoProvider for TectonicIo {
         let Some(path) = self.format_path(name).ok() else {
             return OpenResult::NotAvailable;
         };
-        match std::fs::read(&path) {
+        // 计时（LIB-2 的 format 段里**属于我们 I/O 层**的那部分）：读 `.fmt`（本机 24.45 MB，每趟一次）。
+        // 引擎侧对 dump 的**解析**在 C 里（`tt_engine_xetex_main`），本层量不到 —— 如实只报这一段。
+        let t = std::time::Instant::now();
+        let read = std::fs::read(&path);
+        let elapsed = t.elapsed().as_nanos();
+        if read.is_ok() {
+            self.shared.lock().unwrap_or_else(|e| e.into_inner()).format_read_ns += elapsed;
+        }
+        match read {
             Ok(data) => {
                 self.note(format!("format:{}", path.display()));
                 OpenResult::Ok(InputHandle::new(name, Cursor::new(data), InputOrigin::Other))
