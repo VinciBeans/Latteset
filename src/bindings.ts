@@ -56,8 +56,8 @@ export const commands = {
 	 * 
 	 *  **判定只做一次、就在后端**：这里直接调用 runner 用的那个纯函数
 	 *  （[`latteset_core::settings::TectonicSettings::use_library_form`]），所以状态栏不可能与编译实际
-	 *  行为不一致。前端**不得**自己从 `compile.engine` 猜形态 —— 2026-09-15 真机踩到的
-	 *  "状态栏报 XeLaTeX、实际跑 Tectonic 库形态"正是猜出来的。
+	 *  行为不一致。前端**不得**从 `compile.engine` 自己推形态 —— `LATTESET_TECTONIC_LIB` 能压过设置，
+	 *  只看设置会报出与实际不符的形态。
 	 */
 	engineForm: () => typedError<EngineFormDto, CmdError>(__TAURI_INVOKE("engine_form")),
 };
@@ -446,9 +446,9 @@ export type TectonicSettings = {
 	 *  bundle 来源：`None`/空 = 上游兜底**网络地址**；否则 `file:///…` 或**相对路径**的目录 bundle。
 	 * 
 	 *  ⚠ **存储形态**不能是 `E:\…`：上游 `detect_bundle` 会把它当 URL scheme 解析成 `Ok(None)`
-	 *  （方案 §5.6 **LB-1**）。不过入口是宽容的——`E:\…` / `E:/…` / 带引号的「复制为路径」都会被
+	 *  （方案 §5.6 **LB-1**）。入口是宽容的——`E:\…` / `E:/…` / 带引号的「复制为路径」都会被
 	 *  [`TectonicSettings::normalize_bundle`] 补成 `file:///…`（`apply_patch` 里归一化在前、
-	 *  校验在后），所以 [`super::validate`] 那条现在只兜底绕过 patch 的写入（手改 `settings.json`）。
+	 *  校验在后），所以 [`super::validate`] 那条只兜底绕过 patch 的写入（手改 `settings.json`）。
 	 */
 	bundle: string | null,
 	/**
