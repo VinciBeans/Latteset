@@ -298,7 +298,7 @@ LiveFeedback::feed(text, force_parse)：
 | 为什么独立 | 它的依赖闭包必然拉 C/C++ 链（freetype2/graphite2/harfbuzz/ICU 外部探测，失败即 build script panic）⇒ 放进 `latteset-infra` 会让**整仓默认构建**永远需要 vcpkg。根 `Cargo.toml` 用 `default-members` 把它排除在**不带 `-p`** 的构建之外（`Cargo.toml:3-14`） |
 | 构建前置 | `build.rs` 在 Windows 补发静态 ICU 需要的 MSVC 隐式系统库（`advapi32` 等 8 个）。**不加它 `cargo check` 过、`cargo test`/example 链接必失败**（`icuuc.lib(wintz.ao)` 未解析 `__imp_RegCloseKey`）；出发点是 vcpkg 自己的 `lib/pkgconfig/icu-uc.pc` 的 `baselibs` |
 | 装配 | **两个入口各一处**（GUI 与 headless）：`src-tauri/src/lib.rs` 与 `crates/latteset-server/src/lib.rs` 的 `build_runner()`，口径相同 —— `tectonic-lib` 特性（默认关）+ 运行期 `LATTESET_TECTONIC_LIB=1`（D1：失败不回退）。deps 侧 `src-tauri/Cargo.toml` 与 `crates/latteset-server/Cargo.toml` 都是 optional |
-| 运行期配置（3 个环境变量） | `LATTESET_TECTONIC_LIB`（形态位）、`LATTESET_TECTONIC_BUNDLE`（bundle 源：`file:///…` 或**相对路径**；`none`/`off` = 不要 bundle；未设 = 上游兜底**网络**地址，未开 `network-bundle` 特性时会显式报错并给出用法）、`LATTESET_TECTONIC_CACHE`（产品缓存目录，覆盖宿主默认值）。设置面 UI 属后续收口（方案 §3.5） |
+| 运行期配置（3 个环境变量） | `LATTESET_TECTONIC_LIB`（形态位）、`LATTESET_TECTONIC_BUNDLE`（bundle 源：`file:///…` 或**相对路径**；`none`/`off` = 不要 bundle；未设 = 上游兜底**网络**地址，未开 `network-bundle` 特性时会显式报错并给出用法）、`LATTESET_TECTONIC_CACHE`（产品缓存目录，覆盖宿主默认值）。**优先序：显式设置 > 环境变量 > 宿主默认**。设置面 UI 已收口（§6「Tectonic 形态的设置面」） |
 | 引擎调用 | `TectonicIo`（`IoProvider`）→ `MinimalDriver` → `CoreBridgeLauncher` → `TexEngine`（format 趟 → 排版趟）→ `XdvipdfmxEngine::process`。**没有**"向 `ProcessingSession` 注入 `IoProvider`"这条写法（0.17 没有该入口，方案 §3.4 理由 2） |
 | 输入四层 | 内存直喂（主文件）→ **本次产物层**（`IoCapture`；LaTeX 在 `\end{document}` 用**原语** `\@@input\jobname.aux` 回读刚写的 aux，不过 `\IfFileExists` ⇒ 少这层就 abort `failed to open input file "<stem>.aux"`；上游顺序见 `driver.rs` 的 `bridgestate_ioprovider_cascade`：primary → **mem** → fs → … → bundle）→ 项目磁盘（`\input` 子文件，`input_open_name_with_abspath` 供 SyncTeX 用真实源码路径）→ bundle（宏包/字体/cmap） |
 | 输出 | 全部先落 `IoCapture`（`Arc<Mutex<..>>`，运行中可读，供 P5 探针用），并镜像到 `tmp/`；**format 趟的输出不镜像**（dump 名是占位，上游在 format 趟后清空内存层）；PDF 收尾**原子替换**到项目根（`{stem}.pdf.tmp` → rename，与子进程档同口径） |
@@ -568,14 +568,16 @@ settings（core）              latteset-infra
 // core：纯逻辑
 pub struct Settings {
     pub compile: CompileSettings,
+    pub tectonic: TectonicSettings,   // 全局；见下「Tectonic 形态的设置面」
     pub root_file: Option<PathBuf>,   // 项目级手动覆盖（探测结果的逃生门）
 }
 pub struct CompileSettings { pub mode: CompileMode, pub debounce_ms: u64, pub timeout_secs: u64, pub engine: Engine }
+pub struct TectonicSettings { pub lib_form: bool, pub bundle: Option<String>, pub cache_dir: Option<PathBuf> }
 
 pub fn default_settings() -> Settings;
 /// 项目覆盖全局，逐键合并（项目缺失字段继承全局）
-pub fn merge(global: Settings, project: Settings) -> Settings;
-/// 范围校验：timeout 5..=1800（㉕ 上限由 600 放宽）、debounce 100..=2000、engine ∈ {xelatex,pdflatex,lualatex}
+pub fn merge(global: Settings, project: Settings) -> Merged;
+/// 范围校验：timeout 5..=1800（㉕ 上限由 600 放宽）、debounce 100..=2000、engine ∈ {xelatex,pdflatex,lualatex,tectonic}
 pub fn validate(s: &Settings) -> Result<(), Vec<String>>;
 /// 局部更新：只改 patch 里的键，其余不动
 pub fn apply_patch(base: &mut Settings, patch: SettingsPatch) -> Result<()>;
@@ -588,6 +590,11 @@ pub async fn load_overrides(&self, fs: &dyn FileSystem, project_root: &Path) -> 
 pub async fn save_overrides(&self, project_root: &Path, o: &ProjectOverrides);
 pub fn is_self_write(&self, path: &Path, content: &str) -> bool;  // 自写盘 hash 过滤（D6，消费一次）
 ```
+
+**Tectonic 形态的设置面（⑫ 收口）**：三项都在**全局**设置（`settings.json` 的 `tectonic` 键），改完**下一趟编译即生效**（GUI 的 `SwitchableRunner` 每趟编译读一次全局设置）。两条界面上才成立的契约：
+
+- **bundle 的存储形态 ≠ 展示形态**。上游 `detect_bundle` 先做 `Url::parse`，绝对 Windows 路径会被当成 scheme `e` 吃掉（方案 §5.6 **LB-1**）⇒ **磁盘上必须存** `file:///E:/…` 或相对路径。但用户眼里它就是一条目录路径，所以：**入口宽容**（`TectonicSettings::normalize_bundle` 把 `E:\…` / `E:/…` / 带引号的「复制为路径」统一补成 `file:///…`；`apply_patch` 里归一化在前、校验在后），**出口好看**（`SettingsPanel` 的 `bundleDisplay` 剥掉 `file://` 前缀再显示/回填）。`cache_dir` 不走这套——它是普通路径，没有 URL 形态。
+- **Tectonic 段只在引擎真的选了 Tectonic 时渲染**（`v-if="settings.compile.engine === 'tectonic'"`）。引擎不是它时这几项没有任何作用，摆在面板上只会让人以为"改了没生效"。
 
 **算法（merge）**：字段级 Option 语义——全局 `settings.json` 与项目 `.latteset/settings.json` 同 schema（含 `schema_version`）；项目文件只写它覆盖的键，其余继承。
 

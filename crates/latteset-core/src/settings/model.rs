@@ -26,8 +26,10 @@ pub struct TectonicSettings {
     pub lib_form: bool,
     /// bundle 来源：`None`/空 = 上游兜底**网络地址**；否则 `file:///…` 或**相对路径**的目录 bundle。
     ///
-    /// ⚠ 不能写 `E:\…`：上游 `detect_bundle` 会把它当 URL scheme 解析成 `Ok(None)`（方案 §5.6 LB-4）。
-    /// 设置面**当场拒绝**这种写法（[`super::validate`]）。
+    /// ⚠ **存储形态**不能是 `E:\…`：上游 `detect_bundle` 会把它当 URL scheme 解析成 `Ok(None)`
+    /// （方案 §5.6 **LB-1**）。不过入口是宽容的——`E:\…` / `E:/…` / 带引号的「复制为路径」都会被
+    /// [`TectonicSettings::normalize_bundle`] 补成 `file:///…`（`apply_patch` 里归一化在前、
+    /// 校验在后），所以 [`super::validate`] 那条现在只兜底绕过 patch 的写入（手改 `settings.json`）。
     pub bundle: Option<String>,
     /// 产品缓存目录（`formats/` + `bundles/` 的父目录）：`None`/空 = 宿主的应用缓存目录。
     ///
@@ -42,6 +44,31 @@ impl Default for TectonicSettings {
             lib_form: false,
             bundle: None,
             cache_dir: None,
+        }
+    }
+}
+
+impl TectonicSettings {
+    /// 用户给的 bundle 路径 → **存储形态**（上游 `detect_bundle` 认的 URL 或相对路径）。
+    ///
+    /// 设置面与命令行拿到的是普通 Windows 路径（资源管理器地址栏、`复制为路径` 还带一对引号），
+    /// 而上游先做 `Url::parse`：`E:\…` / `E:/…` 会被当成 scheme `e` 解析成功并返回 `Ok(None)`，
+    /// 最终只报一句 `doesn't specify a valid bundle`（方案 §5.6 **LB-1** 实测）。补齐这一步，
+    /// 用户就不必记得写 `file:///`——**存储形态不变**，只是入口更宽容。
+    ///
+    /// 只改"看着就是绝对 Windows 路径"（`<盘符>:<分隔符>`）的那一类；`file://…`、`https://…`、
+    /// 相对路径一律原样透传（相对路径以上游进程 cwd 为基准，是可行的给法之一）。
+    pub fn normalize_bundle(raw: &str) -> String {
+        let s = raw.trim().trim_matches('"').trim();
+        let b = s.as_bytes();
+        let drive_absolute = b.len() > 2
+            && b[0].is_ascii_alphabetic()
+            && b[1] == b':'
+            && matches!(b[2], b'\\' | b'/');
+        if drive_absolute {
+            format!("file:///{}", s.replace('\\', "/"))
+        } else {
+            s.to_owned()
         }
     }
 }
@@ -207,5 +234,34 @@ mod tests {
         // 显式清空：root_file = null
         let clear: SettingsPatch = serde_json::from_str(r#"{"root_file": null}"#).unwrap();
         assert_eq!(clear.root_file, Some(None));
+    }
+
+    /// 绝对 Windows 路径要补成上游认的 `file:///` URL（LB-1：否则被当成 scheme `e` 吃掉）。
+    #[test]
+    fn normalize_bundle_fixes_absolute_windows_paths() {
+        for (input, want) in [
+            (r"E:\Works\bundle", "file:///E:/Works/bundle"),
+            ("E:/Works/bundle", "file:///E:/Works/bundle"),
+            // 「复制为路径」会给整串包上引号，且可能带首尾空白
+            (r#"  "E:\Works\bundle"  "#, "file:///E:/Works/bundle"),
+        ] {
+            assert_eq!(TectonicSettings::normalize_bundle(input), want, "输入 {input:?}");
+        }
+    }
+
+    /// 已经是可行写法的输入必须**原样透传**（不能把 `file:///…` 变成 `file:///file:///…`）。
+    #[test]
+    fn normalize_bundle_passes_through_viable_forms() {
+        for s in [
+            "file:///E:/Works/bundle",
+            "file:///home/u/bundle",
+            "bundles/local",     // 相对路径：上游认的第二种给法
+            "https://example.com/bundle.zip",
+            "",                  // 空串 = 清除，调用方按空串处理
+        ] {
+            assert_eq!(TectonicSettings::normalize_bundle(s), s, "{s:?} 不该被改写");
+        }
+        // 只有盘符、没有分隔符的（`E:`）不算绝对路径，交给 validate/上游报错，不要猜
+        assert_eq!(TectonicSettings::normalize_bundle("E:"), "E:");
     }
 }

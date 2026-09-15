@@ -1,6 +1,6 @@
 //! 设置合并与局部更新（modules.md §6）。
 
-use super::model::{ProjectOverrides, Settings, SettingsPatch};
+use super::model::{ProjectOverrides, Settings, SettingsPatch, TectonicSettings};
 use std::path::PathBuf;
 
 /// 项目覆盖全局：字段级 Option 语义，缺失继承全局（modules.md §6 merge 算法）。
@@ -53,7 +53,10 @@ pub fn apply_patch(settings: &mut Settings, patch: &SettingsPatch) -> Result<(),
         next.tectonic.lib_form = v;
     }
     if let Some(v) = &patch.bundle {
-        next.tectonic.bundle = Some(v.trim().to_owned()).filter(|s| !s.is_empty());
+        // 归一化在前、校验在后：用户给的 `E:\…` 在这里被补成 `file:///E:/…`，于是 validate 里
+        // "绝对 Windows 路径"那条只剩兜底作用（拦绕过 patch 的写入，如手改 settings.json）。
+        next.tectonic.bundle =
+            Some(TectonicSettings::normalize_bundle(v)).filter(|s| !s.is_empty());
     }
     if let Some(v) = &patch.cache_dir {
         next.tectonic.cache_dir = Some(PathBuf::from(v.trim())).filter(|p| !p.as_os_str().is_empty());
@@ -176,5 +179,31 @@ mod tests {
         };
         assert!(apply_patch(&mut s, &patch).is_err());
         assert_eq!(s.compile.timeout_secs, 120); // 原值未动
+    }
+
+    /// 走 patch 的 bundle 一定是**存储形态**：用户给 `E:\…` 也能存下（设置面不必逼人写 `file:///`）。
+    #[test]
+    fn apply_patch_normalizes_bundle_to_stored_form() {
+        let mut s = global();
+        apply_patch(
+            &mut s,
+            &SettingsPatch {
+                bundle: Some(r"E:\Works\bundle".to_owned()),
+                ..SettingsPatch::default()
+            },
+        )
+        .unwrap();
+        assert_eq!(s.tectonic.bundle.as_deref(), Some("file:///E:/Works/bundle"));
+
+        // 空串仍然 = 清除（归一化不能把"清除"变成"设了一个空值"）
+        apply_patch(
+            &mut s,
+            &SettingsPatch {
+                bundle: Some("  ".to_owned()),
+                ..SettingsPatch::default()
+            },
+        )
+        .unwrap();
+        assert_eq!(s.tectonic.bundle, None);
     }
 }

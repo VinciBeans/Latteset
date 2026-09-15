@@ -132,6 +132,17 @@ async function resetDefaults() {
 
 // ---------------------------------------------------------------- Tectonic 形态（⑫ 里程碑）
 
+/**
+ * 存储形态 → 展示形态。磁盘上 bundle 存的是上游认的 `file:///…`（见 core
+ * `TectonicSettings::normalize_bundle`），但用户眼里它就是一条目录路径 ⇒ 界面上不摆 URL 前缀。
+ */
+function bundleDisplay(stored: string | null | undefined): string {
+  const s = (stored ?? "").trim();
+  if (!s.startsWith("file://")) return s;
+  const rest = s.slice("file://".length); // `/E:/x`（Windows）或 `/home/u`（POSIX）
+  return /^\/[A-Za-z]:/.test(rest) ? rest.slice(1) : rest;
+}
+
 /** 本次构建是否编入库形态：没编进来就禁用该选项（而不是让用户选了到编译时才炸）。 */
 const libAvailable = ref<boolean | null>(null);
 const bundleInput = ref("");
@@ -149,7 +160,7 @@ onMounted(async () => {
   const t = tectonic.value;
   if (t) {
     bundleLocal.value = !!t.bundle;
-    bundleInput.value = t.bundle ?? "";
+    bundleInput.value = bundleDisplay(t.bundle);
     cacheInput.value = t.cache_dir ?? "";
   }
 });
@@ -165,12 +176,19 @@ async function setLibForm(useLib: boolean) {
   }
 }
 
-/** bundle 来源：留空 = 上游兜底（网络）；填了就必须是 `file:///…` 或相对路径。 */
+/**
+ * bundle 来源：留空 = 上游兜底（网络）。
+ *
+ * 这里**不管路径形态**：`E:\…` 与 `file:///E:/…` 都照原样发出去，由 core 统一归一化成存储形态
+ * （`TectonicSettings::normalize_bundle`，LB-1）。应用后回填**展示形态**，保证输入框与磁盘一致
+ * ——否则用户粘一条 `E:\…`，输入框留着反斜杠、磁盘上却是 URL，看起来像"没生效"。
+ */
 async function applyBundle() {
   formError.value = "";
   const raw = bundleInput.value.trim();
   if (!bundleLocal.value || raw === "") {
     // 切回"上游兜底"：空串 = 清除
+    bundleInput.value = "";
     if (tectonic.value.bundle) {
       try {
         await store.update({ bundle: "" });
@@ -180,17 +198,12 @@ async function applyBundle() {
     }
     return;
   }
-  if (/^[A-Za-z]:/.test(raw)) {
-    // 设置面就拦住：上游会把它当 URL scheme 解析成 Ok(None)（方案 §5.6 LB-4）
-    formError.value = `不能写绝对 Windows 路径；请写 file:///${raw.replace(/\\/g, "/")} 或相对路径`;
-    return;
-  }
-  if (raw !== (tectonic.value.bundle ?? "")) {
-    try {
-      await store.update({ bundle: raw });
-    } catch (e) {
-      formError.value = String((e as { message?: string })?.message ?? e);
-    }
+  if (raw === bundleDisplay(tectonic.value.bundle)) return;
+  try {
+    await store.update({ bundle: raw });
+    bundleInput.value = bundleDisplay(tectonic.value.bundle);
+  } catch (e) {
+    formError.value = String((e as { message?: string })?.message ?? e);
   }
 }
 
@@ -305,8 +318,9 @@ async function applyCacheDir() {
           </div>
         </section>
 
-        <!-- Tectonic 形态（⑫ 里程碑的设置面） -->
-        <section class="sec">
+        <!-- Tectonic 形态（⑫ 里程碑的设置面）：只在引擎真的选了 Tectonic 时出现——
+             引擎不是它的时候，这几项对用户没有任何作用，摆在面板上只会让人以为"改了没生效" -->
+        <section class="sec" v-if="settings.compile.engine === 'tectonic'">
           <h3 class="sec-title">Tectonic 引擎形态</h3>
 
           <div class="field">
@@ -359,7 +373,7 @@ async function applyCacheDir() {
                 class="input"
                 type="text"
                 spellcheck="false"
-                placeholder="file:///E:/bundles/tex  或  bundles/tex"
+                placeholder="E:/bundles/tex  或  bundles/tex"
                 v-model="bundleInput"
                 @keydown.enter="applyBundle"
               />
@@ -367,7 +381,7 @@ async function applyCacheDir() {
             </div>
             <p class="field-hint">
               {{ tectonic.bundle
-                ? `当前：${tectonic.bundle}`
+                ? `当前：${bundleDisplay(tectonic.bundle)}`
                 : "当前：上游兜底地址（首次编译需联网下载宏包集）" }}
             </p>
           </div>

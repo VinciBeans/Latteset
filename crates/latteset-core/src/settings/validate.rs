@@ -41,7 +41,9 @@ pub fn validate(s: &Settings) -> Result<(), Vec<String>> {
 ///
 /// 两条都是实测过的坑，在这里拦能给出可执行的文案：
 /// - **bundle 写绝对 Windows 路径**：上游 `detect_bundle` 先 `Url::parse`，`E:\…`/`E:/…` 会被当成
-///   scheme `e` 解析成功 ⇒ 返回 `Ok(None)` ⇒ 报一句"不是有效 bundle"（方案 §5.6 LB-4 实测）。
+///   scheme `e` 解析成功 ⇒ 返回 `Ok(None)` ⇒ 报一句"不是有效 bundle"（方案 §5.6 **LB-1** 实测）。
+///   走 `apply_patch` 的写入会先被 [`super::model::TectonicSettings::normalize_bundle`] 补成
+///   `file:///…`，所以这条现在只兜底绕过 patch 的路径（手改 `settings.json`）。
 /// - **缓存目录写相对路径**：它以进程 cwd 为基准，而 cwd 会随宿主不同（GUI/headless/测试）⇒ 同一份
 ///   设置指向不同目录（format 缓存会"莫名重建"）。要求绝对路径。
 pub fn validate_tectonic(t: &super::model::TectonicSettings) -> Vec<String> {

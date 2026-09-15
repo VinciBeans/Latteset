@@ -60,7 +60,7 @@ fn classify(source: &str) -> Option<String> {
     if is_abs_windows && !source.starts_with("file://") {
         return Some(format!(
             "bundle 源 `{source}` 是绝对 Windows 路径：上游 `detect_bundle` 会把它当 URL scheme 解析、\
-             判为「不是 bundle」⇒ 请写 `file:///{}`（正斜杠）或相对路径（方案 §5.6 LB-4）",
+             判为「不是 bundle」⇒ 请写 `file:///{}`（正斜杠）或相对路径（方案 §5.6 LB-1）",
             source.replace('\\', "/")
         ));
     }
