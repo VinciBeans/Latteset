@@ -192,7 +192,7 @@ node scripts/bench.mjs --with-real         # 追加真实模板档（依赖本�
 - **Tectonic 库形态集成（原「TinyTeX 内嵌兜底」已于 2026-09 改判）**：默认走**子进程形态**（已落地，`Engine::Tectonic`）；**库内嵌**（`IoProvider` 直喂编辑器缓冲 / 常驻 format / `XdvEvents` 页事件与逐字形坐标）列为**独立里程碑 ⑫**，准入判据、代价与实测见 [roadmap §6.5](./research/tex-ide-roadmap-priority.md) 与 [成本实测](./research/realtime-preview-cost.md)。
 - **默认引擎 xelatex**；后续按系统语言自适应（中文 → xelatex，其他 → pdflatex），引擎可配置
 - **Tectonic（2026-09 引入，`xelatex` 之外的第二形态）**：子进程驱动官方 `tectonic.exe`（路线①，D2 裁决）。
-  - 命令：`tectonic [-C] -k --keep-logs --synctex -p -o tmp [-r 0] <root>`（Quick 加 `-r 0` 单趟；Full 用默认收敛）。
+  - 命令：`tectonic [-C] -k --keep-logs --synctex -p -o tmp [-r 1] <root>`（Quick 加 `-r 1` = 两趟；Full 用默认收敛）。⚠ **Quick 不能是单趟**（`-r 0`）：Tectonic 的 `-o tmp` 只作输出目录 ⇒ 它读不回上一趟的 `.toc`/`.aux`，单趟档的产物**整段没有目录**（实测 26 页/12,624 字 vs 两趟 28 页/13,570 字），代价 +400 ms。
   - **`-C`（== `--only-cached`）是条件参数**（2026-09，`docs/tectonic-library-plan.md` §6 P0）：只有**拿到缓存正向证据**才加，冷缓存/首次使用不加，否则它会拒绝联网取 bundle、首编必失败（上游原文 `this bundle isn't cached, and we couldn't get it from the internet`，`crates/bundles/src/cache.rs:181`）。
     - 判定依据（只认正向证据，`crates/latteset-infra/src/tectonic/mod.rs`）：缓存目录 `<bundles>/hashes/` 里存在**默认 bundle 家族**（文件名含 `default_bundle`，非 `.lock`）的哈希标记、内容为 64 位十六进制摘要、`data/<摘要>/` 解包目录非空、且 `<cache>/formats/<摘要>-latex-*.fmt` **已生成过**——四条全中才算"可离线"。缓存目录按上游口径解析：`TECTONIC_CACHE_DIR` 优先，否则 Windows `%LOCALAPPDATA%\TectonicProject\Tectonic\cache\bundles`（macOS `~/Library/Caches/Tectonic/bundles`，Linux `$XDG_CACHE_HOME/Tectonic/bundles`）。
       - 为什么要最后一条（实测，2026-09-15）：只看前三条的会把**半途中断过的缓存**（首编联网取 bundle 到一半被超时杀掉：9.9 MB / 74 个文件、无 `.fmt`）判成就绪，随后 `-C` 编译死在 `error: failed to open input file "loadhyph-be.tex"`（连 `.log` 都没有）；要求 `.fmt` 存在则退回联网档，那次编译能继续补齐缓存——而缺 `.fmt` 本身可以离线现场生成（格式输入文件就在解包目录里）。
