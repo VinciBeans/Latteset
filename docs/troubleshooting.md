@@ -1,5 +1,48 @@
 # Troubleshooting
 
+## `npm run tauri dev` 前端全白：Vite dev server 被 15.8 万个被监视文件拖死（2026-09 已修）
+
+**现象**：`npm run tauri dev` 起来后窗口是**彻底空白**（不是首帧竞态——右键 Reload 也白）。日志看起来一切正常：
+
+```
+VITE v6.4.3  ready in 258 ms
+  ➜  Local:   http://localhost:1420/
+     Running DevCommand (`cargo run …`)
+```
+
+**根因（实测定位）**：vite 的 chokidar 把**整个工作区**递归纳入监视，而 `test_file/` 下有 **158,541 个文件**（vcpkg 检出、`vendor/` 824 MB、tectonic 上游源码、各类夹具与编译产物）。这种体量下 dev server **端口在监听、TCP 连接能被接受，但请求路径永远不出响应**：
+
+| 探针 | 结果 |
+|---|---|
+| `netstat -ano \| Select-String ":1420"` | `[::1]:1420 LISTENING`（正常） |
+| `fetch("http://[::1]:1420/")` | 连接被接受 → 无响应 → 客户端超时；服务端侧留 `CLOSE_WAIT` |
+| `npx vite optimize --debug` | **正常**（`Dependencies bundled in 386.12ms`） |
+| `npx vite build` | **正常** |
+| `127.0.0.1:1420` | `ECONNREFUSED`（vite 只绑 `[::1]`，属正常形态，不是根因） |
+
+即 **`vite build` / `optimize` 全好、只有 dev server 的请求路径卡住** ⇒ 排除 esbuild、排除业务代码、排除端口冲突，指向 watcher。
+
+**修复**（`vite.config.ts` → `server.watch.ignored`）：把不参与前端的巨型目录排除掉——
+
+```ts
+ignored: [
+  "**/src-tauri/**",   // 原有
+  "**/test_file/**",   // 新增：本地素材区（vcpkg / vendor / 上游源码 / 夹具）
+  "**/dist/**",        // 新增：构建产物（tauri build 与 dev 并存时会自我触发）
+  /\.tmpdir[\\/]/,     // 原有：被锁定的临时目录（chokidar 未处理 error 会拖垮 vite）
+]
+```
+
+**修复后实测**：`/` → 200 / 434 B / **57 ms**；`/src/main.ts` → 200 / 8549 B / **81 ms**；`localhost:1420/src/main.ts` → 200 / **157 ms**。
+
+**真机复验（`npm run tauri dev`，2026-09）**：窗口渲染出完整三栏布局（工具条 / 资源管理器 / 编辑器 / PDF 预览 / 状态栏「就绪 · XeLaTeX」），dev stdout 出现 3 条 `Server handshake done.`；再经 IPC 走完整链路——`open_project`（`中文测试工程`）→ `compile_now` → `编译成功（无等待请求） draft=false` + `PDF 就绪：… pages=3 changed=3`，预览渲染出 3 页中文 PDF（40,519 B）。
+
+**判据速查**：dev server "起得来但不响应"时，先量被监视的文件数，别急着怀疑 esbuild/端口/业务代码——
+
+```powershell
+(Get-ChildItem <repo> -Recurse -File -Force -ErrorAction SilentlyContinue).Count
+```
+
 ## 白屏：无 GPU 虚拟机环境的首帧呈现竞态
 
 **现象**：`npm run tauri dev` 启动应用进程时，窗口偶发白屏（webview 页面已加载、JS 正常、devtools Console 无报错，但首帧未呈现）。**右键 → Reload 后立即正常**。
@@ -527,4 +570,12 @@ Select-String -Path kpse.err -Pattern 'searching for|returning from generic sear
 1. **探针脚本不能以 `//` 注释开头**：应用的执行器把脚本**包进括号**求值，行注释开头会让整段解析失败——而且失败是**静默**的：返回 `null` 而不是 error（脚本里的 `console.log` 也看不到）。**让第一行就是 `(async () => {`**；`Session.eval` 已对 `//`/`/*` 开头的脚本补前导换行兜底。
 2. **别用 mtime 判"某条命令有没有跑"**：验证"跳过 `xdvipdfmx`"时用 `tmp/<stem>.pdf` 的 mtime 当判据，结果被**空闲收敛**（㉘）干扰——Quick 成功后 2s 的收敛 Full 走 latexmk，它自己会重写该文件，看起来像"Quick 没跳过"。**改用日志行判定**（`跳过 xdvipdfmx 转换与 PDF 拷贝`）才看清真相。
 
-顺带一条：探针涉及的 dev 实例只允许一个——端口 1420/9223 被占时新实例会**静默连到旧实例**（日志里看到的项目可能不是你以为的那个）。起实例前先 `Test-NetConnection 127.0.0.1 -Port 1420`。
+顺带一条：探针涉及的 dev 实例只允许一个——端口 1420/9223 被占时新实例会**静默连到旧实例**（日志里看到的项目可能不是你以为的那个）。起实例前先确认端口空闲。
+
+**⚠️ 别用 `Test-NetConnection 127.0.0.1 -Port 1420` 判**：vite **只绑 IPv6 回环**（`[::1]:1420`），IPv4 回环上是 `ECONNREFUSED`——而 `Test-NetConnection` 走的是 IPv4，于是在 dev server **完全健康**时也一律报失败。用 `netstat` 看监听：
+
+```powershell
+netstat -ano | Select-String ":1420"     # 期望一行 [::1]:1420 LISTENING；无 LISTENING 才是真没起
+```
+
+`Get-NetTCPConnection` 同样不可靠（会给出假阴性）。`[::1]:1420` 的 `TIME_WAIT` 行是正常的客户端残留，不代表有人在监听。
