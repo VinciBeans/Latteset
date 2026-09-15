@@ -241,9 +241,11 @@
   4. 三个 pass（`TexEngine` / `BibtexEngine` / `XdvipdfmxEngine`）可**自己编排**；产物（XDV/`.synctex.gz`）全程在内存；
   5. **结构化状态与错误**（`StatusBackend` / `Result`），不再解析 `.log`（G6 那类"引擎自述≠事实"的坑在库内基本消失）。
 
+- **形态 A 已落地（2026-09，提交 `f69bad2`）**：`crates/latteset-tectonic/`（路径 B：自持 `IoProvider` + 自建 format 趟）已能**真编出中文 PDF**（1 页 / 7590 B，文本层可抽回），**release 实测与子进程同速**：冷缓存 1943 ms（format 1495 + 排版 335 + 转换 114）、热缓存 372–642 ms，对照 `tectonic.exe -r 0` 1857 / 395–458 ms；缓存隔离成立（format 落产品缓存目录、项目目录无 `.fmt`）。默认关闭（`tectonic-lib` 特性 + `LATTESET_TECTONIC_LIB=1`），**失败不回退**。方案与已落地状态见 [tectonic-library-plan.md](../../tectonic-library-plan.md) §6.1，决策记录 [ADR-0012](../../adr/0012-tectonic-library-form-engine.md)。**仍未做**：bib 趟 / 页哈希 / 多趟收敛 / 常驻复用（P4）。
+
 **代价（先算清再动手）**：拖进 **C 依赖**（harfbuzz 需子模块源码；Windows 官方路线是 vcpkg + 他们的 `cargo-vcpkg` 分支）⇒ CI 明显变重；要重划 **ADR-0010** 的边界（C 链接进哪一层）；引擎与宿主**同进程** ⇒ 崩溃/取消语义要重设计（隔离从"杀子进程"变成"自己不能崩"）。官方 MSVC 二进制**只能**当子进程用。
 
-**准入判据（不满足就不开工）**：① 实测"format/进程常驻后每次击键的 pass 成本"确实显著低于子进程形态；② 引擎是否**按页 flush** 到我们拿得到的 XDV 句柄（决定页事件是"真实时"还是"收尾一次性"——与 U-8/E5.5 同源，至今 `[推断]`）；③ 内存里的 XDV 前缀能否直接喂 `XdvipdfmxEngine::process`（阶段 2 在外部 `xdvipdfmx` 上已验证"前缀 + 合成 postamble"可行）。②③ 任一为否，库形态的实时价值就要打折——但**只取第 1 条（缓冲直喂）也仍然值钱**。
+**准入判据（已全部实测判决，2026-09）**：① **常驻收益仍无法判定** —— t7 实测库形态对击键路径**无可证实改善**（PDF 后端腿 CLI 279 ms vs 库内 307 ms），唯一实测收益是常驻复用 **−19%~−26%**（折算单次暖编 6–9%），故 P4（常驻）闸门保持关闭；② **"官方按页 flush"不成立，但"页事件"成立** —— C 侧 16 KB `dvi_swap`、9 处 flush 全是 `rust_stdout`，driver 先跑完 TeX 再转换 ⇒ 逐页 flush 记为**交上游的需求项**；改用**自持输出层 + `XdvParser::parse(chunk)`** 后 16 KB 即已完成 4 页、243 KB 26 页（滞后 <8 KiB）；③ **"内存 XDV 前缀"不成立、"整份"成立** —— 整份 XDV 同进程 → PDF 与 CLI **四维等价**（243,012 B → 74,389 B / 26 页），但截断前缀一律 `Something is wrong. Are you sure this is a DVI file?`（XDV 必须有 postamble）。⇒ 实时路径的形状 = **自持输出层 + 增量解析**，不是"喂前缀"。
 
 **与"实时预览"的关系**：200 ms 交互**已由前端草案层独立解决**（提交 `564f39d`，实测改动→草案可见 31–34 ms），**不依赖本里程碑**；库形态买到的是"草案层更准（真字形坐标，而不是从 PDF 文本层反推）+ 纠偏更快（去 I/O、去进程启动）"。
 

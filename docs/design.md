@@ -204,7 +204,7 @@ node scripts/bench.mjs --with-real         # 追加真实模板档（依赖本�
     - **默认构建不拖 C 链**：新 crate 是独立 workspace 成员，由根 `Cargo.toml` 的 `default-members` 排除——不带 `-p` 的 `cargo build` 不构建它（否则整仓默认构建永远需要 vcpkg）。
     - **bundle 与缓存由运行期变量给**（设置面 UI 属后续收口）：`LATTESET_TECTONIC_BUNDLE`（本地**目录 bundle** 写 `file:///E:/...` 或相对路径；**绝对 Windows 路径 `E:\...` 会被上游当 URL scheme 吃掉**，见方案 §5.6 LB-4）与 `LATTESET_TECTONIC_CACHE`（`<cache>/formats` 存 format、`<cache>/bundles` 存 bundle）。缓存必须显式注入——上游 format 默认落**项目目录**（24 MB 的 `.fmt` 会扔进用户项目）。
     - **已能真编出 PDF（2026-09-15 实测）**：中文夹具 1 页 / 7590 B，文本层可抽回「你好，世界」（`node scripts/validate-pdf.mjs`）。release 实测冷缓存 **1943 ms**（format 生成 1495 + 排版 335 + 转换 114）、热缓存 **372–642 ms**，与子进程 `tectonic.exe -r 0` 同速（1857 / 395–458 ms）。⚠ **比性能必须 `--release`**：`dev` profile 下 C 引擎是 `-O0`，同夹具数字会大 6–8×。
-  - **代价（必须知道）**：它自带 bundle、**不读用户 TeX Live** ⇒ ㉒`.fls` 触发面 / ㉖模板 `.cls` 探测 / ㉗源码版模板提示在该模式下不适用；**页级复用 A/B/C 不可用**（PDF 档永不落 `.xdv` ⇒ 无页哈希，前端按"无法判定"全量刷新）；SyncTeX 正反向仍依赖本机 TL 的 `synctex.exe`。
+  - **代价（必须知道）**：它自带 bundle、**不读用户 TeX Live** ⇒ **㉝/G1 的 `.fls`/`.fdb_latexmk` 依赖记录不适用**（那是 latexmk 的产物，Tectonic 两形态都不经 latexmk）、**㉖模板 `.cls` 探测**与**㉗源码版模板提示**在该模式下不适用。⚠ **㉒（生成产物永不当作源码打开）仍适用**——SyncTeX 仍走本机 CLI，正反向定位照旧。**页级复用 A/B/C 不可用**（PDF 档永不落 `.xdv` ⇒ 无页哈希，前端按"无法判定"全量刷新）；SyncTeX 正反向仍依赖本机 TL 的 `synctex.exe`。
   - **`SOURCE_DATE_EPOCH` 按引擎分档**（D4 裁决）：Tectonic **不设**该变量（它把变量当引擎时间源，设 0 会让正文 `\today` 印成 1970-01-01；XeTeX 只动 PDF `/ID`）；其余引擎仍固定 0（㉚ 可复现前提）。
   - **输出目录必须由产品自建**：Tectonic 不会创建 `-o` 指定的目录（实测 `error: output directory "tmp" does not exist`，且连 `.log` 都不落盘 ⇒ 报错无信息量）。runner 在编译前统一 `create_dir_all(tmp)`。
   - 收益（同批实测，见 [research/realtime-preview-cost.md](./research/realtime-preview-cost.md)）：28 页中文夹具**单趟出 PDF 0.88–1.07 s**（现状 xelatex 两段 ≈1.96 s）；XDV 档 0.60 s。
