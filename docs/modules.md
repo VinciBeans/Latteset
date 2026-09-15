@@ -609,7 +609,7 @@ pub fn is_self_write(&self, path: &Path, content: &str) -> bool;  // 自写盘 h
 
 **热更新（设计决策 D6）**：watch 识别 `.latteset/settings.json` 变化 → 重载 → 广播 `settings-changed`。**自写盘过滤**：`update_settings` 写盘时记录 `(path, content_hash)`；watch 事件到达时比对 hash，相同则跳过（防"自己写 → 自己重载 → 重复广播"）。hash 存在 `storage.last_write` 内，不跨模块。
 
-**源文件没有对应的自写盘过滤，由前端兜**（`editor.ts` 的 `onFilesChanged`）：Windows notify 对**同一次**写盘会投递**多条**事件（实测：一次编辑 → 2 条 `files-changed`、**同一毫秒**、都早于 `saveAll` 的 promise 续体）。因此脏分支的时间窗口判据**不能"消费一次"**——一消费，第二条就撞上"仍脏"并误报 `外部修改`，而该提示的动作是 `acceptExternal`（**放弃本地**）⇒ 误报 + 一点击 = 丢输入。现行规则：窗口内（<2s）忽略；窗口外**再比一次磁盘内容**，与缓冲一致就不算冲突，不一致才报。
+**源文件没有对应的自写盘过滤，由前端兜**（`editor.ts` 的 `onFilesChanged`）：Windows notify 对**同一次**写盘会投递**多条**事件（实测：一次编辑 → 2 条 `files-changed`、**同一毫秒**、都早于 `saveAll` 的 promise 续体）。因此脏分支的时间窗口判据**不能"消费一次"**——一消费，第二条就撞上"仍脏"并误报 `外部修改`，而该提示的动作是 `acceptExternal`（**放弃本地**）⇒ 误报 + 一点击 = 丢输入。现行规则：窗口内（<2s）忽略；窗口外**再比一次磁盘内容**，与缓冲一致就不算冲突，不一致才报。**干净分支读盘后的复检同样只看内容**：那次 await 期间 buffer 可能已被上一条事件的重载写好（`EditorPane` 的 `setValue` 会把它标脏），磁盘与缓冲一致 ⇒ 没有可丢的输入。重载侧则在 `setValue` 的调用栈内用开关屏蔽内容变更事件（`EditorPane.vue` 的 `applyingReload`），否则重载被当成用户编辑：tab 变脏、自动保存回写、第二条事件误报冲突（真机实测 2/2，见 [troubleshooting.md](./troubleshooting.md)）。
 
 **覆盖清洗（`sanitize_overrides`，core `settings/validate.rs`）**：读回项目覆盖时**逐字段**校验——越界/非法的 `root_file` 置 `None`（回退全局探测），合法的 compile 覆盖保留。整包丢弃会连带丢掉同一文件里合法的 compile 覆盖，不可取。
 
@@ -744,12 +744,12 @@ useAutoSave 依赖 editorStore.dirty + settingsStore（读）
 | previewStore | pdfPath、reloadKey、highlight、syncNote、changedPages、pagesTotal、skippedReloads | onPdfUpdated（**页哈希全同则不递增 reloadKey**）、setHighlight、setSyncNote |
 | settingsStore | settings | setSettings、updateSettings |
 
-**前端自保存过滤算法（editorStore.onFilesChanged）**：入参 paths 中，`lastSaved` 里存在且时间近（< 2s）的路径判定为"自己刚保存"→ 忽略；其余 → 已打开且不脏 → 重载内容；已打开且脏 → 保留 + 状态栏提示；未打开 → 忽略（文件树自会刷新）。`lastSaved` 是 editorStore 模块内状态，不进任何函数参数。
+**前端自保存过滤算法（editorStore.onFilesChanged）**：入参 paths 中，`lastSaved` 里存在且时间近（< 2s）的路径判定为"自己刚保存"→ 忽略；其余 → 已打开且不脏 → 重载内容；已打开且脏 → **磁盘与缓冲一致则什么都不做，不一致才**保留 + 状态栏提示；未打开 → 忽略（文件树自会刷新）。`lastSaved` 是 editorStore 模块内状态，不进任何函数参数。
 
 **并发与生命周期不变量**（异步读盘/渲染下的守卫，去掉即复发）：
 
 - `editorStore.openFile`：去重判断放在 `await readFile` **之后复检**——并发的树节点双击不会开出两个标签；
-- `editorStore.onFilesChanged`：读盘后**复检 `dirty`**，脏则保留本地内容 + 冲突标记，不覆盖用户最新输入；
+- `editorStore.onFilesChanged`：读盘后**复检 `dirty`**，但结论只由**内容**给——磁盘与缓冲一致（含"上一条事件的重载刚写好 buffer"这种情况）就不算冲突；不一致才保留本地内容 + 冲突标记，不覆盖用户最新输入；
 - `compileStore.setStatus("success")` 清空 `errors`/`hasError`——无 `running` 前置时旧错误不残留；
 - **中间态只在运行中采纳**：`setProgress` / `setLiveErrors` 都以 `phase === "running"` 为前置（前者只增不减，后者不碰 `hasError`）——收尾期补发的中间态可能**晚于终态**抵达，缺了守卫就会顶掉权威列表（真机实测：超时诊断 1 条被 30 条中间态覆盖）；
 - `EditorPane` 的 Monaco 事件订阅逐个收集并随卸载 dispose；`PreviewPane` 带 `unmounted` 守卫（在途 load 不回写插桩与标题、catch 不误报）、卸载时 `cancelAllRenders()`、`onCanvasClick` 包 try/catch（卸载期间点击不产生未处理 rejection）。

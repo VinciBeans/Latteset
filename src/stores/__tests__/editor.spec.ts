@@ -152,4 +152,35 @@ describe("editorStore", () => {
     expect(editor.externalConflict.has(MAIN)).toBe(true);
     expect(editor.buffers.get(MAIN)).toBe("我的未保存输入"); // 本地不丢
   });
+
+  // ---- 回归：外部重载不是用户编辑（真机实测 2/2，见 troubleshooting.md）----
+  // 干净分支读盘期间，前一条事件的重载会经 EditorPane 的 `setValue` 把 tab 标脏；
+  // 若复检只看脏标记，第二条事件就误报「外部修改」——而磁盘与缓冲其实完全一致。
+
+  it("onFilesChanged：读盘期间被重载标脏，但磁盘==缓冲 → 不得误报冲突", async () => {
+    const editor = useEditorStore();
+    await editor.openFile(MAIN);
+    const reloaded = `content-of:${MAIN}`;
+    let release!: (v: string) => void;
+    vi.mocked(ipc.readFile).mockImplementationOnce(() => new Promise<string>((r) => { release = r; }));
+    const pending = editor.onFilesChanged([MAIN]); // 干净分支：await 读盘挂起
+    editor.markDirty(MAIN, reloaded);              // 重载的 setValue 把它标脏（内容 = 磁盘）
+    release(reloaded);
+    await pending;
+    expect(editor.externalConflict.has(MAIN)).toBe(false);
+    expect(editor.buffers.get(MAIN)).toBe(reloaded);
+  });
+
+  it("onFilesChanged：读盘期间用户输入了别的内容 → 仍然报冲突，本地不丢", async () => {
+    const editor = useEditorStore();
+    await editor.openFile(MAIN);
+    let release!: (v: string) => void;
+    vi.mocked(ipc.readFile).mockImplementationOnce(() => new Promise<string>((r) => { release = r; }));
+    const pending = editor.onFilesChanged([MAIN]);
+    editor.markDirty(MAIN, "读盘期间敲的字");
+    release("外部工具写的内容");
+    await pending;
+    expect(editor.externalConflict.has(MAIN)).toBe(true);
+    expect(editor.buffers.get(MAIN)).toBe("读盘期间敲的字");
+  });
 });

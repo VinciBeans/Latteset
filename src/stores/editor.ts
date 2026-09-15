@@ -16,7 +16,7 @@ export const useEditorStore = defineStore("editor", () => {
   const dirty = ref<Set<string>>(new Set());
   /** 最新内容（EditorPane 变更时写入；自动保存时读出）。 */
   const buffers = ref<Map<string, string>>(new Map());
-  /** 自保存过滤（modules.md §5.5）：保存时刻记录，files-changed 里近期的路径视为自己写的。 */
+  /** 自保存过滤（modules.md §9.2）：保存时刻记录，files-changed 里近期的路径视为自己写的。 */
   const lastSaved = ref<Map<string, number>>(new Map());
   /** 外部修改冲突提示（打开且脏 → 保留本地）。 */
   const externalConflict = ref<Set<string>>(new Set());
@@ -107,7 +107,7 @@ export const useEditorStore = defineStore("editor", () => {
     }
   }
 
-  /** files-changed 处理（modules.md §5.5 算法）：
+  /** files-changed 处理（modules.md §9.2 算法）：
    * 1. 自己刚保存的（<2s）→ 忽略；
    * 2. 打开且不脏 → 静默重载；
    * 3. 打开且脏 → 保留本地 + 冲突标记；
@@ -116,7 +116,8 @@ export const useEditorStore = defineStore("editor", () => {
    * ⚠ **脏分支的自保存窗口判据不能"消费一次"**：Windows notify 对**同一次**写盘会投递**多条**事件
    * （实测 2 条、同一毫秒），而它们都早于 `saveAll` 的 promise 续体（`markSaved`）——消费一次会让
    * 第二条撞上"仍脏"并误报「外部修改」，而该提示的动作是 `acceptExternal`（**放弃本地**），
-   * 误报后一点击就丢输入。脏分支因此：窗口内忽略，窗口外**再比一次磁盘内容**。 */
+   * 误报后一点击就丢输入。脏分支因此：窗口内忽略，窗口外**再比一次磁盘内容**。
+   * 干净分支读盘后的复检同样只看内容：磁盘与缓冲一致 ⇒ 没有可丢的输入，不算冲突。 */
   async function onFilesChanged(paths: string[]) {
     const now = Date.now();
     for (const raw of paths) {
@@ -139,11 +140,12 @@ export const useEditorStore = defineStore("editor", () => {
       }
       try {
         const content = await ipc.readFile(path);
-        // 复检：await 期间用户可能已输入（markDirty 重写 buffer + dirty），此时磁盘快照会覆盖最新输入。
-        // 脏则保留本地缓冲并发冲突标记。
+        // 复检：await 期间可能已经变脏——用户输入（markDirty 重写 buffer），**或**本条事件前面的
+        // 一条刚把重载内容写进 buffer（EditorPane 的 setValue 同样会标脏）。
+        // 后一种情况磁盘与缓冲一致，没有可丢的输入 ⇒ 只在不一致时才报冲突。
         if (!dirty.value.has(path)) {
           buffers.value.set(path, content);
-        } else {
+        } else if (buffers.value.get(path) !== content) {
           externalConflict.value.add(path);
         }
       } catch {

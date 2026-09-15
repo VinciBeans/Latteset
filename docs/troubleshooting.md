@@ -68,6 +68,18 @@ ignored: [
 
 > **量这个的坑**：`scripts/validate-pdf.mjs` 本身是确定性的（同一文件连跑 5 次同值），但**别在 `tectonic` 刚退出时立刻量**——会读到明显偏小的文本层计数。只采用**可复算**的那一组。
 
+## 外部改文件后「既重载成功、又报外部修改」：重载被当成了用户编辑（2026-09-15 已修）
+
+**症状**（真机 2/2 复现）：文件在编辑器里开着、人没碰键盘，用外部工具写它 → 编辑器**静默重载成功**（新内容进缓冲区），状态栏却同时挂出「外部修改」。该提示的动作是 `acceptExternal`（**放弃本地**）⇒ 误报后一点击就是丢输入。
+
+**定位**：外部重载走 `EditorPane.vue` 的 `model.setValue()`，而 Monaco 的 `setValue` **同步**触发 `onDidChangeModelContent`，应用据此 `markDirty` + `emit("change")`——重载被当成了用户编辑。于是 `editor.ts` 干净分支里「读盘 await 之后的复检」看到 `dirty` 已为真，直接 `externalConflict.add(path)`：脏分支有「再比一次磁盘内容」的判据，这一条没有。连带两个副作用：tab 误判为脏；连续模式下自动保存把**同一份内容**写回磁盘（mtime 被改）→ 磁盘又变一次 → 再触发一轮编译。
+
+**修法**（两条都要）：
+1. `EditorPane.vue`：重载写 model 时用调用栈内的开关（`applyingReload`）屏蔽这次内容变更事件——开关只可能在 `setValue` 期间为真，**结构上不可能吞掉用户输入**；
+2. `editor.ts`：干净分支的复检只认内容（磁盘 == 缓冲 ⇒ 不算冲突），与脏分支对齐。
+
+**验证**（真机，scratch 项目 `test_file/e2e/dedup-status`）：外部写两次 → 无提示、tab 无脏点、**文件 mtime 不变**（没有回写）、编辑器内容照常更新；用 `ed.trigger("mcp","type",…)` 造真实编辑 → tab 标脏 + 自动保存落盘（证明开关没吞掉用户输入）；保持脏缓冲再外部写 → 提示出现、本地输入保住、点提示后采用磁盘版。单测：`editor.spec.ts` 新增两条（见 [modules.md](./modules.md) §5.5），改回旧写法时「不得误报」那条会红。
+
 ## 白屏：无 GPU 虚拟机环境的首帧呈现竞态
 
 **现象**：`npm run tauri dev` 启动应用进程时，窗口偶发白屏（webview 页面已加载、JS 正常、devtools Console 无报错，但首帧未呈现）。**右键 → Reload 后立即正常**。
@@ -172,7 +184,11 @@ ignored: [
 })()
 ```
 
-这会让 `onDidChangeModelContent` 真实触发 → 应用的 `@change` / 防抖自动保存 / watch / 编译链路全部按真机路径走（比"从外部改文件"多验了编辑器这一环；外部改文件还会额外触发状态栏「外部修改」提示，属干扰）。
+这会让 `onDidChangeModelContent` 真实触发 → 应用的 `@change` / 防抖自动保存 / watch / 编译链路全部按真机路径走。
+
+**前置条件：窗口必须在前台**（2026-09-15 实测）。`document.hasFocus()` 为 false 时，`webview_keyboard` 的 type/press、`document.execCommand("insertText")`、手工构造的 `InputEvent` **三条路都无效**（textarea 的 value 被写上又立刻被 Monaco 的状态管理器收回）：先 `manage_window action=focus`，再确认 `document.hasFocus() === true`。
+
+**外部改文件不等于用户编辑**：外部写盘走的是「静默重载」分支，不触发 `@change`（真机核对：文件 mtime 不变 ⇒ 没有自动保存回写）。要验编辑器这一环就得用上面的 `ed.trigger("mcp","type",…)`。
 
 **另一个坑：`webview_execute_js` 的 JS 执行有 ~3s 上限**（`timeout` 参数不影响它）。要观测一段 5–15s 的 UI 时间线，别写成"轮询到超时再返回"，改为**装一个常驻探针再分段读**：
 

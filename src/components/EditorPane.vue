@@ -27,6 +27,17 @@ const monacoSubscriptions: monaco.IDisposable[] = [];
  */
 const modelPaths = new Map<string, string>();
 
+/**
+ * 正在把外部重载写进 model。
+ *
+ * `setValue` 会同步触发 `onDidChangeModelContent`（同一调用栈内），而事件本身分不出是用户敲的
+ * 还是重载写的。不区分就要付代价（真机实测 2/2）：外部改文件后 tab 被误判为脏、自动保存把同一份
+ * 内容又写回磁盘，并让随后的第二条 `files-changed` 误报「外部修改」（那个提示的动作是放弃本地）。
+ *
+ * 用调用栈内的开关而非比对内容：开关只可能在 `setValue` 期间为真 ⇒ 结构上不可能吞掉用户输入。
+ */
+let applyingReload = false;
+
 function uriOf(path: string) {
   // 统一正斜杠：file:///E:/...（Windows 盘符）或 file:///home/...（UNIX）
   const p = path.replace(/\\/g, "/");
@@ -71,6 +82,7 @@ onMounted(() => {
       const model = monacoEditor!.getModel();
       const path = storePathOf(model);
       if (!path || !model) return;
+      if (applyingReload) return; // 本次是外部重载，不是用户编辑
       editor.markDirty(path, model.getValue());
       emit("change", path);
     }),
@@ -133,14 +145,19 @@ watch(
   }
 );
 
-// 外部重载（modules.md §5.5）：buffer 变化 → model 同步；值相同跳过（防循环）
+// 外部重载（architecture.md §5.5）：buffer 变化 → model 同步；值相同跳过（防循环）
 watch(
   () => editor.buffers.get(editor.activePath ?? ""),
   (content) => {
     if (content === undefined || !monacoEditor) return;
     const model = monacoEditor.getModel();
     if (model && model.getValue() !== content) {
-      model.setValue(content);
+      applyingReload = true;
+      try {
+        model.setValue(content);
+      } finally {
+        applyingReload = false;
+      }
     }
   }
 );
