@@ -61,7 +61,7 @@ export const useCompileStore = defineStore("compile", () => {
    * `errors-updated` 抵达；照单全收就会把权威列表顶掉——真机实测到过（超时诊断 1 条被 30 条
    * 实时条目覆盖）。终态一到（phase 变化）这里就自动闭嘴，权威结果只由 `setErrors` 写入。
    *
-   * 不动 `hasError`：它表示"本次编译以失败告终"，实时错误不代表结论（底部摘要此时显示"排版中…"）。
+   * 不动 `hasError`：它表示"本次编译以失败告终"，实时错误不代表结论（此刻状态栏 phase chip 显示"排版中…"）。
    */
   function setLiveErrors(list: ErrorEntry[]) {
     if (phase.value !== "running") return;

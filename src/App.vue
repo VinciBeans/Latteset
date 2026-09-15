@@ -37,12 +37,15 @@ const cursorCol = ref(0);
 
 /** 底部报告面板是否折叠（默认折叠，回收竖向空间给主编辑/预览区；点报告头展开）。 */
 const bottomCollapsed = ref(true);
-/** 折叠头部摘要：编译状态 + 错误数。 */
-const bottomStatus = computed(() => {
-  if (compile.phase === "running") return { text: "排版中…", tone: "run" };
-  if (compile.hasError) return { text: `${compile.errors.length} 个错误`, tone: "err" };
-  return { text: "就绪", tone: "ok" };
-});
+/**
+ * 折叠头部摘要：**只在编译失败时**显示错误条数。
+ *
+ * 就绪 / 排版中… 不在这里出现——状态栏 phase chip 读的是同一个 compile store，
+ * 两处一起渲染就是重复的「就绪」。折叠细条上独有的信息只有错误条数。
+ */
+const bottomStatus = computed(() =>
+  compile.hasError ? { text: `${compile.errors.length} 个错误` } : null,
+);
 
 let unsubscribe: (() => void) | null = null;
 let removeKeydown: (() => void) | null = null;
@@ -251,7 +254,7 @@ const settingsOpen = ref(false);
       >
         <span class="caret">{{ bottomCollapsed ? "▸" : "▾" }}</span>
         <span class="toggle-label">报告</span>
-        <span class="toggle-status" :class="bottomStatus.tone">
+        <span v-if="bottomStatus" class="toggle-status">
           <span class="dot" />{{ bottomStatus.text }}
         </span>
         <span class="spacer" />
@@ -421,19 +424,15 @@ body {
 }
 .bottom-toggle:hover { background: var(--card-2); }
 .bottom-toggle .caret { font-size: 11px; color: var(--ink-faint); }
+/* 折叠头部摘要：只在失败时出现（就绪/排版中… 由状态栏 phase chip 承担，不重复渲染） */
 .bottom-toggle .toggle-status {
   display: inline-flex; align-items: center; gap: 5px;
   font-size: 11.5px; font-weight: 600; letter-spacing: 0;
+  color: #e85f52;
 }
-.bottom-toggle .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--mint); }
-.bottom-toggle .toggle-status.ok { color: var(--mint); }
-.bottom-toggle .toggle-status.err { color: #e85f52; }
-.bottom-toggle .toggle-status.err .dot { background: var(--coral); }
-.bottom-toggle .toggle-status.run { color: var(--ink-dim); }
-.bottom-toggle .toggle-status.run .dot { background: var(--mango); animation: bottom-pulse 1.1s ease-in-out infinite; }
+.bottom-toggle .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--coral); }
 .bottom-toggle .spacer { flex: 1 1 auto; }
 .bottom-toggle .toggle-hint { color: var(--ink-faint); font-size: 11px; font-weight: 500; letter-spacing: 0.5px; }
-@keyframes bottom-pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.35; } }
 .editor-area { display: flex; flex-direction: column; height: 100%; background: var(--card); }
 .editor-area > :last-child { flex: 1; min-height: 0; }
 .error-area { height: 100%; }
