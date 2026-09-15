@@ -18,13 +18,24 @@ Latteset 主界面：左侧文件树、中间编辑区、右侧 PDF 预览。
 
 ## 安装
 
-依赖 **Windows 10/11**、Node.js ≥ 18、Rust（stable-x86_64-pc-windows-msvc，含 VS Build Tools C++ 工具链）及 **TeX Live 或 MiKTeX**（提供 `latexmk`/`xelatex`，缺失时应用会提示安装）。
+依赖 **Windows 10/11**、Node.js ≥ 18、Rust（stable-x86_64-pc-windows-msvc，含 VS Build Tools C++ 工具链）。
+
+**TeX 环境**：默认引擎 XeLaTeX 需要 **TeX Live 或 MiKTeX**（提供 `latexmk`/`xelatex`，缺失时应用会提示安装）；**改用 Tectonic 引擎则不需要 TeX Live** —— 它自带宏包集（首次编译联网下载，之后离线复用缓存），有「子进程」与「库内嵌」两种形态，在设置里选。
 
 ```bash
 npm install && npm run tauri dev
 ```
 
 首次启动会编译 Rust（约几分钟），随后自动打开应用窗口。
+
+> **开发者：带「库内嵌」形态的构建**。库形态把 Tectonic 引擎嵌进产品进程（`crates/latteset-tectonic/`，见 [ADR-0012](./docs/adr/0012-tectonic-library-form-engine.md)），它拉一条 C 依赖链（freetype2 / harfbuzz / graphite2 / ICU / fontconfig / libpng），所以**默认构建不含它**（主产物保持零原生依赖，不需要 vcpkg）。要构建这个变体用 —— 前置校验、环境变量、命令都在一处：
+
+```bash
+npm run lib:check     # 先校验 vcpkg 与 triplet 是否就位（缺项会给可执行的修复命令）
+npm run lib:dev       # 开发运行（带库形态）
+npm run lib:build     # 发布打包（带库形态；两种形态都会进产物）
+npm run lib:test      # 库形态自身的单测
+```
 
 ## 快速开始
 
@@ -53,7 +64,7 @@ npm install && npm run tauri dev
 
 - **文件夹即项目**：打开文件夹 → 文件树 → 多标签页；自动保存（防抖）+ 外部修改检测与冲突提示。
 - **根文件**：正则启发式自动探测（含 `\documentclass` 的顶层 .tex），可手动覆盖。
-- **设置**：引擎（XeLaTeX 默认，可切 LuaLaTeX/pdfLaTeX）、编译模式、防抖、超时、根文件覆盖；全局 + 项目（`.latteset/settings.json`）两层，改即生效。
+- **设置**：引擎（XeLaTeX 默认，可切 LuaLaTeX / pdfLaTeX / **Tectonic**）、编译模式、防抖、超时、根文件覆盖；全局 + 项目（`.latteset/settings.json`）两层，改即生效。选 Tectonic 后可再选**子进程**或**库内嵌**形态、宏包集来源与缓存目录。
 
 ## 命令行与 MCP（无 GUI，面向自动化）
 

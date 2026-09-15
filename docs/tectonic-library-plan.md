@@ -19,6 +19,7 @@
 | **P6** 内存 XDV → PDF（J3） | **已落地（整份路线）**；前缀路线按判决不做 | §6.1/§6.3：捕获表里的 XDV → `XdvipdfmxEngine` → 原子替换到项目根 | 无 |
 | **P7** UI / 状态 / 回退可见性 | **已落地** | §6.3.1 的 V1–V7 与 `docs/modules.md` §2.7「形态位可见」；D1 的显式失败已真机验证 | 无 |
 | **P8** 验证与收口 | **收口大部分已落地；计划里的 t11「独立验证」没有单独进行** | ADR-0012 已接受、`docs/README.md` 索引已挂、`docs/modules.md` §2.7 的 Tectonic 契约面已成文；验证随各次改动做，不是一次独立验证 | 若要按计划收口，补一次独立验证 |
+| **构建变体（发布路径）** | **已落地**：开发默认不含库形态（主产物零原生依赖），**发布构建含**（`npm run lib:build`）⇒ 用户装到的包两种形态都能选 | 前置与环境的唯一落点 `scripts/with-tectonic-lib.ps1`；CI 的 `build-windows-tectonic-lib` 档（按 tag/手动触发）。实测：`lib:build` 出 NSIS 16.24 MB / MSI 22.61 MB；默认档 7.19 MB（§8.3 的 A/B） | 无（形态**默认值**仍是子进程，切默认为库内嵌是产品语义变更，待单独裁决） |
 
 **P4 判决后改投的两条杠杆**（§6.4 ④ 点名的"有数量级差别"项）：
 
@@ -167,7 +168,7 @@
 | Windows MSVC 唯一官方路线 | `vcpkg + x64-windows-static-release + RUSTFLAGS=-Ctarget-feature=+crt-static`；**graphite2 / ICU / freetype2 / fontconfig / libpng 永远走外部探测**（pkg-config 或 vcpkg），**探测失败即 build script panic** | t4 §4 |
 | harfbuzz 的坑（**t2 措辞更正**） | `harfbuzz/` 空目录导致 `exit(1)` **只对「git 检出但未 `git submodule update --init`」的源码树成立**；crates.io 发布的 `tectonic_bridge_harfbuzz` 包**内含** vendored harfbuzz 源码 ⇒ **走发布版不踩这个坑**（本方案走发布版） | t4 §3.3；t2 §7.1 的适用范围按此收窄 |
 | CI 参照（**跨机器，只作参照，不作比较**） | 上游同构 job `vcpkg (x86_64-pc-windows-msvc)` **19m05s**（装依赖 2m24s 缓存命中 + Build&Test 14m51s）；稳态增量粗估 **+15–20 min/冷、+2–5 min/热** `[推断]` | t4 §7 |
-| 体积参照（**随包形态，不是库形态**） | 官方 Windows/MSVC 0.17.0 静态单文件 **51,538,432 B（49.1 MB，单文件、无 DLL）** = 「随包 exe」形态的锚点；**库形态的体积增量未测到**（"数十 MB"仅为 `[推断]`） | t4 §5.3 |
+| 体积参照（**随包形态，不是库形态**） | 官方 Windows/MSVC 0.17.0 静态单文件 **51,538,432 B（49.1 MB，单文件、无 DLL）** = 「随包 exe」形态的锚点；**库形态的实测增量见 §8.3**（本机同一提交 A/B：主 exe +36.4 MB） | t4 §5.3 |
 | feature 门控的硬限制 | 可选依赖 + feature 接线**语法可行**（`cargo metadata --offline --no-deps` exit 0），**但关闭 feature 仍要解析整棵（含可选）依赖图**（`--offline` 照样 101）⇒「不启用就零成本」**只在 cargo registry 缓存预热时成立** | t4 §9（样本 A3/E3） |
 | t4 建议的折中（**本方案已采纳**） | 把库形态封成**独立 workspace 成员**（`crates/latteset-tectonic`，见 §3.2），`src-tauri` 以 optional 依赖 + feature 挂载；**配套根 `Cargo.toml` 加 `default-members`** ⇒ 主产物保持零原生依赖 | t4 §9；§3.2 |
 | 基线「测量地板」（**不可外推**） | 零依赖 crate：debug 冷 817 / 热 818 ms、release 冷 793 / 热 682 ms，峰值 RSS ≈ 190 MB（含 217 ms 包装开销） | t4 §5.1 |
@@ -534,23 +535,23 @@ impl latteset_core::scheduler::CompileRunner for TectonicLibRunner {
 
 > **证据落点约定**：复核脚本与结论进 **`scripts/`**（脚本）或 **`docs/research/tectonic-lib-evidence.md`**（结论与原始摘要，**入库**）；`test_file/research-tectonic-lib/**` 只作为**开发期原始证据**，不作为可复核入口（换机器/清仓即丢）。
 
-### §6.1 已落地状态（2026-09-15，t10 收口）
+### §6.1 已落地状态（库形态能真编出 PDF）
 
-**库形态已能真编出 PDF**（中文夹具，1 页，文本层可抽回「你好，世界」）。复核命令的**完整前置**（缺一项就失败，且失败信息不指向环境）：
+**库形态已能真编出 PDF**（中文夹具，1 页，文本层可抽回「你好，世界」）。
+
+**构建前置有唯一落点**：`scripts/with-tectonic-lib.ps1`（npm 侧 `lib:check` / `lib:dev` / `lib:build` / `lib:test`）。
+它一次做完三件事：① 校验 vcpkg 检出 / triplet 依赖 / 构建工具链，缺项给**可执行的修复命令**（此前是
+build script 以 pkg-config 或 panic 的形式失败，文案不指向环境）；② 设好那 5 个环境变量
+（`TECTONIC_DEP_BACKEND` / `VCPKG_ROOT` / 两个 triplet / `VCPKGRS_TRIPLET`，并给 `RUSTFLAGS` 补
+`-Ctarget-feature=+crt-static`）；③ 跑对应命令。**别再在别处抄这套环境**。
 
 ```powershell
-$env:TECTONIC_DEP_BACKEND='vcpkg'
-$env:VCPKG_ROOT='<repo>\test_file\vcpkg'          # pin rev a62ce77d56 的检出（§3.1.3）
-$env:VCPKG_DEFAULT_TRIPLET='x64-windows-static-release'
-$env:VCPKG_DEFAULT_HOST_TRIPLET='x64-windows-static-release'
-$env:VCPKGRS_TRIPLET='x64-windows-static-release'  # ⚠ 非它不可：release profile 下 vcpkg-rs 会自己算成
-                                                  #   `x64-windows-static`（未装）⇒ build script panic
-$env:RUSTFLAGS='-Ctarget-feature=+crt-static'
-cargo build -p latteset-server --features tectonic-lib --bin latteset-cli
+npm run lib:check                    # 只校验前置
+npm run lib:cli                      # release 构建 headless CLI（带库形态）
 $env:LATTESET_TECTONIC_LIB='1'                     # 运行期开关（装配点见 §3.2）
-$env:LATTESET_TECTONIC_BUNDLE='file:///E:/.../bundle'   # 目录 bundle，须自带 SHA256SUM（LB-2/LB-4）
+$env:LATTESET_TECTONIC_BUNDLE='file:///E:/.../bundle'   # 目录 bundle，须自带 SHA256SUM（LB-2）
 $env:LATTESET_TECTONIC_CACHE='E:\...\cache'        # 产品缓存：<cache>/formats 与 <cache>/bundles
-& src-tauri\target\debug\latteset-cli.exe --project <dir> compile
+& src-tauri\target\release\latteset-cli.exe --project <dir> compile
 node scripts/validate-pdf.mjs --pdf <dir>\<stem>.pdf --expect-pages 1 --expect-text 你好
 ```
 
@@ -565,7 +566,8 @@ node scripts/validate-pdf.mjs --pdf <dir>\<stem>.pdf --expect-pages 1 --expect-t
 
 另有一条**不是缺陷**但会误导复核的事实：本机 `test_file/projects/bench/_e1/en-tiny.tex` **没有 `\end{document}`**，用它做库形态用例会得到 `! Emergency stop / no legal \end found`（单趟计时夹具，本来就是这么设计的）。
 
-**仍然不成立的（不得当通过，与 §13 的未实测项一致）**：页哈希（`PAGE_HASH_SUPPORTED=false`，显式空表）、外部工具类（biber / makeindex / glossaries —— 库形态不跑外部进程；检出即 `warn!` 且 `kind` 退回 `Quick`）、常驻复用（P4，闸门仍是 J1）。
+**能力面现状**：bib 趟与多趟收敛、页哈希与 A/B/C、bib 输入未变时跳过 —— 都已落地（§6.2/§6.3/§6.4 ④-a）。
+**仍不支持的**：外部工具类（biber / makeindex / glossaries —— 库形态不跑外部进程；检出即 `warn!` 且 `kind` 退回 `Quick`）。
 
 ### §6.2 bib 趟与收敛（2026-09-15 补齐，V-03/V-04 收口）
 
@@ -811,7 +813,8 @@ chip 会注明它来自环境变量。
 
 | 项 | 事实 | 出处 |
 |---|---|---|
-| 冷/热构建墙钟、峰值内存、体积增量 | **`[未测到]` + 逐条原因**（t4 会话内构建从未开始；此后本机已可构建，但这三项要的是**干净机器**的数）⇒ 本方案**不给这三个数**；补测入口 = `build-spike/run-samples.ps1`（需 vcpkg+cmake+pkg-config+nasm 与网络） | t4 §5.2；§3.1.3 |
+| 冷/热构建墙钟、峰值内存、体积增量 | **体积增量：已实测**（同一提交上的 A/B，见下条）。**冷/热墙钟与峰值内存仍 `[未测到]`** —— 要的是**干净机器**的数，而本机是依赖已就绪的增量构建。补测入口 = `build-spike/run-samples.ps1`（需 vcpkg+cmake+pkg-config+nasm 与网络） | t4 §5.2；§3.1.3 |
+| **体积增量（2026-09-15 实测，同一提交 A/B）** | 主 exe **18.12 → 52.85 MB（+192%）**；NSIS 安装包 **7.19 → 16.24 MB（+126%）**（+9.49 MB）；MSI 22.61 MB。负向对照成立：默认档二进制的字符串表里**没有**库形态专有串（`库形态排版趟数` 等），库形态档有。52.85 MB 与 t4 的「随包 exe 49.1 MB」锚点同量级 | 本机构建实测；t4 §5.3 |
 | C 依赖闭包 | `tectonic_engine_xetex` 直接依赖 freetype2 / graphite2 / harfbuzz / icu / flate（zlib）桥接；**两形态的 C 链完全相同（各 21 个 native 标记）** ⇒ **没有「只要 XeTeX 引擎的小依赖」这条捷径** | t2 §1.2；t4 §3.1 |
 | 系统工具前置 | Windows MSVC 唯一官方路线 `vcpkg + x64-windows-static-release + crt-static`；**graphite2/ICU/freetype2/fontconfig/libpng 永远走外部探测**（探测失败 = build script panic） | t4 §4 |
 | 依赖冲突面 | 与本仓 lock：SAME 161 / UNIFY 62 / **DUP 19** / 新增 169；合并后 lock 上界 ≈ **728 包** | t4 §3.2 |

@@ -12,7 +12,12 @@
     "preview": "vite preview",
     "tauri": "tauri",
     "tauri:dev": "tauri dev",
-    "tauri:build": "tauri build"
+    "tauri:build": "tauri build",
+    "lib:check": "pwsh -NoProfile -File scripts/with-tectonic-lib.ps1 -Mode check",
+    "lib:test": "pwsh -NoProfile -File scripts/with-tectonic-lib.ps1 -Mode test",
+    "lib:cli": "pwsh -NoProfile -File scripts/with-tectonic-lib.ps1 -Mode cli",
+    "lib:dev": "pwsh -NoProfile -File scripts/with-tectonic-lib.ps1 -Mode dev",
+    "lib:build": "pwsh -NoProfile -File scripts/with-tectonic-lib.ps1 -Mode build"
   },
   "dependencies": {
     "@tauri-apps/api": "^2",
