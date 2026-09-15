@@ -43,6 +43,12 @@ ignored: [
 (Get-ChildItem <repo> -Recurse -File -Force -ErrorAction SilentlyContinue).Count
 ```
 
+**回归自查（加 watch ignore 时的必做项）**：ignore 加多了会**悄悄废掉 HMR**，所以要两边都验一次——
+改 `src/` 下的文件，dev stdout 应出现 `[vite] (client) hmr update /src/…`，且**真机窗口内容随之更新**
+（实测改 `EditorPane.vue` 的空状态文案 → 日志出该行、`webview_find_element` 读到新文案）；
+在 `test_file/` 下建/删文件则**不应**产生任何 `[vite]` 行。注意：**vite 只在有客户端连着时才打 `hmr update`**，
+所以"只起 `npm run dev`、不开窗口"时看不到这行，别据此判断 HMR 坏了。
+
 ## 白屏：无 GPU 虚拟机环境的首帧呈现竞态
 
 **现象**：`npm run tauri dev` 启动应用进程时，窗口偶发白屏（webview 页面已加载、JS 正常、devtools Console 无报错，但首帧未呈现）。**右键 → Reload 后立即正常**。
