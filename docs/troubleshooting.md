@@ -22,20 +22,20 @@ VITE v6.4.3  ready in 258 ms
 
 即 **`vite build` / `optimize` 全好、只有 dev server 的请求路径卡住** ⇒ 排除 esbuild、排除业务代码、排除端口冲突，指向 watcher。
 
-**修复**（`vite.config.ts` → `server.watch.ignored`）：把不参与前端的巨型目录排除掉——
+**处置**（`vite.config.ts` → `server.watch.ignored`）：排除不参与前端的巨型目录——
 
 ```ts
 ignored: [
-  "**/src-tauri/**",   // 原有
-  "**/test_file/**",   // 新增：本地素材区（vcpkg / vendor / 上游源码 / 夹具）
-  "**/dist/**",        // 新增：构建产物（tauri build 与 dev 并存时会自我触发）
-  /\.tmpdir[\\/]/,     // 原有：被锁定的临时目录（chokidar 未处理 error 会拖垮 vite）
+  "**/src-tauri/**",   // Rust 侧，vite 不参与
+  "**/test_file/**",   // 本地素材区（vcpkg / vendor / 上游源码 / 夹具）
+  "**/dist/**",        // 构建产物（tauri build 与 dev 并存时会自我触发）
+  /\.tmpdir[\\/]/,     // 被锁定的临时目录（chokidar 未处理 error 会拖垮 vite）
 ]
 ```
 
-**修复后实测**：`/` → 200 / 434 B / **57 ms**；`/src/main.ts` → 200 / 8549 B / **81 ms**；`localhost:1420/src/main.ts` → 200 / **157 ms**。
+**复测**：`/` → 200 / 434 B / **57 ms**；`/src/main.ts` → 200 / 8549 B / **81 ms**；`localhost:1420/src/main.ts` → 200 / **157 ms**。
 
-**真机复验（`npm run tauri dev`，2026-09）**：窗口渲染出完整三栏布局（工具条 / 资源管理器 / 编辑器 / PDF 预览 / 状态栏「就绪 · XeLaTeX」），dev stdout 出现 3 条 `Server handshake done.`；再经 IPC 走完整链路——`open_project`（`中文测试工程`）→ `compile_now` → `编译成功（无等待请求） draft=false` + `PDF 就绪：… pages=3 changed=3`，预览渲染出 3 页中文 PDF（40,519 B）。
+**真机复验（`npm run tauri dev`）**：窗口渲染出完整三栏布局（工具条 / 资源管理器 / 编辑器 / PDF 预览 / 状态栏），dev stdout 出现 3 条 `Server handshake done.`；再经 IPC 走完整链路——`open_project`（`中文测试工程`）→ `compile_now` → `编译成功（无等待请求） draft=false` + `PDF 就绪：… pages=3 changed=3`，预览渲染出 3 页中文 PDF（40,519 B）。
 
 **判据速查**：dev server "起得来但不响应"时，先量被监视的文件数，别急着怀疑 esbuild/端口/业务代码——
 
@@ -43,31 +43,30 @@ ignored: [
 (Get-ChildItem <repo> -Recurse -File -Force -ErrorAction SilentlyContinue).Count
 ```
 
-**回归自查（加 watch ignore 时的必做项）**：ignore 加多了会**悄悄废掉 HMR**，所以要两边都验一次——
-改 `src/` 下的文件，dev stdout 应出现 `[vite] (client) hmr update /src/…`，且**真机窗口内容随之更新**
-（实测改 `EditorPane.vue` 的空状态文案 → 日志出该行、`webview_find_element` 读到新文案）；
+**回归自查（加 watch ignore 时的必做项）**：ignore 加多了会**悄悄废掉 HMR**，所以两边都验一次——
+改 `src/` 下的文件，dev stdout 应出现 `[vite] (client) hmr update /src/…`，且**真机窗口内容随之更新**；
 在 `test_file/` 下建/删文件则**不应**产生任何 `[vite]` 行。注意：**vite 只在有客户端连着时才打 `hmr update`**，
-所以"只起 `npm run dev`、不开窗口"时看不到这行，别据此判断 HMR 坏了。
+所以"只起 `npm run dev`、不开窗口"时看不到这行，不代表 HMR 失效。
 
 ## 子进程 Tectonic 的 Quick 产物**整段没有目录**：`-o tmp` 只是输出目录（2026-09 实测，已修）
 
 **现象**：`engine=tectonic`（子进程档）下每编辑一次，预览会先跳成 **26 页**（正文少了目录）、约 4 s 后才收敛回 **28 页**——页数在 26/28 之间反复抖。xelatex / lualatex 档没有这个现象。
 
-**根因**：Quick（编辑触发）走 `tectonic … -r 0`（**单趟**）。而 Tectonic 的 `-o tmp` **只作输出目录、不作输入目录** ⇒ 它**读不回**上一趟留在 `tmp/` 的 `.toc`/`.aux`，于是这一趟从零重建目录——**目录整段排不进去**。（对照：latexmk 档靠 `-output-directory` 读得回；库形态档靠 `seed_previous_intermediates` 预热内存层。三条路只有 Tectonic 子进程档没有回读机制。）
+**根因**：Tectonic 的 `-o tmp` **只作输出目录、不作输入目录** ⇒ 单趟档**读不回**上一趟留在 `tmp/` 的 `.toc`/`.aux`，于是这一趟从零重建目录——**目录整段排不进去**。（对照：latexmk 档靠 `-output-directory` 读得回；库形态档靠 `seed_previous_intermediates` 预热内存层。三条路只有 Tectonic 子进程档没有回读机制。）
 
 **判据（可复算，release `tectonic.exe` 0.17.0，同一份 28 页中文夹具、同一条命令形态）**：
 
 | 档 | 耗时 | 页数 | 文本层 | 目录 |
 |---|---|---|---|---|
-| `-r 0`（原 Quick） | **657 ms** | **26** | 12,624 字 | **没有**（第 2 页只剩页码标记 `i`，正文从第 3 页起） |
-| `-r 1`（现 Quick） | **1057 ms** | 28 | 13,570 字 | 有（占第 2–3 页） |
-| 默认（收敛 = Full） | 1495 ms | 28 | 13,570 字 | 有 |
+| `-r 0`（单趟） | **657 ms** | **26** | 12,624 字 | **没有**（第 2 页只剩页码标记 `i`，正文从第 3 页起） |
+| `-r 1`（两趟） | **1057 ms** | 28 | 13,570 字 | 有（占第 2–3 页） |
+| 默认（收敛，Full 用） | 1495 ms | 28 | 13,570 字 | 有 |
 
 差的 **2 页 / 946 字就是目录**。所以这不是 roadmap ㉘ 说的"目录/交叉引用**页码**落后一趟"——那是**内容缺失**，与承诺不符。
 
-**修法**：`tectonic_command` 的 Quick 档由 `-r 0` 改 `-r 1`（两趟）。代价 +400 ms，Quick 仍明显快于 Full（1057 vs 1495）。真机复验：修复后 Quick 出 **28 页 / 13,570 字**，与 Full 逐项一致，预览不再抖。
+**处置**：`tectonic_command` 的 Quick 档用 `-r 1`（两趟）。代价 +400 ms，Quick 仍明显快于 Full（1057 vs 1495）。真机复验：Quick 出 **28 页 / 13,570 字**，与 Full 逐项一致，预览不再抖。
 
-> **量这个的坑**：`scripts/validate-pdf.mjs` 本身是确定性的（同一文件连跑 5 次同值），但**别在 `tectonic` 刚退出时立刻量**——本次排查里一度读到过 `507 字`/`1343 字` 这种明显偏小的值，与随后 5 次复算（12,624 / 13,570）都不符。结论请只采用**可复算**的那一组。
+> **量这个的坑**：`scripts/validate-pdf.mjs` 本身是确定性的（同一文件连跑 5 次同值），但**别在 `tectonic` 刚退出时立刻量**——会读到明显偏小的文本层计数。只采用**可复算**的那一组。
 
 ## 白屏：无 GPU 虚拟机环境的首帧呈现竞态
 

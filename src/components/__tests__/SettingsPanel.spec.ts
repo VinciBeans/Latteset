@@ -94,8 +94,7 @@ describe("SettingsPanel：Tectonic 段的显示条件", () => {
   });
 });
 
-// 段被隐藏 + 设置仍然存着 = 隐形开关（2026-09-15 真机踩到：`lib_form=true` 时把引擎切到
-// XeLaTeX，界面毫无提示，而编译仍跑 Tectonic 库形态）⇒ 必须在引擎那一栏把它讲出来。
+// 段被隐藏 + 设置仍然存着 = 隐形开关：设置面必须在引擎那一栏把它讲出来。
 describe("SettingsPanel：引擎不是 Tectonic 时的「存了但不生效」提示", () => {
   const notice = (w: ReturnType<typeof mount>) => w.find(".field-hint.warn");
 

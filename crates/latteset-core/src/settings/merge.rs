@@ -181,7 +181,7 @@ mod tests {
         assert_eq!(s.compile.timeout_secs, 120); // 原值未动
     }
 
-    /// 走 patch 的 bundle 一定是**存储形态**：用户给 `E:\…` 也能存下（设置面不必逼人写 `file:///`）。
+    /// 走 patch 的 bundle 一律是**存储形态**：`E:\…` 也存得下。
     #[test]
     fn apply_patch_normalizes_bundle_to_stored_form() {
         let mut s = global();

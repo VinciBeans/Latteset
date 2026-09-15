@@ -396,8 +396,8 @@ pub struct EngineFormDto {
 ///
 /// **判定只做一次、就在后端**：这里直接调用 runner 用的那个纯函数
 /// （[`latteset_core::settings::TectonicSettings::use_library_form`]），所以状态栏不可能与编译实际
-/// 行为不一致。前端**不得**自己从 `compile.engine` 猜形态 —— 2026-09-15 真机踩到的
-/// "状态栏报 XeLaTeX、实际跑 Tectonic 库形态"正是猜出来的。
+/// 行为不一致。前端**不得**从 `compile.engine` 自己推形态 —— `LATTESET_TECTONIC_LIB` 能压过设置，
+/// 只看设置会报出与实际不符的形态。
 #[tauri::command]
 #[specta::specta]
 pub async fn engine_form(state: State<'_, AppState>) -> Result<EngineFormDto, CmdError> {

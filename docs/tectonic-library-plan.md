@@ -393,7 +393,7 @@ impl latteset_core::scheduler::CompileRunner for TectonicLibRunner {
 
 | # | 坑 | 实测 / 源码 | 后果与处置 |
 |---|---|---|---|
-| **LB-1** | **绝对路径的 `-b` 被 URL 解析吃掉**：`detect_bundle` 先 `Url::parse(source)`，`E:\...` 与 `E:/...` 都被当成 scheme `e` 解析成功 ⇒ 返回 `Ok(None)` ⇒ 报 `doesn't specify a valid bundle.` | `t3 §7.1` **实测** B1/B2 失败；**t5 §3.2 独立复现+扩展**：B5（绝对路径）、B5b（`file:///…` 但路径不存在）都判 `None`；**B8/B9/B10 证明可行的三种给法**：`file:///` 绝对 URL、**相对路径**、以及 **ACL 只读目录**（均 open_ok + 读到字体 4,947,904 B） | 产品要指本地 bundle，**存储形态必须用 `file://` URL 或相对路径**；t5 的 A6 端到端印证：换成本地只读目录 bundle 后产物**同字节数**（74,389 B / 26 页）。**设置面入口不必逼用户记得这件事**：`TectonicSettings::normalize_bundle` 会把 `E:\…` / `E:/…` / 带引号的「复制为路径」统一补成 `file:///…`（2026-09 落地，见 [modules.md](./modules.md) §6） |
+| **LB-1** | **绝对路径的 `-b` 被 URL 解析吃掉**：`detect_bundle` 先 `Url::parse(source)`，`E:\...` 与 `E:/...` 都被当成 scheme `e` 解析成功 ⇒ 返回 `Ok(None)` ⇒ 报 `doesn't specify a valid bundle.` | `t3 §7.1` **实测** B1/B2 失败；**t5 §3.2 独立复现+扩展**：B5（绝对路径）、B5b（`file:///…` 但路径不存在）都判 `None`；**B8/B9/B10 证明可行的三种给法**：`file:///` 绝对 URL、**相对路径**、以及 **ACL 只读目录**（均 open_ok + 读到字体 4,947,904 B） | 产品要指本地 bundle，**存储形态必须用 `file://` URL 或相对路径**；t5 的 A6 端到端印证：换成本地只读目录 bundle 后产物**同字节数**（74,389 B / 26 页）。设置面把 `E:\…` / `E:/…` / 带引号的「复制为路径」都补成 `file:///…`（`TectonicSettings::normalize_bundle`，见 [modules.md](./modules.md) §6） |
 | **LB-2** | **目录 bundle 必须自带 `SHA256SUM`**：`DirBundle::get_digest` 读它，缺失即 `bail!("bundle does not provide needed SHA256SUM file")`；路径 A 的 `create()` **无条件**调 `get_digest()?`，路径 B 则由我们**显式**调用（缓存键需要它） | `t3 §7.1`：实测报错原文即此句（另注 `DirBundle::all_files` **非递归**） | **裸 TeX Live 目录不能直接当 bundle**；须生成 `SHA256SUM`，或改用 zip/ttb |
 | **LB-3** | **当前工作区没有任何"可直接当 bundle 用"的本地 bundle** | t3 附录 A；t5 §3.2 只用到缓存里的 `data/<digest>/` 解包目录与探针目录 | **t10 必须先造一个合规本地 bundle**（含 `SHA256SUM`）才能做离线验证 |
 | **LB-4** | **空目录 bundle 静默"成功"**：`detect_bundle` 对空目录返回 `Ok(DirBundle)`，`file_count=0`，直到引擎要文件时才 `NotAvailable` | `t5 §3.3-2` **实测** B6（`file:///.../empty-bundle-dir` → `open_ok=true`、`file_count=0`） | 产品允许自定义 bundle 目录时**必须自己校验**（要求存在 `SHA256SUM` 或抽查关键文件），否则用户看到的是"编译成功但啥都没有" |
@@ -498,7 +498,7 @@ impl latteset_core::scheduler::CompileRunner for TectonicLibRunner {
 |---|---|
 | 目标 | D3 衍生义务：两形态并存时能区分「哪个形态在跑」；D1：失败可见、不自动回退 |
 | 验收判据 | ① 状态栏可见形态位；② 无「已回退/静默回退」文案（`tectonic-test-plan.md:842`）；③ **feature 开/关两种构建下都能装配**：`--features tectonic-lib` 时用 `TectonicLibRunner`，默认构建用 `LatexmkRunner`，且装配点仍是 `src-tauri/src/lib.rs:83-84` 那一行（§3.2） |
-| ↳ **2026-09-15 现状注**（判据本身不改，只标它已过时的地方） | ③ 的"feature 开 ⇒ `TectonicLibRunner`"已被**设置面收口**取代：GUI 侧两个构建都装 `SwitchableRunner`，由**每趟编译读的设置**（`use_library_form(engine, env_forced)`）决定用哪个 runner；**默认构建仍永不使用库形态**这条实质不变。① **已于 2026-09-15 补齐**：状态栏引擎名旁显示形态 chip（子进程 / 库内嵌 / 库形态不可用），判定来自后端 `engine_form` 命令——它直接复用 runner 的同一个纯函数，所以**不可能与编译实际行为不一致** |
+| ↳ 装配现状 | GUI 的两个构建都装 `SwitchableRunner`，由**每趟编译读的设置**（`use_library_form(engine, env_forced)`）决定用哪个 runner；**默认构建永不使用库形态**。① 由状态栏的形态 chip 满足（子进程 / 库内嵌 / 库形态不可用），判定来自 `engine_form` 命令，它复用 runner 的同一个纯函数 |
 | 回退点 | 形态位不显示 ⇒ 库形态不得默认开启 |
 
 ### P8 验证与收口
@@ -617,49 +617,43 @@ node scripts/validate-pdf.mjs --pdf <dir>\<stem>.pdf --expect-pages 1 --expect-t
 | **Quick（内容未变）** | **A 触发**：`convert_ms=0`、`reused_pdf=true`、**475 ms**（跳过转换与拷贝） |
 | **改中间一章的一个词** | 页数 28→28，**只有第 16 页变**（1/28）—— 债 #26 的 V1 口径端到端成立 |
 
-**边界**：空表仍只表示**无法判定**（XDV 缺失/损坏）⇒ 前端保守全量刷新（真机见 §6.3 的 V7）；A **只对 Quick**
-（与子进程档同闸门，Full 的语义就是完整刷新一遍）。这两件事**判据不同、别混**：A 看的是 `.pages` 缓存
-（runner 侧），"无法判定"看的是 `pages == 0`（前端侧）。
+**边界**：空表仍只表示**无法判定**（XDV 缺失/损坏）⇒ 前端保守全量刷新（真机见 §6.3.1 的 V7）；A **只对 Quick**
+（与子进程档同闸门，Full 的语义就是完整刷新一遍）。两者的判据不同：A 看 `.pages` 缓存（runner 侧），
+"无法判定"看 `pages == 0`（前端侧）。
 
-### §6.3 GUI 真机验证（2026-09-15；V6 暴露一个真缺陷，已修）
+### §6.3.1 GUI 真机验证（2026-09-15）
 
-§6.3 的数字全部来自 release 档的 bench harness（`latteset-cli` 是一次性语义）——**库形态这条路径在真机
-GUI 里从没跑过**。本节把同一份 28 页多文件夹具（`test_file/tectonic-lib-run/proj-26`：8 章 `\include`
-+ toc + `\bibliography`）搬进真实窗口，用 tauri server MCP 驱动：
-`npm run tauri dev -- --features tectonic-lib`（+ `VITE_LATTESET_PROJECT` 自动打开项目）。
-⚠ dev profile 下 C 引擎是 `-O0`，所以**耗时只作同环境对照，不作性能结论**。
+§6.3 的数字来自 release 档的 bench harness（`latteset-cli` 是一次性语义）；本节是**真机 GUI** 下的同一批
+契约，夹具相同（`test_file/tectonic-lib-run/proj-26`：8 章 `\include` + toc + `\bibliography`），用
+tauri server MCP 驱动：`npm run tauri dev -- --features tectonic-lib`（+ `VITE_LATTESET_PROJECT` 自动打开项目）。
+⚠ dev profile 下 C 引擎是 `-O0`，**耗时只作同环境对照，不作性能结论**。
 
 | # | 场景 | 操作 | 实测 |
 |---|---|---|---|
 | V1 | 冷启动 Full | 清 `tmp/` + 根 PDF → 点「编译」 | `库形态排版趟数 passes=3 stable=true converged=true`；`pages=28 reused_pdf=false`；`changed=28`；项目根出 **82,586 B** PDF |
 | V2 | 产物与判据缓存 | — | `tmp/main.tectonic.pages` = `v1` + 28 行；`validate-pdf.mjs` → pdf.js `numPages=28`、文本层 13,570 字符、0 个 U+FFFD |
-| V3 | **A**（Quick + 内容未变） | Monaco 在 `ch08.tex` 末尾加一行**纯注释**（输出不变） | `触发编译（编辑触发 = Quick 单趟）`、`passes=1`；**`页哈希与上次逐页相同：跳过 XDV→PDF 转换与拷贝 pages=28`**；`convert_ms=1 reused_pdf=true`（对照冷 Full 的 `convert_ms=6399`）；`changed=0` ⇒ 控制台 3 次 `[preview] 跳过重载：28 页逐页未变`，**全程没有第二次 reload** |
+| V3 | **A**（Quick + 内容未变） | Monaco 在 `ch08.tex` 末尾加一行**纯注释**（输出不变） | `触发编译（编辑触发 = Quick 单趟）`、`passes=1`；**`页哈希与上次逐页相同：跳过 XDV→PDF 转换与拷贝 pages=28`**；`convert_ms=1 reused_pdf=true`（对照冷 Full 的 `convert_ms=6399`）；`changed=0` ⇒ 控制台 3 次 `[preview] 跳过重载：28 页逐页未变`，**没有第二次 reload** |
 | V4a | **B/C**（改一章、跨页重排） | 同一行再追加 6 个字 | `changed=3`；预览 `reload#2 … render=4ms pagesRendered=0 pagesReused=7`（对照首轮 `reload#1 render=66ms pagesRendered=7`） |
-| V4b | **B/C**（严格"改一个词"） | 等长逐字替换 `追加`→`替换`→`变更`（断行不变） | **`changed=1`**，且逐页比对确认**恰好第 16 页**（与 §6.3 的 CLI 结论一致）；两次替换均复现 |
-| V5 | 判据缓存缺失的退化（**这条是 A 的判据，不是"无法判定"**） | 删 `tmp/main.tectonic.pages` → 编辑 | 该轮 **A 不触发**（`reused_pdf=false convert_ms=1928`）并**写回缓存**；下一轮立刻恢复 `convert_ms=1 reused_pdf=true` ⇒ 文档说的"只退化一轮"端到端成立 |
-| V6 | 换引擎不串档 | 面板切 XeLaTeX → 点「编译」 | **首轮 FAIL**（见下）。修复后：`Full 编译（完整 latexmk 收敛） engine="-xelatex"`、`changed=28`、**新生成 `tmp/main.xelatex.pages`**，`main.tectonic.pages` 原样保留；两份缓存行数与首行完全相同（`v1` + 28 行）⇒ 口径可比，**28/28 页哈希不同**（两个引擎的 XDV 确实不同，不是误报）；PDF 82,586 → 74,506 B |
-| V7 | **「空表 ⇒ 无法判定 ⇒ 全量刷新」**（§2.7 页哈希行的第 4 条契约） | 面板切回 Tectonic 的**子进程**档（`lib_form=false`）→ 点「编译」 | 日志 **`pages=0 changed=0`**（该档 PDF 不落 XDV ⇒ 页哈希为空），前端 `reload#10` —— **是重载、不是"跳过重载"** ⇒ 保守全量刷新成立 |
+| V4b | **B/C**（改一个词） | 等长逐字替换 `追加`→`替换`→`变更`（断行不变） | **`changed=1`**，逐页比对确认**恰好第 16 页**（与 §6.3 的 CLI 结论一致）；两次替换均复现 |
+| V5 | A 的判据（缓存）缺失时的退化 | 删 `tmp/main.tectonic.pages` → 编辑 | 该轮 **A 不触发**（`reused_pdf=false convert_ms=1928`）并**写回缓存**；下一轮恢复 `convert_ms=1 reused_pdf=true` ⇒ "只退化一轮"端到端成立 |
+| V6 | 换引擎不串档 | 面板切 XeLaTeX → 点「编译」 | `Full 编译（完整 latexmk 收敛） engine="-xelatex"`、`changed=28`、**新生成 `tmp/main.xelatex.pages`**，`main.tectonic.pages` 原样保留；两份缓存行数与首行完全相同（`v1` + 28 行）⇒ 口径可比，**28/28 页哈希不同**（两个引擎的 XDV 不同，不是误报）；PDF 82,586 → 74,506 B |
+| V7 | **「空表 ⇒ 无法判定 ⇒ 全量刷新」**（§2.7 页哈希行的第 4 条契约） | 面板切到 Tectonic 的**子进程**档（`lib_form=false`）→ 点「编译」 | 日志 **`pages=0 changed=0`**（该档 PDF 不落 XDV ⇒ 页哈希为空），前端 `reload#10` —— **是重载、不是"跳过重载"** ⇒ 保守全量刷新成立 |
 
-> **V7 是复查补的**：上一轮我把"无法判定"错当成"删掉 `.pages` 缓存"来验（写成了 V5）。其实两者是不同的东西——
-> `.pages` 只是 **A 的判据**（runner 侧），而"无法判定"的信号是 **runner 返回空页哈希**（`pages == 0`），
-> 前端据此走全量刷新（`preview.ts`：`unchanged = pages > 0 && changedPages.length === 0`）。
-> 真正能触发它的是**子进程 Tectonic 档**：`latteset-infra/src/runner.rs:1027` 的用例就断言"PDF 档没有 XDV
-> ⇒ 页哈希必须为空"。V5 与 V7 现已分开记录。
+**V7 只在子进程 Tectonic 档可达**：库形态档的 XDV 总在捕获表里，页哈希不会为空；断言"PDF 档没有 XDV ⇒
+页哈希必须为空"的用例见 `latteset-infra/src/runner.rs`。
 
-**V4a 的 3 页不是缺陷**：追加 6 个汉字会让正文**重排**、跨过页边界。把"改一个词"做成**等长替换**（V4b）
-后就是 1 页——页哈希给的是"这一页的字节变了没有"，它如实反映重排，不看编辑的字符数。
+**`changed` 反映的是页字节，不是编辑规模**：等长替换（V4b）动 1 页；追加 6 个汉字让正文重排跨过页边界，
+就动 3 页（V4a）。
 
-**V6 第一次跑就 FAIL，暴露一个真缺陷（本轮已修）**：`SwitchableRunner` 只用 `tectonic.lib_form` 决定形态，
-**不看 `req.engine`** ⇒ `engine=xelatex` + `lib_form=true` 时**静默跑 Tectonic 库形态**，而状态栏报的是
-**XeLaTeX**——UI 说谎。日志里 `库形态排版趟数` / `库形态分阶段耗时` 都在，却既不产 `main.xelatex.pages`、
-`changed` 又是 0（Tectonic 忠实复现了同一份页面 ⇒ 逐页哈希全同）。这恰好把 **INT-92 的两条判据全踩反**。
+**形态由引擎闸门决定**：`TectonicSettings::use_library_form(engine, env_forced)`——`lib_form` 只在
+`engine == Tectonic` 时生效。缺少这半条闸门时，`engine=xelatex` + `lib_form=true` 会静默跑库形态，而状态栏
+报的是 XeLaTeX（判据被踩反：不产 `tmp/<stem>.xelatex.pages`、`changed` 恒为 0，因为 Tectonic 复现出逐页
+相同的页面）。`LATTESET_TECTONIC_LIB=1` 是**显式覆盖**，不受该闸门约束（复核/CI 的逃生门），状态栏的形态
+chip 会注明它来自环境变量。
 
-- **修法**：判定上提到 core 的 `TectonicSettings::use_library_form(engine, env_forced)`——`lib_form` 只在
-  `engine == Tectonic` 时生效；`LATTESET_TECTONIC_LIB=1` 按文档"压过设置"**保留**为显式覆盖（复核/CI 的逃生门）。
-- **连带的 UI 陷阱（同期修）**：形态段现在只在选中 Tectonic 时渲染（见 [modules.md](./modules.md) §6），
-  于是"存过 `lib_form` 却切到 XeLaTeX"会变成**看不见的开关**。引擎那一栏现在会点名提示
-  「已保存 Tectonic 形态设置（库内嵌 / 宏包集 / 缓存目录）；仅在选择 Tectonic 引擎时生效」。
-- 修复后 V6 复验通过：状态栏说 XeLaTeX、**实际就跑 XeLaTeX**，基线不串。
+**形态段只在选中 Tectonic 引擎时渲染**（见 [modules.md](./modules.md) §6）⇒ 存过 `lib_form` 却切到别的
+引擎时它是不可见的。引擎那一栏为此点名提示「已保存 Tectonic 形态设置（库内嵌 / 宏包集 / 缓存目录）；
+仅在选择 Tectonic 引擎时生效」。
 
 ### §6.4 P4 常驻档实测（J1 判决：**不成立**，2026-09-15）
 

@@ -27,9 +27,9 @@ pub struct TectonicSettings {
     /// bundle 来源：`None`/空 = 上游兜底**网络地址**；否则 `file:///…` 或**相对路径**的目录 bundle。
     ///
     /// ⚠ **存储形态**不能是 `E:\…`：上游 `detect_bundle` 会把它当 URL scheme 解析成 `Ok(None)`
-    /// （方案 §5.6 **LB-1**）。不过入口是宽容的——`E:\…` / `E:/…` / 带引号的「复制为路径」都会被
+    /// （方案 §5.6 **LB-1**）。入口是宽容的——`E:\…` / `E:/…` / 带引号的「复制为路径」都会被
     /// [`TectonicSettings::normalize_bundle`] 补成 `file:///…`（`apply_patch` 里归一化在前、
-    /// 校验在后），所以 [`super::validate`] 那条现在只兜底绕过 patch 的写入（手改 `settings.json`）。
+    /// 校验在后），所以 [`super::validate`] 那条只兜底绕过 patch 的写入（手改 `settings.json`）。
     pub bundle: Option<String>,
     /// 产品缓存目录（`formats/` + `bundles/` 的父目录）：`None`/空 = 宿主的应用缓存目录。
     ///
@@ -53,12 +53,11 @@ impl TectonicSettings {
     ///
     /// **引擎闸门不可省**：形态位是 Tectonic 引擎的**子选项**，只有 `engine == Tectonic` 时才谈得上。
     /// 少了 `engine == Tectonic` 这一半，`engine=xelatex` + `lib_form=true` 会**静默跑 Tectonic 库形态**
-    /// ——状态栏报 XeLaTeX、实际引擎是 Tectonic（2026-09-15 真机 GUI 实测到的缺陷；判据由
-    /// `docs/research/tectonic-test-plan.md` 的 INT-92 给出：切回 XeLaTeX 必须产出
-    /// `tmp/<stem>.xelatex.pages` 且首轮 `changed_pages` 为全部页，当时两条都不成立）。
+    /// ——状态栏报 XeLaTeX、实际引擎是 Tectonic。判据见 `docs/research/tectonic-test-plan.md` 的 INT-92：
+    /// 切回 XeLaTeX 必须产出 `tmp/<stem>.xelatex.pages`，且首轮 `changed_pages` 为全部页。
     ///
-    /// `env_forced`（`LATTESET_TECTONIC_LIB=1`）是**显式覆盖**，按文档"它压过设置"保留原语义：
-    /// 复核/CI 要在不改用户设置的前提下复现库形态那条路径，所以它不受引擎闸门约束。
+    /// `env_forced`（`LATTESET_TECTONIC_LIB=1`）是**显式覆盖**：复核/CI 要在不改用户设置的前提下复现
+    /// 库形态那条路径，所以它不受引擎闸门约束。
     pub fn use_library_form(&self, engine: Engine, env_forced: bool) -> bool {
         (engine == Engine::Tectonic && self.lib_form) || env_forced
     }
@@ -67,8 +66,7 @@ impl TectonicSettings {
     ///
     /// 设置面与命令行拿到的是普通 Windows 路径（资源管理器地址栏、`复制为路径` 还带一对引号），
     /// 而上游先做 `Url::parse`：`E:\…` / `E:/…` 会被当成 scheme `e` 解析成功并返回 `Ok(None)`，
-    /// 最终只报一句 `doesn't specify a valid bundle`（方案 §5.6 **LB-1** 实测）。补齐这一步，
-    /// 用户就不必记得写 `file:///`——**存储形态不变**，只是入口更宽容。
+    /// 最终只报一句 `doesn't specify a valid bundle`（方案 §5.6 **LB-1** 实测）。
     ///
     /// 只改"看着就是绝对 Windows 路径"（`<盘符>:<分隔符>`）的那一类；`file://…`、`https://…`、
     /// 相对路径一律原样透传（相对路径以上游进程 cwd 为基准，是可行的给法之一）。

@@ -39,8 +39,8 @@ export const ipc = {
    */
   libFormAvailable: () => commands.libFormAvailable(),
   /**
-   * 当前**实际**会用的引擎形态（状态栏显示用）。判定在后端做一次（与 runner 共用同一个纯函数），
-   * 前端只渲染 —— 别在这里从 settings 猜形态。
+   * 当前**实际**会用的引擎形态（状态栏显示用）。判定在后端做一次（与 runner 共用同一个纯函数）。
+   * 前端只渲染：形态不能从 settings 推，环境变量能压过它。
    */
   engineForm: () => unwrap(commands.engineForm()),
 };

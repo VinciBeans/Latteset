@@ -60,8 +60,7 @@ const engineText = computed(() => {
  * **形态位**（库形态方案 §6 P7 验收判据 ①）：子进程 / 库内嵌。
  *
  * 判定**只在后端做**（`engine_form` 命令直接复用 runner 的纯函数 `use_library_form`），这里只渲染。
- * 2026-09-15 真机踩到的"状态栏报 XeLaTeX、实际跑 Tectonic 库形态"就是前端自己从
- * `compile.engine` 猜形态造成的——所以这层不许再猜。
+ * 不能从 `compile.engine` 自己推：`LATTESET_TECTONIC_LIB` 能压过设置，只看设置会报出与实际不符的形态。
  */
 const form = ref<EngineFormDto | null>(null);
 async function refreshForm() {

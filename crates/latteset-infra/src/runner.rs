@@ -325,15 +325,15 @@ fn compile_command(req: &CompileRequest, kind: CompileKind, bundle: BundlePolicy
 /// - `--keep-logs`：保留 `.log`（Tectonic 的日志本来只在内存、收尾才落盘）；
 /// - `--synctex`：产出 `.synctex.gz`（我们的正反向仍走外部 `synctex.exe`，需要本机 TeX Live）；
 /// - `-p`：页进度走 **stdout 的 `[N]`** —— 这是 Tectonic 下唯一的实时页通道；
-/// - `-r 1`（仅 Quick）：**两趟**（`-r N` = 再跑 N 趟）。⚠ 2026-09-15 实测把 `-r 0` 改掉了：
+/// - `-r 1`（仅 Quick）：**两趟**（`-r N` = 再跑 N 趟）。⚠ **单趟（`-r 0`）会丢整段目录**：
 ///   Tectonic 的 `-o tmp` **只是输出目录、不作为输入目录**，所以它**读不回**上一趟留在 `tmp/` 的
 ///   `.toc`/`.aux`（对照：latexmk 靠 `-output-directory` 读得回，库形态档靠
-///   `seed_previous_intermediates` 预热）⇒ 单趟档每趟都从零重建目录，产物**整段目录缺失**。
+///   `seed_previous_intermediates` 预热），单趟档每趟都从零重建目录。
 ///   实测（release `tectonic.exe` 0.17.0、同夹具同命令形态、`-k` 保留中间产物）：
 ///   `-r 0` = **26 页 / 12,624 字**（第 2 页只剩页码标记，正文从第 3 页起 = 没有目录），
 ///   `-r 1` = **28 页 / 13,570 字**（目录占第 2–3 页，与收敛档逐项一致）。
-///   这不是"页码落后一趟"，是与 roadmap ㉘ 承诺不符的内容缺失。代价 657 → 1057 ms
-///   （收敛档 1495 ms），Quick 仍明显快于 Full；
+///   Quick 的语义是"目录/交叉引用**页码**落后一趟"（roadmap ㉘）；单趟档丢的是整段目录，不是页码。
+///   两趟 1057 ms（单趟 657、收敛 1495），Quick 仍明显快于 Full；
 /// - `-o tmp`：产物目录与其它引擎一致（`tmp/<stem>.pdf`）。
 fn tectonic_command(req: &CompileRequest, quick: bool, bundle: BundlePolicy) -> tokio::process::Command {
     let mut c = tokio::process::Command::new(req.engine.binary_name());

@@ -28,12 +28,10 @@ export default defineConfig(async () => ({
       // 3. tell Vite to ignore watching `src-tauri`
       ignored: [
         "**/src-tauri/**",
-        // **不参与前端的巨型目录**（2026-09 实测：dev server 起得来、端口在监听，但**所有请求都不响应**
-        // ——连接被接受后迟迟不回，`vite optimize` 与 `vite build` 却都正常 ⇒ 卡在 dev server 的
-        // 请求路径，而不是 esbuild）。
-        // `test_file/` 是本地素材区：vcpkg 检出（1.4 万文件）、vendor（824 MB）、tectonic 上游源码、
-        // 各种夹具与编译产物 —— Vite 没有任何理由去 watch 它，而 chokidar 在这种体量上会拖住 dev server。
-        // `dist/` 是构建产物（`tauri build` 与 dev 同时存在时会自我触发）。
+        // **不参与前端的巨型目录**。`test_file/` 是本地素材区（vcpkg 检出 1.4 万文件、vendor 824 MB、
+        // 上游源码、夹具与编译产物）：chokidar 在这种体量上会拖住 dev server —— 端口在监听、连接被接受，
+        // 但请求全不响应（同时 `vite optimize` 与 `vite build` 正常 ⇒ 卡点在 dev server 的请求路径，
+        // 不是 esbuild）。`dist/` 是构建产物（`tauri build` 与 dev 并存时会自我触发）。
         "**/test_file/**",
         "**/dist/**",
         // 临时目录（如 logo 预览工具写入的 .logo.svg.<pid>.<uuid>.tmpdir/）：

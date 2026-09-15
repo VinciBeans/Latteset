@@ -14,8 +14,8 @@
 //! - **形态**：`settings.tectonic.lib_form`，或环境变量 `LATTESET_TECTONIC_LIB=1` **强制开**
 //!   （复核/CI 用；它压过设置，所以能复现"库形态"那条路径而不改用户设置）。
 //!   ⚠ **形态位受引擎闸门约束**：只有 `compile.engine == Tectonic` 时 `lib_form` 才生效
-//!   （判定在 [`latteset_core::settings::TectonicSettings::use_library_form`]，真机实测过的
-//!   缺陷见那里的注释）；环境变量那条是显式覆盖，不受闸门约束。
+//!   （判定在 [`latteset_core::settings::TectonicSettings::use_library_form`]）；环境变量那条是
+//!   显式覆盖，不受闸门约束。
 //! - **bundle**：设置里的非空值 → `LATTESET_TECTONIC_BUNDLE` → 上游兜底（网络地址）。
 //! - **缓存目录**：设置里的非空值 → `LATTESET_TECTONIC_CACHE` → 宿主应用缓存目录。
 //!   ⚠ 缓存**必须**有落点：上游 format 默认落**项目目录**，不注入会往用户项目扔 24 MB 的 `.fmt`
@@ -91,9 +91,7 @@ impl SwitchableRunner {
 impl CompileRunner for SwitchableRunner {
     async fn compile(&self, req: CompileRequest, cancel: CancellationToken) -> CompileOutcome {
         let t = self.settings.read().await.tectonic.clone();
-        // 形态判定走 core 的纯函数（**引擎闸门在这里**：库形态是 Tectonic 的子选项，
-        // 引擎不是 Tectonic 时形态位不生效——否则 `engine=xelatex` + `lib_form=true`
-        // 会静默跑 Tectonic，而状态栏报 XeLaTeX）。
+        // 形态判定走 core 的纯函数——引擎闸门在它里面（形态位是 Tectonic 引擎的子选项）。
         let want_lib = t.use_library_form(req.engine, lib_form_forced_by_env());
 
         if !want_lib {

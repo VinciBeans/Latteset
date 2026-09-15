@@ -113,11 +113,10 @@ export const useEditorStore = defineStore("editor", () => {
    * 3. 打开且脏 → 保留本地 + 冲突标记；
    * 4. 未打开 → 忽略（文件树自己刷新）。
    *
-   * ⚠ **脏分支的自保存窗口判据不能"消费一次"**（2026-09-15 真机修）：Windows notify 对**同一次**
-   * 写盘会投递**多条**事件（实测 2 条、同一毫秒），而两条都要等 `saveAll` 的 promise 续体跑完才轮到
-   * `markSaved`——于是第二条事件撞上"仍脏 + `lastSaved` 已被消费"⇒ 每次编辑都误报「外部修改」。
-   * 那个提示的动作是 `acceptExternal`（**放弃本地**），误报 + 一点击 = 丢输入。
-   * 所以脏分支里：窗口内直接忽略；窗口外再**比一次磁盘内容**，一致就不是冲突。 */
+   * ⚠ **脏分支的自保存窗口判据不能"消费一次"**：Windows notify 对**同一次**写盘会投递**多条**事件
+   * （实测 2 条、同一毫秒），而它们都早于 `saveAll` 的 promise 续体（`markSaved`）——消费一次会让
+   * 第二条撞上"仍脏"并误报「外部修改」，而该提示的动作是 `acceptExternal`（**放弃本地**），
+   * 误报后一点击就丢输入。脏分支因此：窗口内忽略，窗口外**再比一次磁盘内容**。 */
   async function onFilesChanged(paths: string[]) {
     const now = Date.now();
     for (const raw of paths) {
@@ -128,7 +127,7 @@ export const useEditorStore = defineStore("editor", () => {
       if (dirty.value.has(path)) {
         // 自己刚写盘（含同一次写盘的第 2..n 条事件）：交给下一次保存收敛，不是"外部修改"。
         if (withinSelfSave) continue;
-        // 窗口之外也可能只是"磁盘上就是缓冲区里那一份" —— 比对一次再决定，别凭时间猜。
+        // 窗口之外再比对一次：内容一致 ⇒ 不是冲突（不靠时间判）。
         const disk = await readDisk(path);
         if (disk !== null && disk === buffers.value.get(path)) continue;
         externalConflict.value.add(path);
