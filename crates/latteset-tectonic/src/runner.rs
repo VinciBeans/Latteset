@@ -20,10 +20,12 @@
 //!    [`bib_signature`]：bibtex 的输出只取决于引用集合与 `.bib` 状态，两者与产出 `.bbl` 那次一致时
 //!    重跑只会得到同一份 `.bbl`，却会连带多跑一趟排版。**biber 仍不支持**（biblatex 要外部 `biber`）：
 //!    检出 `<stem>.run.xml` 时显式 `warn!`，见 [`crate::BIBER_PASS_MISSING_NOTE`]。
-//! 6. **不做收敛判定**（t24 / V-04）：趟数 = 普通文档 1 趟、命中 bib 的 2 趟；但**不检查**
-//!    "是否需要再跑"（上游 `is_rerun_needed`）⇒ `CompileOutcome.kind` 继续报
+//! 6. **收敛判定**（t24 / V-04，2026-09-15 扩到编辑触发档）：重跑循环比较 rerun 相关中间产物，
+//!    稳定即算收敛 ⇒ `CompileOutcome.kind` 报 [`CompileKind::Full`]，否则退回
 //!    [`CompileKind::Quick`]（先前固定报 `Full` 是错的：那会让 ㉘ 的"引用待更新"/`draft` 语义失效）。
-//!    已知后果见 [`crate::CONVERGENCE_SUPPORTED`] 的注释（`thebibliography` / 后文 `\ref`）。
+//!    **`Quick` 请求同样走这条判定**，只是多一道预算闸门（`QUICK_CONVERGENCE_BUDGET`）：
+//!    预算内收敛就按实际结果报 `Full`（编辑后直接是正确结果），超预算则停在草稿态、交给空闲收敛。
+//!    详见 [`crate::CONVERGENCE_SUPPORTED`]。
 //! 7. **PDF 落盘是原子替换**（t24 / V-05）：`{stem}.pdf.tmp` → `rename` 覆盖，与子进程档
 //!    `crates/latteset-infra/src/runner.rs:615-630` 同口径（失败清理临时文件、旧 PDF 不被截断）。
 
@@ -31,7 +33,7 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
-use std::time::{Instant, SystemTime};
+use std::time::{Duration, Instant, SystemTime};
 
 use async_trait::async_trait;
 use latteset_core::log_parser::{MessageKind, diagnose, parse_log};
@@ -137,6 +139,45 @@ fn log_tail(log_ring: &Arc<Mutex<Vec<String>>>) -> String {
 
 /// 重跑上限（上游 `DEFAULT_MAX_TEX_PASSES = 6`）：防"每趟都在变"的文档把编译拖死。
 const MAX_TEX_PASSES: usize = 6;
+
+/// **编辑触发档的收敛预算**（2026-09-15）：把「草稿」从固定档变成**判定结果**。
+///
+/// 编辑触发的请求原先无条件单趟即停（"引用/目录落后一趟"就是草稿的语义，由 ㉘ 的
+/// 「引用待更新」+ 空闲收敛兜底）。库形态里这个前提不成立：重跑循环与中间产物指纹本来就在，
+/// 而"这一趟到底落没落后"是**可判定**的 ⇒ 让它在预算内自己跑到稳定，收敛就报 `Full`。
+/// 前端 `draft` 取自**实际**强度（`scheduler/actor.rs` 终态按 `outcome.kind` 报）⇒ 不亮提示，
+/// 且 `useIdleConvergence` 只看 `draft` ⇒ 也不会再排一次多余的 Full。
+///
+/// 预算取 2000 ms **与前端空闲收敛的 `DELAY_MS` 同值**：编辑触发档只要能在"那 2 s 等待"之内
+/// 收敛，就严格优于"先给落后档、等 2 s 再补一趟"。超预算（或第 1 趟本身就慢，见
+/// [`QUICK_FIRST_PASS_MAX`]）⇒ 停在草稿态，行为与今天完全一致。
+const QUICK_CONVERGENCE_BUDGET: Duration = Duration::from_millis(2000);
+
+/// 编辑触发档最多跑几趟（`Full` 的上限仍是 [`MAX_TEX_PASSES`]）。
+/// 取 3 的依据：实测冷启收敛档最坏就是 3 趟（`cite` 夹具 954 ms），再多就该交给空闲收敛。
+const QUICK_MAX_PASSES: usize = 3;
+
+/// 编辑触发档"继续追收敛"的**额外前提：第 1 趟本身要够快**（= [`QUICK_CONVERGENCE_BUDGET`] 的一半，
+/// 关系由单测钉住 —— `Duration` 的除法不是 const fn，这里只能写字面量）。
+///
+/// 为什么不能只看总预算：预算是**跑完一趟之后**才检查的。实测反例（125 页 / 462 KB 夹具，
+/// 2026-09-15）：一趟 1.7 s，`elapsed < 预算` 成立 ⇒ 又跑了一趟，两次共 **3846 ms**，而中间产物
+/// 仍在变 ⇒ 最终还是 `Quick`（草稿态）。也就是说只看总预算时，大文档要**白付一趟**才能回到原行为。
+///
+/// 所以文档一旦"一趟就接近预算"，就停在草稿态（与 ㉘ 原样一致），正确性交给空闲收敛去追。
+/// 1 s 的取舍：一趟 ≤1 s 的文档，"编辑触发档自己收敛"（1–3 趟、≤2 s）严格快于
+/// "草稿 + 2 s 等待 + 再补一趟"；一趟 >1 s 的文档，多跑一趟的代价已经吃掉全部好处。
+const QUICK_FIRST_PASS_MAX: Duration = Duration::from_millis(1000);
+
+/// 编辑触发档还能不能再跑一趟（纯函数：单测直接打边界）。
+///
+/// `passes` 是**已经跑完**的趟数（≥1），`first_pass` 是第 1 趟的墙钟，`loop_elapsed` 从排版循环
+/// 开始计时（不含 format 趟 —— 冷缓存生成 `.fmt` 的开销不该吃掉编辑触发档的额度）。
+fn quick_pass_allowed(passes: usize, first_pass: Duration, loop_elapsed: Duration) -> bool {
+    passes < QUICK_MAX_PASSES
+        && first_pass < QUICK_FIRST_PASS_MAX
+        && loop_elapsed < QUICK_CONVERGENCE_BUDGET
+}
 
 /// 快照 rerun 相关中间产物的内容摘要（名字 → 摘要）。两趟之间比较它决定要不要再跑。
 ///
@@ -677,14 +718,19 @@ fn run_engines(
             // 也就是说**只有 bib 趟而没有重跑循环，等于白跑**。
             //
             // 趟数按请求的强度分档（与 ㉘ 的产品语义对齐）：
-            // - `Quick`（编辑触发）：**单趟**，跑完即止 —— "引用/目录落后一趟"正是它的语义，
-            //   由 ㉘ 的「引用待更新」+ 空闲收敛兜底；bib 趟也留到 Full 再做。
             // - `Full`（首编 / 手动编译 / 空闲收敛）：跑到 rerun 相关中间产物**稳定**为止。
+            // - `Quick`（编辑触发）：**在预算内**也跑到稳定（见 `quick_pass_allowed`）；收敛就按
+            //   实际结果报 `Full` ⇒ 前端不亮「引用待更新」、也不再排一次空闲收敛。任一道闸门不过
+            //   （趟数 / 第 1 趟太慢 / 累计超预算）则停在草稿态，行为与 ㉘ 今天完全一致。
             let aux_name = format!("{stem}.aux");
             let mut passes = 0usize;
             let mut bib_done = false;
             let mut stable = false;
             let mut unsupported_tool: Option<&'static str> = None;
+            // 预算只算排版循环本身：format 趟（冷缓存要生成 `.fmt`）不占编辑触发档的额度。
+            let loop_started = Instant::now();
+            // 第 1 趟的墙钟（`quick_pass_allowed` 的第二个条件：一趟就慢的文档不再多跑）。
+            let mut first_pass = Duration::ZERO;
             loop {
                 let before = rerun_snapshot(&shared);
                 let what = if passes == 0 { "排版趟" } else { "排版趟（重跑）" };
@@ -692,6 +738,7 @@ fn run_engines(
                 passes += 1;
                 if passes == 1 {
                     phase_ms.1 = t_start.elapsed().as_millis();
+                    first_pass = loop_started.elapsed();
                     // 上游 `driver.rs:1900-1904`：TeX 没产出预期输出文件时要**明说**（多因文档为空），
                     // 否则错误会以"XDV→PDF 失败"的形式出现、指向错误的方向。
                     if capture_len(&shared, &xdv_name) == 0 {
@@ -701,6 +748,10 @@ fn run_engines(
                         ));
                     }
                 }
+
+                // 编辑触发档的收敛预算：每趟算一次，bib 闸门与"还能不能再跑一趟"共用同一个判断
+                // （Full 不设这道闸门，它的上限就是下面的 `MAX_TEX_PASSES`）。
+                let quick_may_continue = quick_pass_allowed(passes, first_pass, loop_started.elapsed());
 
                 // 外部工具类（biber / makeindex / glossaries）：库形态不跑外部工具 ⇒ 登记后
                 // **不得声称已收敛**（下面 kind 会退回 Quick）。检出信号取上游口径：
@@ -713,7 +764,7 @@ fn run_engines(
                 }
 
                 let mut force_rerun = false;
-                if wants_full && !bib_done {
+                if (wants_full || quick_may_continue) && !bib_done {
                     let aux_needing_bib = aux_files_requesting_bibtex(&shared, &aux_name);
                     if !aux_needing_bib.is_empty() {
                         let fresh = bib_signature(&shared, &aux_needing_bib, &bib_root);
@@ -772,18 +823,35 @@ fn run_engines(
                     );
                     break;
                 }
-                if !wants_full {
-                    break; // Quick：单趟语义，哪怕中间产物还在变也交给 ㉘ 兜底
+                if !wants_full && !quick_may_continue {
+                    // ㉛ 决策日志：为什么停在草稿态（否则"编辑触发档为什么还落后一趟"无从查起）。
+                    debug!(
+                        passes,
+                        first_pass_ms = first_pass.as_millis() as u64,
+                        elapsed_ms = loop_started.elapsed().as_millis() as u64,
+                        first_pass_max_ms = QUICK_FIRST_PASS_MAX.as_millis() as u64,
+                        max_passes = QUICK_MAX_PASSES,
+                        budget_ms = QUICK_CONVERGENCE_BUDGET.as_millis() as u64,
+                        "编辑触发档不再追收敛：停在草稿态（交给 ㉘ 的空闲收敛）"
+                    );
+                    break;
                 }
             }
             if let Some(tool) = unsupported_tool {
                 warn!(stem = %stem, tool, "{}", crate::BIBER_PASS_MISSING_NOTE);
             }
             // 收敛支持位与 kind 的取值依据（不得虚报：有外部工具没跑、或跑满上限没稳定，
-            // 都不能说"已收敛"）。
-            converged = wants_full && unsupported_tool.is_none() && stable;
+            // 都不能说"已收敛"）。**不再要求请求是 `Full`** —— 编辑触发档在预算内跑到稳定同样算
+            // 收敛，这正是"把草稿从固定档变成判定结果"的落点。
+            converged = unsupported_tool.is_none() && stable;
             pass_count = passes;
-            info!(passes, stable, converged, "库形态排版趟数");
+            info!(
+                passes,
+                stable,
+                converged,
+                requested = ?requested_kind,
+                "库形态排版趟数"
+            );
 
             // ⑥ 页哈希（A/B/C 三个功能点的共用判据）→ 转换趟（§3.4 第 7 步）。
             //
@@ -910,8 +978,9 @@ fn run_engines(
                 pdf_path: pdf_dst,
                 // V-04：**按实际做到的事报**（先前固定报 `Full` 是错的 —— 会让 ㉘ 的
                 // "引用待更新"/`draft` 语义失效）：
-                // - 请求 Full **且**没有未跑的外部工具（biber/makeindex…）⇒ 中间产物已稳定 ⇒ `Full`；
-                // - 其余（请求本就是 Quick 的编辑触发、或文档要外部工具而我们跑不了）⇒ `Quick`，
+                // - 中间产物已稳定 ⇒ `Full`（**含编辑触发档在预算内收敛的情形**：那正是我们要的
+                //   "编辑后直接就是正确结果"，前端据此不亮提示、也不排空闲收敛）；
+                // - 否则（预算用尽、或文档要外部工具而我们跑不了）⇒ `Quick`，
                 //   由 ㉘ 的「引用待更新」+ 空闲收敛兜底。
                 kind: if converged { CompileKind::Full } else { CompileKind::Quick },
                 // 页级复用 A/B/C 的输入：与子进程档**同一个函数**、同一份 XDV 数据。
@@ -1118,15 +1187,36 @@ mod tests {
         assert!(crate::BIBER_PASS_MISSING_NOTE.contains("biber"), "{}", crate::BIBER_PASS_MISSING_NOTE);
     }
 
-    /// 支持位必须与实现一致：bib 已支持、biber 不支持、收敛**有条件**支持、页哈希已支持。
+    /// **编辑触发档的收敛预算**（2026-09-15）：三道边界都要钉住 —— 预算内且第 1 趟够快才允许
+    /// 再跑（编辑后直接收敛成正确结果），否则停在草稿态、交给空闲收敛。
+    #[test]
+    fn quick_budget_allows_only_within_bounds() {
+        let ms = Duration::from_millis;
+        let fast = ms(400); // 28 页夹具的第 1 趟
+        let slow = ms(1900); // 125 页 / 462 KB 夹具的第 1 趟（实测）
+        assert!(quick_pass_allowed(1, fast, ms(400)), "第 1 趟快、时间没到 ⇒ 允许再跑");
+        assert!(quick_pass_allowed(2, fast, ms(1500)), "第 1 趟快、还没到预算 ⇒ 允许再跑");
+        assert!(!quick_pass_allowed(3, fast, ms(100)), "跑满 QUICK_MAX_PASSES ⇒ 不允许");
+        assert!(!quick_pass_allowed(1, slow, ms(1900)), "第 1 趟就慢 ⇒ 不再多跑（大文档退化点）");
+        assert!(!quick_pass_allowed(1, fast, ms(2000)), "预算到点即停（判据是 < 预算）");
+        assert!(!quick_pass_allowed(1, fast, ms(9000)), "整轮超预算 ⇒ 停");
+        // 门槛之间的关系：第 1 趟门槛必须是预算的一半，否则"慢文档退化"就没有余量。
+        assert_eq!(QUICK_FIRST_PASS_MAX * 2, QUICK_CONVERGENCE_BUDGET);
+        // 编辑触发档必须比 Full 更早收手，否则就不是"预算"了。
+        assert!(QUICK_MAX_PASSES < MAX_TEX_PASSES);
+        // 同值不是巧合：编辑触发档只要能在"那 2 s 等待"内收敛，就严格优于先落后再补一趟。
+        assert_eq!(QUICK_CONVERGENCE_BUDGET, ms(2000), "必须与前端空闲收敛的 DELAY_MS 同值");
+    }
+
+    /// 收敛支持位必须与实现一致：bib 已支持、biber 不支持、收敛**有条件**支持、页哈希已支持。
     #[test]
     fn support_flags_match_the_implementation() {
         assert!(crate::BIB_PASS_SUPPORTED, "bib 趟已实现 ⇒ 该位必须为 true");
         assert!(!crate::BIBER_PASS_SUPPORTED, "biber 要外部二进制 ⇒ 仍不支持");
         assert!(
             crate::CONVERGENCE_SUPPORTED,
-            "重跑循环已实现（Full 请求下跑到中间产物稳定）⇒ 该位为 true；\
-             但 Quick 请求与含 biber/makeindex 的文档仍会退回 Quick"
+            "重跑循环已实现（跑到中间产物稳定）⇒ 该位为 true；编辑触发档在预算内也收敛，\
+             只有预算用尽或含 biber/makeindex 的文档才退回 Quick"
         );
         assert!(
             crate::PAGE_HASH_SUPPORTED,

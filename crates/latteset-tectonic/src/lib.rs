@@ -127,7 +127,8 @@ pub const PAGE_HASH_SUPPORTED: bool = true;
 /// ⚠ **bib 趟必须配重跑循环才有意义**：`latex → bibtex → latex` 之后 `\cite` **仍是未解析**
 /// （实测第二趟读到 `.bbl` 后仍报 `Citation ... undefined` + `Label(s) may have changed. Rerun`）
 /// —— 因为 `\bibcite`（编号）是上一趟才写进 `.aux` 的，`\begin{document}` 读的是旧值。
-/// 所以这条能力**只在请求 `Full` 时**生效（Quick 单趟不做 bib）。
+/// 所以 bib 趟在**预算内**的编辑触发档同样会跑（2026-09-15；先前它只在 `Full` 下跑，
+/// 于是"加了 `\cite`"这类编辑要等到空闲收敛才解析出来）。
 ///
 /// 检出信号是 **`.aux` 里的 `\bibdata`**，不是扫源码找 `\cite`：`\cite` 配 `thebibliography`
 /// 时不需要 BibTeX。**biber 仍不支持**（biblatex 的外部工具），见 [`BIBER_PASS_SUPPORTED`]。
@@ -151,12 +152,16 @@ pub const BIBER_PASS_MISSING_NOTE: &str =
 /// 实现的是上游 `default_pass` 的重跑循环：跑一趟 TeX，比较 rerun 相关中间产物（`.aux`/`.toc`/
 /// `.bbl`…）与上一趟是否相同，不同就再跑，上限 6 趟（上游 `DEFAULT_MAX_TEX_PASSES`）。
 ///
-/// **两个条件**（缺一就退回 `Quick`，见 [`crate::TectonicLibRunner`] 的收尾）：
-/// 1. 请求的强度是 **`Full`** —— 编辑触发的 `Quick` 只跑**单趟**（"引用/目录落后一趟"正是它的
-///    语义，由 ㉘ 的「引用待更新」+ 空闲收敛兜底）；
-/// 2. 文档**没有**要我们跑不了的外部工具 —— biber（`<stem>.run.xml`）/ makeindex（`.idx`）。
+/// **编辑触发的 `Quick` 请求也走这条判定**（2026-09-15）：原先它无条件单趟即停，把"引用/目录落后
+/// 一趟"当成草稿的语义；但库形态里重跑循环与中间产物指纹本来就在，"这一趟落没落后"是**可判定**的。
+/// 现在它有一个预算（2000 ms，与前端空闲收敛的 `DELAY_MS` 同值；上限 3 趟）：预算内跑到稳定
+/// 就按**实际结果**报 `Full` ⇒ 前端不亮「引用待更新」、也不再排一次空闲收敛的 Full；超预算则停在
+/// 草稿态，行为与 ㉘ 原先完全一致（大文档单趟即超预算 ⇒ 第 1 趟之后即停）。
 ///
-/// 第 2 条是"不得虚报"的关键：报 `Full` 就等于告诉用户"引用/目录已就绪"，而带 biber 的文档
-/// 我们根本没解析引用 ⇒ 那种情况必须退回 `Quick`，让 ㉘ 的提示亮着。
+/// **仍会退回 `Quick` 的两种情形**（不得虚报 —— 报 `Full` 就等于告诉用户"引用/目录已就绪"）：
+/// 1. 预算内没跑到稳定（含跑满 `MAX_TEX_PASSES`）；
+/// 2. 文档**要我们跑不了的外部工具** —— biber（`<stem>.run.xml`）/ makeindex（`.idx`）。
+///
+/// 第 2 条是关键：带 biber 的文档我们根本没解析引用 ⇒ 必须退回 `Quick`，让 ㉘ 的提示亮着。
 pub const CONVERGENCE_SUPPORTED: bool = true;
 

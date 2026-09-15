@@ -80,7 +80,9 @@ pub struct CompileReport {
     pub root_file: String,
     /// 本次实际强度：`full`（latexmk 收敛）或 `quick`（单趟直调引擎，引用可能落后一趟）。
     pub kind: String,
-    /// 首次编译且被 runner 自动升级为 Full 时为 true（请求 Quick 但无产物）。
+    /// 请求的是 `Quick`，但**实际**跑成了 Full ⇒ true。两种来源：① 首编无产物被 runner 自动升级；
+    /// ② 库形态下编辑触发档在收敛预算内跑到了稳定（见 `CONVERGENCE_SUPPORTED`）。
+    /// 判据只有一条：`请求 Quick ∧ 上报 Full`（字段名沿用既有 JSON 契约，不改名）。
     pub upgraded_from_quick: bool,
 }
 

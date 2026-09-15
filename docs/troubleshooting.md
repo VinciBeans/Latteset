@@ -80,6 +80,20 @@ ignored: [
 
 **验证**（真机，scratch 项目 `test_file/e2e/dedup-status`）：外部写两次 → 无提示、tab 无脏点、**文件 mtime 不变**（没有回写）、编辑器内容照常更新；用 `ed.trigger("mcp","type",…)` 造真实编辑 → tab 标脏 + 自动保存落盘（证明开关没吞掉用户输入）；保持脏缓冲再外部写 → 提示出现、本地输入保住、点提示后采用磁盘版。单测：`editor.spec.ts` 新增两条（见 [modules.md](./modules.md) §5.5），改回旧写法时「不得误报」那条会红。
 
+## `tauri dev` 下编辑触发档不肯收敛、提示还亮着：预算按发布档标定（2026-09-15）
+
+**现象**：库形态（`npm run lib:dev`）里编辑一个 28 页项目，状态栏仍亮「引用待更新」、2 s 后还补一次 Full；同一个项目在 release 下（`cargo run --release -p latteset-tectonic --example bench -- --quick`）**1 趟就收敛、报 `Full`、无提示**。
+
+**原因**：**不是缺陷，是标定口径**。编辑触发档的收敛预算里有一道"第 1 趟必须 <1 s"的闸门，阈值按**发布档**定；而 `dev` profile 下 C 引擎（xetex/xdvipdfmx）按 `-O0` 编译，同一趟慢 **≈4.6×**（实测同项目同改动：release 475 ms / debug 2174 ms）⇒ 闸门先于收敛被触发，退化成 ㉘ 的旧行为。
+
+**怎么确认是这一条**（决策日志一行点名）：
+
+```
+DEBUG 编辑触发档不再追收敛：停在草稿态（交给 ㉘ 的空闲收敛） passes=1 first_pass_ms=2174 elapsed_ms=2174 first_pass_max_ms=1000 max_passes=3 budget_ms=2000
+```
+
+`first_pass_ms > first_pass_max_ms` 即命中（`RUST_LOG=debug`）。**要量真实行为必须 `--release`** —— 同 §6.4 的测量纪律（debug 下库形态数字大 6–8×）。判据与实测见 [tectonic-library-plan.md](./tectonic-library-plan.md) §6.5。
+
 ## 白屏：无 GPU 虚拟机环境的首帧呈现竞态
 
 **现象**：`npm run tauri dev` 启动应用进程时，窗口偶发白屏（webview 页面已加载、JS 正常、devtools Console 无报错，但首帧未呈现）。**右键 → Reload 后立即正常**。
