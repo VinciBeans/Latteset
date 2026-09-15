@@ -509,10 +509,18 @@ pub fn diagnose(msg: &LogMessage) -> Option<Diagnosis>;
 
 ## 5. SyncTeX（synctex 大模块）
 
+> **实现已换成进程内自解析**（2026-09-15，[ADR-0013](./adr/0013-synctex-in-process-parser.md)）：
+> `SyncTexProvider` 的**默认实现不依赖系统 `synctex` 二进制**（那个二进制由 TeX Live 分发，
+> 与 ⑫ 里程碑"零预装可用"的前提冲突）。CLI 实现保留为 `LATTESET_SYNCTEX=cli`（A/B 复核用）。
+> 验收 = `node scripts/synctex-selfcheck.mjs`：三组真实工程上与 CLI **逐点对拍**，
+> 往返跳到位 **12/12、7/10、12/12**，与 CLI 逐项相同。已知偏差：beamer 类页面的前向坐标
+> 中位差 132 pt（样本行在记录里没有对应行）、`column` 恒 -1。
+
 ```
 synctex（core）              synctex（latteset-infra）
-├── model.rs                 └── synctex.rs —— SyncTexProvider 实现（含竞争重试）
-├── provider.rs
+├── model.rs                 └── synctex.rs —— SyncTexProvider 的两个实现
+├── provider.rs                  · SyncTexSelf（默认，自解析：gzip 解压 + 几何查询）
+├── parse.rs —— .synctex 解析    · SyncTexCli（LATTESET_SYNCTEX=cli，含竞争重试）
 └── classify.rs —— 反向命中目标分类（roadmap ㉒，纯逻辑）
 ```
 
@@ -870,6 +878,8 @@ settings-changed: Settings
 | 23 | **页哈希缓存的口径只有一份（core）** | `PAGES_CACHE_VERSION` / `pages_cache_path` / `parse_pages_cache` / `format_pages_cache` 都定义在 `latteset_core::xdv`（2026-09 从 `latteset-infra` 提上去）：两个 runner 都要用它，而库形态档在 `latteset-tectonic`、按 ADR-0012 **不依赖 infra** ⇒ 两处各写一份必然漂移，而漂移的代价是"永远首轮"（A 面每轮白跑一次转换 + 视窗全量重绘）。infra 侧只留薄封装 |
 | 24 | **常驻档（同进程连续编译）在重文档上是负收益** | 实测（方案 §6.4，release）：进程地板只有 **9.3 ms**，轻档（1 页）净收益 −26 ms，**重档（28 页多文件 Full）第 3 轮起退化、稳态比"每次起进程"慢 31%**（1450 vs 1109 ms）。**退化不是"活变多"**：`passes` 恒 2、`req_*` 每轮完全相同，但 `typeset` +27% / `convert` +39% / **`bundle_read_ms` +75%（读次数恒 2009）** ⇒ 同进程内累计的内存压力把**所有**操作一起拖慢（峰值工作集 245 MB）。**上游从未承接过"一进程跑 N 次引擎"**（CLI 一进程一次）。⇒ **P4 常驻按回退点处理：不投入**；该投的是 bib 跳过判据（≈470 ms/次）与 bundle/format 常驻化（≈30–55 ms/次） |
 | 25 | 复核 `--example bench` / `bench-tectonic-lib.mjs` 的口径 | `crates/latteset-tectonic/examples/bench.rs` = **同进程连续编译 N 次**（常驻档的唯一入口，CLI 是一次性语义）；脚本是**每样本起一个进程**的 harness，常驻档要让模板自带 `--runs N` 循环（注释已写明）。`{root}` 替换的是**目录路径本身**，模板要自己写 `--root {root}` |
+| 26 | **库形态（路径 B）档的反向定位基本不可用** | 实测：库形态产出的 `.synctex.gz` 里 `Input:` **141 条只有 29 条非空**（且非空的是 `.aux` 等生成物），章节源码一个都没登记 ⇒ 反向命中落在空 tag 上，解析器**如实返回"没有对应源码"**（不伪造文件）。根因：引擎经 `input_open_name_with_abspath` 询问真实路径，而自持 I/O 层只对"项目根内找得到的文件"给得出路径（主输入走 `input_open_primary`，其 abspath 变体用的是 trait 默认实现 ⇒ 主输入被记成 `texput`）。**子进程档不受影响**（实测 121/141 非空）。待办：覆盖 `input_open_primary_with_abspath` + 排查章节为何也没登记 |
+| 27 | SyncTeX 自解析的两条已知偏差 | 见 [ADR-0013](./adr/0013-synctex-in-process-parser.md)：① beamer 类页面上前向坐标与 CLI 中位差 132 pt（样本行在 `.synctex` 里没有对应记录，两侧的节点选择规则不同；**往返指标不受影响**）；② `column` 恒 -1（格式里没有列号）。漂移风险（格式官方未承诺公开）由 `scripts/synctex-selfcheck.mjs` 当探测器 |
 | 22 | 错误条目的**文件归属**会错一章（`parse_log` 文件栈） | 实测（2026-09，流式验证的夹具）：错误写在 `ch_05.tex:164`，列表报 `./ch_04.tex:164`。机制已定位：TeX 日志把"关闭上一个文件 + 打开下一个文件"写在**同一行**（`[64]) (./ch_05.tex`），而 `RE_OPEN` 要求行首是 `(`、弹栈只认行首 `)` → `ch_05` 没入栈、`ch_04` 被弹出。影响：错误列表显示的文件名与点击跳转目标（`ErrorList.jump(entry.file, entry.line)`）都错位；终态与流式共用同一解析器，两者皆然。修法要按字符顺序做括号匹配，属独立任务（**未修**，见 roadmap §10-D） |
 | 23 | **触发面只认 `.tex`**（两侧都错）＋ 依赖信息未接线 | 实测（2026-09，[G1 研究](./research/g1-read-interception-feasibility.md) §5.1）：改**被引用**的 `.bib` → 所有 tmp 产物 mtime 不变（该触发不触发，roadmap ㉜）；改**未被引用**的 `.tex` → 白编译一次（`main.aux` 被重写，roadmap ㉝）。判据已在磁盘上：`.fls`（引擎实际打开，Quick 路径需补 `-recorder`）+ `.fdb_latexmk`（依赖图 + md5 + 子步骤），工具 `scripts/fls-report.mjs` 已就绪（**未接线**） |
 | 24 | 字节级 I/O 拦截（上游 G1 原义）**不做** | 三条现成通道都只到文件级；字节偏移需改引擎 / 文件系统驱动 / API hook（与 ADR-0003 不签名分发冲突），且**没有消费方**——上游唯一用途 seen 水位要"引擎进程活着且状态可回退"（G4 fork，Windows 无 `fork()`）。见 [G1 研究](./research/g1-read-interception-feasibility.md) §4 |

@@ -38,7 +38,6 @@ use latteset_core::types::{
 use latteset_infra::fs::TokioFs;
 use latteset_infra::runner::LatexmkRunner;
 use latteset_infra::storage::SettingsStorage;
-use latteset_infra::synctex::SyncTexCli;
 
 pub mod mcp;
 
@@ -119,7 +118,9 @@ impl Session {
         let storage = Arc::new(SettingsStorage::new(config_dir.join("settings.json")));
         Self {
             fs,
-            sync: Arc::new(SyncTexCli),
+            // SyncTeX 默认**自解析**（与 GUI 侧同一个工厂，避免两条入口行为漂移）：
+            // 不依赖系统 `synctex` 二进制（它来自 TeX Live）。`LATTESET_SYNCTEX=cli` 可切回。
+            sync: latteset_infra::synctex::default_provider(),
             storage,
             project: None,
             settings: Settings::default(),

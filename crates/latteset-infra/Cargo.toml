@@ -13,6 +13,9 @@ tokio-util.workspace = true
 async-trait.workspace = true
 notify.workspace = true
 tracing = "0.1"
+# `.synctex.gz` 自解析（roadmap ⑤ 的底座替换）：gzip 解压放在**这里**而不是 core ——
+# core 是"纯逻辑、无 IO 依赖"（ADR-0006）；纯 Rust 后端，不引 C。
+flate2 = { version = "1", default-features = false, features = ["rust_backend"] }
 
 [dev-dependencies]
 tokio = { version = "1", features = ["full"] }

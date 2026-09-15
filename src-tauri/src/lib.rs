@@ -14,7 +14,7 @@ use tauri::Manager;
 use latteset_core::scheduler::Scheduler;
 use latteset_core::settings::Settings;
 use latteset_infra::{
-    fs::TokioFs, runner::LatexmkRunner, storage::SettingsStorage, synctex::SyncTexCli,
+    fs::TokioFs, runner::LatexmkRunner, storage::SettingsStorage,
     watch::{spawn_watcher, WatchState},
 };
 use tokio::sync::RwLock;
@@ -62,7 +62,11 @@ pub fn run() {
 
             // ---- 基础设施装配（ADR-0010：具体实现在 latteset-infra，本层只注入 trait 位）----
             let fs: Arc<dyn latteset_core::project::FileSystem> = Arc::new(TokioFs);
-            let sync: Arc<dyn latteset_core::synctex::SyncTexProvider> = Arc::new(SyncTexCli);
+            // SyncTeX：**默认自解析**（`.synctex.gz` 自己解），不依赖系统 `synctex` 二进制 ——
+            // 那个二进制来自 TeX Live，而 ⑫ 的业务前提是"干净 Windows 机器零预装可用"。
+            // `LATTESET_SYNCTEX=cli` 可切回系统二进制（A/B 复核用，见 infra::synctex::default_provider）。
+            let sync: Arc<dyn latteset_core::synctex::SyncTexProvider> =
+                latteset_infra::synctex::default_provider();
 
             // 全局设置目录（app_config_dir）
             let config_dir = app
