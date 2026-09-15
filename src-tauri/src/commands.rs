@@ -370,6 +370,53 @@ pub fn lib_form_available() -> bool {
     crate::runner_switch::LIB_FORM_COMPILED_IN
 }
 
+/// 引擎形态（库形态方案 §6 P7 的「状态栏可见形态位」）。
+#[derive(Debug, Clone, Serialize, Type)]
+#[serde(rename_all = "snake_case")]
+pub enum EngineForm {
+    /// 子进程档：`latexmk` 驱动 xelatex/lualatex/pdflatex，或直调 `tectonic.exe`。
+    Subprocess,
+    /// Tectonic **库内嵌**。
+    Lib,
+    /// 形态位要库内嵌，但**本次构建没编入** `tectonic-lib` ⇒ 下一趟编译会显式失败（D1 不静默回退）。
+    LibUnavailable,
+}
+
+/// 状态栏用的「实际形态」载荷。
+#[derive(Debug, Clone, Serialize, Type)]
+pub struct EngineFormDto {
+    pub form: EngineForm,
+    /// 形态位是否由 `LATTESET_TECTONIC_LIB` 强制（**它压过设置**，所以设置面选子进程也可能是库形态）。
+    pub env_forced: bool,
+    /// 本次构建是否编入库形态。
+    pub lib_compiled_in: bool,
+}
+
+/// 当前**实际**会用的引擎形态。
+///
+/// **判定只做一次、就在后端**：这里直接调用 runner 用的那个纯函数
+/// （[`latteset_core::settings::TectonicSettings::use_library_form`]），所以状态栏不可能与编译实际
+/// 行为不一致。前端**不得**自己从 `compile.engine` 猜形态 —— 2026-09-15 真机踩到的
+/// "状态栏报 XeLaTeX、实际跑 Tectonic 库形态"正是猜出来的。
+#[tauri::command]
+#[specta::specta]
+pub async fn engine_form(state: State<'_, AppState>) -> Result<EngineFormDto, CmdError> {
+    let s = state.settings.read().await;
+    let env_forced = crate::runner_switch::lib_form_forced_by_env();
+    let wants_lib = s.tectonic.use_library_form(s.compile.engine, env_forced);
+    Ok(EngineFormDto {
+        form: if !wants_lib {
+            EngineForm::Subprocess
+        } else if crate::runner_switch::LIB_FORM_COMPILED_IN {
+            EngineForm::Lib
+        } else {
+            EngineForm::LibUnavailable
+        },
+        env_forced,
+        lib_compiled_in: crate::runner_switch::LIB_FORM_COMPILED_IN,
+    })
+}
+
 // ---------------------------------------------------------------- SyncTeX
 
 #[tauri::command]

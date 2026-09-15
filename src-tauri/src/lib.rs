@@ -160,6 +160,7 @@ fn build_specta_builder() -> tauri_specta::Builder<tauri::Wry> {
             commands::get_settings,
             commands::update_settings,
             commands::lib_form_available,
+            commands::engine_form,
         ])
         .events(tauri_specta::collect_events![
             CompileStatusEvent,

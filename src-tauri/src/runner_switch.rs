@@ -46,7 +46,7 @@ const LIB_FORM_ENV: &str = "LATTESET_TECTONIC_LIB";
 pub const LIB_FORM_COMPILED_IN: bool = cfg!(feature = "tectonic-lib");
 
 /// 环境变量是否强制要求库形态（认不出的取值按"不强制"）。
-fn forced_by_env() -> bool {
+pub fn lib_form_forced_by_env() -> bool {
     matches!(
         std::env::var(LIB_FORM_ENV).map(|v| v.trim().to_ascii_lowercase()),
         Ok(v) if matches!(v.as_str(), "1" | "true" | "yes" | "on")
@@ -94,7 +94,7 @@ impl CompileRunner for SwitchableRunner {
         // 形态判定走 core 的纯函数（**引擎闸门在这里**：库形态是 Tectonic 的子选项，
         // 引擎不是 Tectonic 时形态位不生效——否则 `engine=xelatex` + `lib_form=true`
         // 会静默跑 Tectonic，而状态栏报 XeLaTeX）。
-        let want_lib = t.use_library_form(req.engine, forced_by_env());
+        let want_lib = t.use_library_form(req.engine, lib_form_forced_by_env());
 
         if !want_lib {
             return self.run_subprocess(req, cancel).await;

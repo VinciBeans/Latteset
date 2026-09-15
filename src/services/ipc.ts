@@ -38,4 +38,9 @@ export const ipc = {
    * `Result<_, CmdError>` 的命令生成 `typedError` 包装。
    */
   libFormAvailable: () => commands.libFormAvailable(),
+  /**
+   * 当前**实际**会用的引擎形态（状态栏显示用）。判定在后端做一次（与 runner 共用同一个纯函数），
+   * 前端只渲染 —— 别在这里从 settings 猜形态。
+   */
+  engineForm: () => unwrap(commands.engineForm()),
 };

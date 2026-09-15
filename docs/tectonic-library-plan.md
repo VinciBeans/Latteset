@@ -498,7 +498,7 @@ impl latteset_core::scheduler::CompileRunner for TectonicLibRunner {
 |---|---|
 | 目标 | D3 衍生义务：两形态并存时能区分「哪个形态在跑」；D1：失败可见、不自动回退 |
 | 验收判据 | ① 状态栏可见形态位；② 无「已回退/静默回退」文案（`tectonic-test-plan.md:842`）；③ **feature 开/关两种构建下都能装配**：`--features tectonic-lib` 时用 `TectonicLibRunner`，默认构建用 `LatexmkRunner`，且装配点仍是 `src-tauri/src/lib.rs:83-84` 那一行（§3.2） |
-| ↳ **2026-09-15 现状注**（判据本身不改，只标它已过时的地方） | ③ 的"feature 开 ⇒ `TectonicLibRunner`"已被**设置面收口**取代：GUI 侧两个构建都装 `SwitchableRunner`，由**每趟编译读的设置**（`use_library_form(engine, env_forced)`）决定用哪个 runner；**默认构建仍永不使用库形态**这条实质不变 |
+| ↳ **2026-09-15 现状注**（判据本身不改，只标它已过时的地方） | ③ 的"feature 开 ⇒ `TectonicLibRunner`"已被**设置面收口**取代：GUI 侧两个构建都装 `SwitchableRunner`，由**每趟编译读的设置**（`use_library_form(engine, env_forced)`）决定用哪个 runner；**默认构建仍永不使用库形态**这条实质不变。① **已于 2026-09-15 补齐**：状态栏引擎名旁显示形态 chip（子进程 / 库内嵌 / 库形态不可用），判定来自后端 `engine_form` 命令——它直接复用 runner 的同一个纯函数，所以**不可能与编译实际行为不一致** |
 | 回退点 | 形态位不显示 ⇒ 库形态不得默认开启 |
 
 ### P8 验证与收口

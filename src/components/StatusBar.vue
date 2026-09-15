@@ -1,12 +1,13 @@
 <!-- StatusBar（modules.md §9.4）：编译状态 / 行列号 / 编译模式 / 冲突提示。
      另含「未确定根文件」入口（roadmap P0-②-1）：弹窗被关掉后仍可从这里重新打开选择器。 -->
 <script setup lang="ts">
-import { computed } from "vue";
+import { computed, onMounted, ref, watch } from "vue";
 import { useCompileStore } from "../stores/compile";
 import { useEditorStore } from "../stores/editor";
 import { useSettingsStore } from "../stores/settings";
 import { useProjectStore } from "../stores/project";
-import type { CompilePhase } from "../bindings";
+import { ipc } from "../services/ipc";
+import type { CompilePhase, EngineFormDto } from "../bindings";
 
 defineProps<{ cursorLine: number; cursorCol: number }>();
 defineEmits<{ (e: "pick-root"): void }>();
@@ -55,6 +56,54 @@ const engineText = computed(() => {
   }
 });
 
+/**
+ * **形态位**（库形态方案 §6 P7 验收判据 ①）：子进程 / 库内嵌。
+ *
+ * 判定**只在后端做**（`engine_form` 命令直接复用 runner 的纯函数 `use_library_form`），这里只渲染。
+ * 2026-09-15 真机踩到的"状态栏报 XeLaTeX、实际跑 Tectonic 库形态"就是前端自己从
+ * `compile.engine` 猜形态造成的——所以这层不许再猜。
+ */
+const form = ref<EngineFormDto | null>(null);
+async function refreshForm() {
+  try {
+    form.value = await ipc.engineForm();
+  } catch {
+    form.value = null; // 拿不到就不显示，绝不猜
+  }
+}
+onMounted(refreshForm);
+// 形态随设置变（引擎 / 形态位都会改判定）；settings-changed 落到 store 上之后再取一次。
+watch(() => settings.settings, refreshForm);
+
+/** 只有"形态本身值得一提"时才显示：非 Tectonic 引擎 + 纯子进程 = 没信息量。 */
+const showForm = computed(() => {
+  const f = form.value;
+  if (!f) return false;
+  const tectonicEngine = settings.settings?.compile.engine === "tectonic";
+  return tectonicEngine || f.form !== "subprocess";
+});
+
+const formText = computed(() => {
+  switch (form.value?.form) {
+    case "lib": return "库内嵌";
+    case "lib_unavailable": return "库形态不可用";
+    case "subprocess": return "子进程";
+    default: return "";
+  }
+});
+
+const formTitle = computed(() => {
+  const f = form.value;
+  if (!f) return "";
+  const env = f.env_forced ? "（由环境变量 LATTESET_TECTONIC_LIB 强制，压过设置）" : "";
+  switch (f.form) {
+    case "lib": return `Tectonic 库内嵌：引擎嵌在产品进程里${env}`;
+    case "lib_unavailable":
+      return `设置要库内嵌，但本次构建没编入 tectonic-lib ⇒ 下一趟编译会显式失败（D1：不静默回退到子进程）${env}`;
+    default: return `子进程档：latexmk 驱动引擎（Tectonic 子进程档直调 tectonic.exe）${env}`;
+  }
+});
+
 async function toggleMode() {
   await settings.update({ mode: isContinuous.value ? "on_save" : "continuous" });
 }
@@ -70,6 +119,13 @@ async function toggleMode() {
     <span v-if="engineText" class="engine" :title="`当前引擎：${engineText}${compile.draft ? '（本次为 Quick 草稿编译）' : ''}`">
       {{ engineText }}
     </span>
+    <!-- P7 验收判据 ①：形态位（子进程 / 库内嵌）。判定来自后端 engine_form，与编译实际行为同源 -->
+    <span
+      v-if="showForm"
+      class="form"
+      :class="{ warn: form?.form === 'lib_unavailable' }"
+      :title="formTitle"
+    >{{ formText }}</span>
     <!-- 流式进度（阶段 2）：只在"排版中"且已有页输出时显示，避免闪烁 -->
     <span v-if="compile.phase === 'running' && compile.pages > 0" class="pages">
       已排版 {{ compile.pages }} 页
@@ -165,6 +221,20 @@ async function toggleMode() {
   color: var(--blueberry);
   font-size: 11.5px;
   font-weight: 600;
+}
+/* 形态位（P7 判据 ①）：与引擎名同处，不打开设置面板也看得见"子进程 / 库内嵌" */
+.form {
+  padding: 1px 7px;
+  border-radius: 999px;
+  background: var(--card-2, rgba(0, 0, 0, 0.05));
+  color: var(--ink-dim);
+  font-size: 11.5px;
+  font-weight: 600;
+}
+/* 库形态不可用 = 下一趟编译会显式失败：必须显眼（D1 要求失败可见） */
+.form.warn {
+  background: rgba(255, 181, 74, 0.18);
+  color: #b8791a;
 }
 .draft {  background: rgba(255, 181, 74, 0.18);
   color: #b8791a;

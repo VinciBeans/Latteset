@@ -51,6 +51,15 @@ export const commands = {
 	 *  的另一面。（选了但没编进来时 runner 会显式报错，D1：不静默回退到子进程。）
 	 */
 	libFormAvailable: () => __TAURI_INVOKE<boolean>("lib_form_available"),
+	/**
+	 *  当前**实际**会用的引擎形态。
+	 * 
+	 *  **判定只做一次、就在后端**：这里直接调用 runner 用的那个纯函数
+	 *  （[`latteset_core::settings::TectonicSettings::use_library_form`]），所以状态栏不可能与编译实际
+	 *  行为不一致。前端**不得**自己从 `compile.engine` 猜形态 —— 2026-09-15 真机踩到的
+	 *  "状态栏报 XeLaTeX、实际跑 Tectonic 库形态"正是猜出来的。
+	 */
+	engineForm: () => typedError<EngineFormDto, CmdError>(__TAURI_INVOKE("engine_form")),
 };
 
 /** Events */
@@ -204,6 +213,24 @@ export type Engine = "xelatex" | "pdflatex" | "lualatex" |
  *  在该引擎下**不可用**（`page_hashes` 恒空 → 前端按"无法判定"保守全量刷新，A 无对应物）。
  */
 "tectonic";
+
+/**  引擎形态（库形态方案 §6 P7 的「状态栏可见形态位」）。 */
+export type EngineForm = 
+/**  子进程档：`latexmk` 驱动 xelatex/lualatex/pdflatex，或直调 `tectonic.exe`。 */
+"subprocess" | 
+/**  Tectonic **库内嵌**。 */
+"lib" | 
+/**  形态位要库内嵌，但**本次构建没编入** `tectonic-lib` ⇒ 下一趟编译会显式失败（D1 不静默回退）。 */
+"lib_unavailable";
+
+/**  状态栏用的「实际形态」载荷。 */
+export type EngineFormDto = {
+	form: EngineForm,
+	/**  形态位是否由 `LATTESET_TECTONIC_LIB` 强制（**它压过设置**，所以设置面选子进程也可能是库形态）。 */
+	env_forced: boolean,
+	/**  本次构建是否编入库形态。 */
+	lib_compiled_in: boolean,
+};
 
 /**  错误列表条目（modules.md §4 契约）。 */
 export type ErrorEntry = {
