@@ -81,6 +81,17 @@ impl IoCapture {
     pub fn bytes(&self, name: &str) -> Option<&[u8]> {
         self.files.get(name).map(|v| v.as_slice())
     }
+
+    /// **打开输出即截断**（上游 mem 层同语义：`\openout` 是新建一个缓冲，不是续写）。
+    ///
+    /// 少了这一条会出真错（2026-09-15 实测）：第二趟的 `.aux` 会**追加**在第一趟后面 ⇒
+    /// `.aux` 每趟变长 ⇒ 重跑判据永远判"变了" ⇒ 跑满 6 趟仍不收敛，并报
+    /// `There were multiply-defined labels`；`.log` 也会把历趟拼在一起，让错误清单失真。
+    pub fn reset_for_output(&mut self, name: &str) {
+        self.files.entry(name.to_owned()).or_default().clear();
+        self.written.insert(name.to_owned(), 0);
+        self.chunks.retain(|(n, _)| n != name);
+    }
 }
 
 pub type SharedCapture = Arc<Mutex<IoCapture>>;
@@ -261,6 +272,15 @@ impl TectonicIo {
         self.injected.contains_key(name)
     }
 
+    /// 磁盘输入的解析：**项目源文件优先，其次是上一趟留在 `tmp/` 的中间产物**。
+    ///
+    /// 第二条（2026-09-15 补）是 Quick 档不倒退的关键：latexmk 之所以能在单趟下保住目录/引用，
+    /// 就是因为它读得到上一次的 `tmp/<stem>.aux` / `.bbl`。少了它，库形态实测有两个症状：
+    /// ① **Full 编译出来的参考文献表会在下一次 Quick 里消失**（读不到上一趟的 `.aux`/`.bbl`）；
+    /// ② 每次编译的中间产物都从零开始 ⇒ **永远要跑 2 趟**才稳定。
+    ///
+    /// 只放行 [`crate::RERUN_EXTENSIONS`] 那几类（会被回读的中间产物），**不含** `.pdf`/`.xdv`：
+    /// 产物不该被当成输入来源，否则 `\includegraphics{main.pdf}` 这类写法会读到我们自己的输出。
     fn disk_path(&self, name: &str) -> Option<PathBuf> {
         // 绝对路径直接拒绝：本层只认项目根内的相对名字（防止引擎写出项目外，
         // 也与子进程档 cwd = 项目根的相对输入口径一致）。
@@ -269,7 +289,16 @@ impl TectonicIo {
             return None;
         }
         let candidate = self.project_root.join(rel);
-        candidate.is_file().then_some(candidate)
+        if candidate.is_file() {
+            return Some(candidate);
+        }
+        if crate::RERUN_EXTENSIONS.iter().any(|ext| name.ends_with(ext)) {
+            let previous = self.mirror_dir.as_ref()?.join(rel);
+            if previous.is_file() {
+                return Some(previous);
+            }
+        }
+        None
     }
 
     fn open_disk_input(&mut self, name: &str) -> Option<InputHandle> {
@@ -319,9 +348,7 @@ impl IoProvider for TectonicIo {
         self.shared
             .lock()
             .unwrap_or_else(|e| e.into_inner())
-            .files
-            .entry(name.to_owned())
-            .or_default();
+            .reset_for_output(name);
         OpenResult::Ok(OutputHandle::new(
             name,
             CaptureWriter { shared: self.shared.clone(), name: name.to_owned(), mirror },
@@ -338,9 +365,7 @@ impl IoProvider for TectonicIo {
         self.shared
             .lock()
             .unwrap_or_else(|e| e.into_inner())
-            .files
-            .entry(NAME.to_owned())
-            .or_default();
+            .reset_for_output(NAME);
         OpenResult::Ok(OutputHandle::new(
             NAME,
             CaptureWriter { shared: self.shared.clone(), name: NAME.to_owned(), mirror: None },
@@ -572,6 +597,47 @@ mod tests {
             Arc::new(Mutex::new(Vec::new())),
             None,
         )
+    }
+
+    /// **上一趟的中间产物可以当输入，但只有"会被回读"的那几类**。
+    ///
+    /// 这条是 Quick 档不倒退的根据（读得到 `tmp/<stem>.aux`/`.bbl`）；同时它**不**放行
+    /// `.pdf`/`.xdv` —— 产物不该被当成输入来源。
+    #[test]
+    fn previous_intermediates_are_inputs_but_artifacts_are_not() {
+        let project = std::env::temp_dir().join("latteset-tectonic-io-prev-proj");
+        let tmp = std::env::temp_dir().join("latteset-tectonic-io-prev-tmp");
+        for d in [&project, &tmp] {
+            let _ = std::fs::remove_dir_all(d);
+            std::fs::create_dir_all(d).expect("建目录");
+        }
+        std::fs::write(tmp.join("main.aux"), "\\relax\\bibcite{a}{1}").expect("写 aux");
+        std::fs::write(tmp.join("main.bbl"), "\\begin{thebibliography}{1}").expect("写 bbl");
+        std::fs::write(tmp.join("main.pdf"), "%PDF-1.5").expect("写 pdf");
+        std::fs::write(tmp.join("main.xdv"), "xdv").expect("写 xdv");
+
+        let io = TectonicIo::new(
+            project.clone(),
+            Some(tmp.clone()),
+            None,
+            Some("digest-a".to_owned()),
+            None,
+            new_capture(),
+            Arc::new(Mutex::new(Vec::new())),
+            None,
+        );
+        assert_eq!(io.disk_path("main.aux"), Some(tmp.join("main.aux")), "上一趟的 aux 必须是合法输入");
+        assert_eq!(io.disk_path("main.bbl"), Some(tmp.join("main.bbl")), "上一趟的 bbl 同理");
+        assert_eq!(io.disk_path("main.pdf"), None, ".pdf 是产物，不该被当输入（\\includegraphics 会读到它）");
+        assert_eq!(io.disk_path("main.xdv"), None, ".xdv 同理");
+        assert_eq!(io.disk_path("no-such.aux"), None, "两边都没有就该是缺失");
+
+        // 项目里的同名文件必须**压过** tmp/ 的副本（源永远优先）
+        std::fs::write(project.join("main.aux"), "project").expect("写项目 aux");
+        assert_eq!(io.disk_path("main.aux"), Some(project.join("main.aux")));
+        for d in [&project, &tmp] {
+            let _ = std::fs::remove_dir_all(d);
+        }
     }
 
     /// 合成主输入的字面量必须与上游 `enter_format_mode` 一致

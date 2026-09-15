@@ -557,7 +557,43 @@ node scripts/validate-pdf.mjs --pdf <dir>\<stem>.pdf --expect-pages 1 --expect-t
 
 另有一条**不是缺陷**但会误导复核的事实：本机 `test_file/projects/bench/_e1/en-tiny.tex` **没有 `\end{document}`**，用它做库形态用例会得到 `! Emergency stop / no legal \end found`（单趟计时夹具，本来就是这么设计的）。
 
-**仍然不成立的（不得当通过，与 §13 的未实测项一致）**：bib 趟（`BIB_PASS_SUPPORTED=false`，带 `\cite` 的文档会 `warn!` 且报 `Quick`）、页哈希（`PAGE_HASH_SUPPORTED=false`，显式空表）、多趟收敛（`CONVERGENCE_SUPPORTED=false`）、常驻复用（P4，闸门仍是 J1）。
+**仍然不成立的（不得当通过，与 §13 的未实测项一致）**：页哈希（`PAGE_HASH_SUPPORTED=false`，显式空表）、外部工具类（biber / makeindex / glossaries —— 库形态不跑外部进程；检出即 `warn!` 且 `kind` 退回 `Quick`）、常驻复用（P4，闸门仍是 J1）。
+
+### §6.2 bib 趟与收敛（2026-09-15 补齐，V-03/V-04 收口）
+
+**结论先行**：`latex → bibtex → latex` **不等于引用解析好了** —— 实测第二趟读到 `.bbl` 之后 LaTeX 仍报
+`Citation 'knuth1984' undefined` + `Label(s) may have changed. Rerun to get cross-references right.`，
+因为 `\bibcite`（编号）是上一趟才写进 `.aux` 的。⇒ **只做 bib 趟而不做重跑循环，等于白跑**。
+所以本轮把上游 `default_pass` 的重跑循环一并落地，并按 ㉘ 的产品语义分档：
+
+| 请求 | 行为 | `Success.kind` |
+|---|---|---|
+| `Quick`（编辑触发） | **1 趟**，不跑 bibtex（"落后一趟"正是它的语义，交 ㉘ 兜底） | `Quick` |
+| `Full`（首编/手动/空闲收敛） | 排版趟 →（aux 有 `\bibdata` 则 bibtex）→ 比较 rerun 相关中间产物是否变化 → 跑到稳定，**上限 6 趟**（上游同值） | `Full`，**除非**文档要 biber/makeindex（那退回 `Quick`，不得虚报） |
+
+**实测（release，同目录 bundle、热 format）**：
+
+| 夹具 | 库形态 | 子进程 `tectonic.exe`（收敛档） |
+|---|---|---|
+| `zh-min.tex` 冷（2 趟） | **616 ms**（排版 269 / 转换 347） | 571 ms |
+| `zh-min.tex` 已收敛（**1 趟**） | **358 ms**（排版 266 / 转换 92） | — |
+| `cite.tex`（`\cite`+`.bib`）冷（**3 趟** + 1 次 bibtex） | **954 ms** | 869 ms |
+| `cite.tex` 热（2 趟） | **679 ms** | — |
+| `cite.tex` Quick（1 趟） | **405 ms** | — |
+
+⇒ 与子进程**同速**；**已收敛的文档反而更快**（跳过无用趟是自持循环的直接收益）。
+引用真的解析了：PDF 文本层含 `[1]` / `Knuth` / `The TeXbook`，`.aux` 里有 `\bibcite{knuth1984}{1}`，
+`.blg` 显示 `plain.bst`（bundle）与 `refs.bib`（项目磁盘）都读到了。
+
+**过程中揪出的两个真 bug**（都不是编译器能发现的）：
+
+1. **输出层"打开即截断"缺失**：`IoCapture` 原来只 `entry().or_default()` 而不清空，于是第二趟的
+   `.aux` **追加**在第一趟后面 ⇒ 每趟变长 ⇒ 重跑永不稳定（跑满 6 趟）并报 `multiply-defined labels`；
+   `.log` 也被历趟拼在一起、让错误清单失真。上游 mem 层的 `\openout` 语义是**新建缓冲**。
+2. **缺"上一趟中间产物"这条输入**：上游 latexmk 之所以能在单趟下保住目录/引用，是因为它读得到
+   `tmp/<stem>.aux`/`.bbl`。补上后（且只放行 [`crate::RERUN_EXTENSIONS`] 那几类，**不含** `.pdf`/`.xdv`）
+   实测消掉两个症状：**Full 出来的参考文献表会在下一次 Quick 里消失**、以及**每次编译都从零开始 ⇒ 永远 2 趟**。
+   编译开始时还会把这些副本预热进内存层，重跑判据才有"上一趟"可比较（否则重复编译永远 2 趟）。
 
 **性能口径（2026-09-15 实测，release，同一目录 bundle 与同一夹具）**：
 

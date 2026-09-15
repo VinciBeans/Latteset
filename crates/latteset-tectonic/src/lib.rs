@@ -25,13 +25,25 @@ pub mod status;
 
 pub use bundle::{BundleSource, bundle_digest, open_bundle};
 pub use io::{CANCEL_MESSAGE, IoCapture, TectonicIo, format_file_name};
-pub use runner::{BIB_PASS_MISSING_NOTE, TectonicLibRunner, needs_bib_pass};
+pub use runner::TectonicLibRunner;
 pub use status::ProgressStatus;
 
 /// TeX format 名（子进程档用 Tectonic 默认的 `latex`；上游 `src/config.rs:140-164`）。
 ///
 /// io 层（format 缓存文件名）与 runner（`TexEngine::process` 的 format 参数）共用同一个常量。
 pub const FORMAT_NAME: &str = "latex";
+
+/// **会被回读的中间产物后缀**（两个用途共用一张表，避免两处口径漂移）：
+///
+/// 1. **重跑判据**（`runner::rerun_snapshot`）：这些文件在下一趟会被 LaTeX 读回来
+///    （`.aux` 的引用/标签编号、`.toc` 的页码、`.bbl` 的条目……），它们变了就说明还没稳定；
+/// 2. **上一趟产物的输入资格**（`io::TectonicIo::disk_path`）：只有这几类允许从 `tmp/` 读
+///    **上一次编译**留下的副本 —— latexmk 正是靠这一点让 Quick 档的目录/引用**不倒退**。
+///    刻意不把 `.pdf`/`.xdv` 放进来：它们不该被当成输入（否则 `\includegraphics{main.pdf}`
+///    这类写法会读到我们自己的产物）。
+pub const RERUN_EXTENSIONS: &[&str] = &[
+    ".aux", ".toc", ".lof", ".lot", ".out", ".bbl", ".nav", ".snm", ".idx", ".ind", ".glo", ".gls",
+];
 
 /// 选形态的**运行期**开关（默认关闭 ⇒ 子进程形态，方案 §3.5「默认」行）。
 ///
@@ -106,17 +118,45 @@ pub const PAGE_HASH_NOTE: &str =
     "Tectonic 库形态（路径 B）本阶段不产出页哈希：XDV 只在自持 I/O 层的内存文件表里 → \
      Success.page_hashes 显式给空表（= 无法判定，下游按保守全量刷新处理）";
 
-/// **bib 趟支持位**（t24 / V-03）：本阶段 `false`。
+/// **bib 趟支持位**（t24 / V-03 的收口）：**已支持**（2026-09-15）。
 ///
-/// 本 crate 没有 `tectonic_engine_bibtex` 依赖（本机 registry 与 vendor 都没有它 ⇒ 加依赖会让
-/// 本模块失去离线可复现性）⇒ 带引用的文档**不等价**于子进程档 Full。检出引用时 runner 会
-/// 显式 `warn!`（[`BIB_PASS_MISSING_NOTE`]），`Success.kind` 报 `Quick`（[`CONVERGENCE_SUPPORTED`]）。
-/// 真做 bib 趟的入口 = 加 `tectonic_engine_bibtex` + 按 `.aux` 存在且文档有引用时跑一趟。
-pub const BIB_PASS_SUPPORTED: bool = false;
+/// 序列照上游 `default_pass`：排版趟 → 若 `.aux` 出现 `\bibdata`（= 用了 `\bibliography{...}`）
+/// → `BibtexEngine` 处理该 aux（读 `.bib` 走项目磁盘、`plain.bst` 走 bundle、`.bbl` 写内存层）
+/// → 回到重跑循环。
+///
+/// ⚠ **bib 趟必须配重跑循环才有意义**：`latex → bibtex → latex` 之后 `\cite` **仍是未解析**
+/// （实测第二趟读到 `.bbl` 后仍报 `Citation ... undefined` + `Label(s) may have changed. Rerun`）
+/// —— 因为 `\bibcite`（编号）是上一趟才写进 `.aux` 的，`\begin{document}` 读的是旧值。
+/// 所以这条能力**只在请求 `Full` 时**生效（Quick 单趟不做 bib）。
+///
+/// 检出信号是 **`.aux` 里的 `\bibdata`**，不是扫源码找 `\cite`：`\cite` 配 `thebibliography`
+/// 时不需要 BibTeX。**biber 仍不支持**（biblatex 的外部工具），见 [`BIBER_PASS_SUPPORTED`]。
+pub const BIB_PASS_SUPPORTED: bool = true;
 
-/// **收敛支持位**（t24 / V-04）：本阶段 `false`（只跑一趟 TeX，不重跑、不收敛）。
+/// **biber 支持位**：本阶段 `false`。
 ///
-/// 因此 `CompileOutcome::Success.kind` 必须报 `CompileKind::Quick`：子进程档的 `Quick` 语义
-/// 就是"引用/目录可能落后一趟"，而库形态单趟**更弱**（连 bib 都没跑）⇒ 由 ㉘ 的 `draft` /
-/// 「引用待更新」提示兜底，不能让用户以为已经收敛。
-pub const CONVERGENCE_SUPPORTED: bool = false;
+/// biblatex 的检出信号是 `<主文件名>.run.xml`（上游 `check_biber_requirement`），而它要跑
+/// **外部 `biber` 二进制**——库形态不跑外部工具（与"不重造引擎驱动"同一条取向）。
+/// 检出时 runner 会显式 `warn!`（[`BIBER_PASS_MISSING_NOTE`]），不假装引用解析了。
+pub const BIBER_PASS_SUPPORTED: bool = false;
+
+/// 检出 biblatex/biber 但本轮不跑 biber 时的警告文案（如实收窄声明，不静默）。
+pub const BIBER_PASS_MISSING_NOTE: &str =
+    "库形态本轮不跑 biber（需要外部 `biber` 二进制，biblatex 检出信号 = `<stem>.run.xml`）\
+     ⇒ 该文档的引用/参考文献表**可能未解析**；用 `\\bibliography` + BibTeX 的文档不受影响";
+
+
+/// **收敛支持位**：**有条件支持**（2026-09-15）。
+///
+/// 实现的是上游 `default_pass` 的重跑循环：跑一趟 TeX，比较 rerun 相关中间产物（`.aux`/`.toc`/
+/// `.bbl`…）与上一趟是否相同，不同就再跑，上限 6 趟（上游 `DEFAULT_MAX_TEX_PASSES`）。
+///
+/// **两个条件**（缺一就退回 `Quick`，见 [`crate::TectonicLibRunner`] 的收尾）：
+/// 1. 请求的强度是 **`Full`** —— 编辑触发的 `Quick` 只跑**单趟**（"引用/目录落后一趟"正是它的
+///    语义，由 ㉘ 的「引用待更新」+ 空闲收敛兜底）；
+/// 2. 文档**没有**要我们跑不了的外部工具 —— biber（`<stem>.run.xml`）/ makeindex（`.idx`）。
+///
+/// 第 2 条是"不得虚报"的关键：报 `Full` 就等于告诉用户"引用/目录已就绪"，而带 biber 的文档
+/// 我们根本没解析引用 ⇒ 那种情况必须退回 `Quick`，让 ㉘ 的提示亮着。
+pub const CONVERGENCE_SUPPORTED: bool = true;
+

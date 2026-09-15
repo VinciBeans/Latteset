@@ -27,6 +27,7 @@ tracing = "0.1"
 # 调不到 `CoreBridgeState::with_global_state`（0.2.2 只有 `with_global_lock`）—— 子 crate 必须整代一致。
 tectonic_bridge_core = "0.5.3"
 tectonic_bundles = { version = "0.4.2", default-features = false }
+tectonic_engine_bibtex = "0.3.4"
 tectonic_engine_xdvipdfmx = "0.4.4"
 tectonic_engine_xetex = "0.5.3"
 tectonic_errors = "0.3.0"

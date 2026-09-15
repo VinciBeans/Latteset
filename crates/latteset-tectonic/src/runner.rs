@@ -12,13 +12,14 @@
 //! 2. **页哈希显式不支持**（本阶段）：见 [`crate::PAGE_HASH_NOTE`]。
 //! 3. **`.log` 落盘**：靠本层把输出镜像到 `tmp/`（≡ 子进程档的 `--keep-logs`）。
 //! 4. **超时不重试、失败不回退**（D1/㉕ 同口径）：库形态失败**不**自动切回子进程。
-//! 5. **不跑 bib 趟**（t24 / V-03，**如实收窄声明**）：本 crate 没有 `tectonic_engine_bibtex`
-//!    依赖（本机 registry/ vendor 都没有它，加依赖会让本模块无法离线复现）⇒ 带 `\cite` /
-//!    `\bibliography` / `\addbibresource` 的文档**不等价**于子进程档 Full：`.bbl` 不由我们生成，
-//!    引用可能显示为未解析。检出引用时**显式 `warn!`**（不静默），见 [`needs_bib_pass`]。
-//! 6. **单趟、不收敛**（t24 / V-04）：实际只跑一趟 TeX + 一次转换 ⇒ `CompileOutcome.kind`
-//!    必须报 [`CompileKind::Quick`]（先前固定报 `Full` 是错的：那会让 ㉘ 的"引用待更新"/
-//!    `draft` 语义失效）。真正收敛后再回来改成 `Full`。
+//! 5. **bib 趟已支持**（2026-09-15 收口 V-03）：`.aux` 出现 `\bibdata` 时跑 `BibtexEngine`
+//!    并**重跑一趟 TeX**（上游 `default_pass` 同序）⇒ `\bibliography{...}` + `.bib` 的文档
+//!    引用会解析成编号、参考文献表会印出来。**biber 仍不支持**（biblatex 要外部 `biber`）：
+//!    检出 `<stem>.run.xml` 时显式 `warn!`，见 [`crate::BIBER_PASS_MISSING_NOTE`]。
+//! 6. **不做收敛判定**（t24 / V-04）：趟数 = 普通文档 1 趟、命中 bib 的 2 趟；但**不检查**
+//!    "是否需要再跑"（上游 `is_rerun_needed`）⇒ `CompileOutcome.kind` 继续报
+//!    [`CompileKind::Quick`]（先前固定报 `Full` 是错的：那会让 ㉘ 的"引用待更新"/`draft` 语义失效）。
+//!    已知后果见 [`crate::CONVERGENCE_SUPPORTED`] 的注释（`thebibliography` / 后文 `\ref`）。
 //! 7. **PDF 落盘是原子替换**（t24 / V-05）：`{stem}.pdf.tmp` → `rename` 覆盖，与子进程档
 //!    `crates/latteset-infra/src/runner.rs:615-630` 同口径（失败清理临时文件、旧 PDF 不被截断）。
 
@@ -34,6 +35,7 @@ use latteset_core::project::FileSystem;
 use latteset_core::scheduler::{CompileProgress, CompileRunner};
 use latteset_core::types::{CompileKind, CompileOutcome, CompileRequest, ErrorEntry, ErrorKind};
 use tectonic_bridge_core::{CoreBridgeLauncher, MinimalDriver};
+use tectonic_engine_bibtex::{BibtexEngine, BibtexOutcome};
 use tectonic_engine_xdvipdfmx::XdvipdfmxEngine;
 use tectonic_engine_xetex::{TexEngine, TexOutcome};
 use tokio_util::sync::CancellationToken;
@@ -46,21 +48,6 @@ use crate::{PAGE_HASH_NOTE, PAGE_HASH_SUPPORTED};
 
 /// 中间产物目录（与子进程档 `-o tmp` 一致）。
 const OUT_DIR: &str = "tmp";
-
-/// 是否需要 bib 趟（V-03 的**反例自证**）：出现下列任一条命令即视为"引用需要外部工具解析"。
-///
-/// 口径是**宁可多报**（注释里的 `\cite` 也算）：本函数只决定"要不要给用户一条可见警告"，
-/// 误报的代价是一行日志，漏报的代价是"引用没解析却看着像成功"。
-pub fn needs_bib_pass(src: &str) -> bool {
-    ["\\cite", "\\bibliography", "\\addbibresource", "\\printbibliography", "\\nocite"]
-        .iter()
-        .any(|k| src.contains(k))
-}
-
-/// 检出引用但本轮不跑 bib 时的警告文案（V-03：如实收窄声明，不静默）。
-pub const BIB_PASS_MISSING_NOTE: &str =
-    "库形态本轮不跑 bib 趟（无 tectonic_engine_bibtex 依赖）⇒ 该文档的引用**可能未解析**，\
-     与子进程档 Full 不等价（V-03）";
 
 /// 库形态 runner。
 pub struct TectonicLibRunner {
@@ -145,9 +132,155 @@ fn log_tail(log_ring: &Arc<Mutex<Vec<String>>>) -> String {
     }
 }
 
+/// 重跑上限（上游 `DEFAULT_MAX_TEX_PASSES = 6`）：防"每趟都在变"的文档把编译拖死。
+const MAX_TEX_PASSES: usize = 6;
+
+/// 快照 rerun 相关中间产物的内容摘要（名字 → 摘要）。两趟之间比较它决定要不要再跑。
+///
+/// 覆盖哪些后缀见 [`crate::RERUN_EXTENSIONS`]（那张表同时决定"哪些 `tmp/` 副本可以当输入"）。
+fn rerun_snapshot(shared: &SharedCapture) -> std::collections::BTreeMap<String, u64> {
+    use std::hash::{Hash, Hasher};
+    let c = shared.lock().unwrap_or_else(|e| e.into_inner());
+    let mut out = std::collections::BTreeMap::new();
+    for (name, data) in c.files.iter() {
+        if crate::RERUN_EXTENSIONS.iter().any(|ext| name.ends_with(ext)) {
+            let mut h = std::collections::hash_map::DefaultHasher::new();
+            data.hash(&mut h);
+            out.insert(name.clone(), h.finish());
+        }
+    }
+    out
+}
+
+/// 把**上一趟留在 `tmp/` 的中间产物预热进内存层**。
+///
+/// 为什么需要：重跑判据是"这一趟写出来的 vs 这一趟开始前已有的"，而"开始前已有的"如果不含
+/// `tmp/` 里的上一趟副本，就永远是空的 ⇒ **每次编译都必跑 2 趟**（实测：清 tmp 后 2 趟、
+/// 不清也是 2 趟）。预热之后，重复编译一份**已经收敛**的文档只需 1 趟。
+///
+/// 与 [`TectonicIo::disk_path`] 的 `tmp/` 兜底是同一件事的两面：那个让引擎读得到，
+/// 这个让重跑判据看得见。两处都用 [`crate::RERUN_EXTENSIONS`]，不会漂移。
+fn seed_previous_intermediates(shared: &SharedCapture, tmp_dir: &Path) {
+    let Ok(entries) = std::fs::read_dir(tmp_dir) else {
+        return; // 首次编译没有 tmp/，正常
+    };
+    let mut c = shared.lock().unwrap_or_else(|e| e.into_inner());
+    for entry in entries.flatten() {
+        let name = entry.file_name().to_string_lossy().into_owned();
+        if !crate::RERUN_EXTENSIONS.iter().any(|ext| name.ends_with(ext)) {
+            continue;
+        }
+        if let Ok(bytes) = std::fs::read(entry.path()) {
+            c.files.insert(name, bytes);
+        }
+    }
+}
+
 /// 捕获表里某个输出已写的字节数。
 fn capture_len(shared: &SharedCapture, name: &str) -> usize {
     shared.lock().unwrap_or_else(|e| e.into_inner()).files.get(name).map_or(0, Vec::len)
+}
+
+/// 捕获表里某个输出的文本（有损解码：`.blg`/`.log` 不保证合法 UTF-8）。
+fn capture_text(shared: &SharedCapture, name: &str) -> String {
+    let c = shared.lock().unwrap_or_else(|e| e.into_inner());
+    c.files.get(name).map(|b| String::from_utf8_lossy(b).into_owned()).unwrap_or_default()
+}
+
+/// 跑一趟 TeX（上游 `tex_pass` 每次新建一个引擎实例，这里照抄）。
+///
+/// `halt_on_error(true)` 与显式 `build_date` 的理由见调用点注释（D-2 / D4）。
+fn run_tex_pass(
+    launcher: &mut CoreBridgeLauncher<'_>,
+    input: &str,
+    what: &str,
+) -> Result<(), String> {
+    let mut tex = TexEngine::default();
+    tex.halt_on_error_mode(true);
+    tex.synctex(true); // ≡ 子进程档的 `--synctex`
+    tex.build_date(SystemTime::now());
+    tex.process(launcher, crate::FORMAT_NAME, input)
+        // `Ok(TexOutcome::Errors)` **不在此处失败**：与上游 `tex_pass` 同口径 —— 排版趟的错误由
+        // 收尾时的 `.log` 解析成结构化 `ContentError` 交给用户，这里只拦引擎硬错。
+        .map(|_outcome| ())
+        .map_err(|e| format!("{what}失败：{e:#}"))
+}
+
+/// 哪些 `.aux` 要求跑 BibTeX（上游 `is_bibtex_needed`：**`.aux` 里出现 `\bibdata`**）。
+///
+/// 为什么按 aux 而不是扫源码：`\cite` 配 `thebibliography` 时**不需要** BibTeX，而
+/// `\bibliography{refs}` 才会往 `.aux` 写 `\bibdata`。按源码里的 `\cite` 判会白跑一趟。
+///
+/// 与上游的一处**有意收窄**：上游 `bibtex_pass` 对该层里**所有** `.aux` 各跑一次（`\include`
+/// 分章时章 aux 也在内），而章 aux 通常没有 `\bibdata` ⇒ BibTeX 只会吐一句
+/// `I found no \bibdata command`。我们只对**含 `\bibdata` 的 aux** 跑：单文件情形与上游完全一致，
+/// 分章 + 每章各带 `\bibliography` 的情形也照样覆盖，只是不再产生那句噪音。
+fn aux_files_requesting_bibtex(shared: &SharedCapture, primary_aux: &str) -> Vec<String> {
+    const BIBDATA: &[u8] = b"\\bibdata";
+    let c = shared.lock().unwrap_or_else(|e| e.into_inner());
+    let mut out = Vec::new();
+    // 主 aux 排在最前（上游口径：`tex_aux_path` 优先）
+    if let Some(f) = c.files.get(primary_aux) {
+        if f.windows(BIBDATA.len()).any(|s| s == BIBDATA) {
+            out.push(primary_aux.to_owned());
+        }
+    }
+    for (name, f) in c.files.iter() {
+        if name.ends_with(".aux")
+            && name != primary_aux
+            && f.windows(BIBDATA.len()).any(|s| s == BIBDATA)
+        {
+            out.push(name.clone());
+        }
+    }
+    out
+}
+
+/// 是否请求 biber（上游 `check_biber_requirement`：biblatex 会写 `<主文件名>.run.xml`）。
+fn biber_requested(shared: &SharedCapture, stem: &str) -> bool {
+    let name = format!("{stem}.run.xml");
+    shared.lock().unwrap_or_else(|e| e.into_inner()).files.contains_key(&name)
+}
+
+/// 跑一趟 BibTeX，并把它自己的日志（`.blg`）作为**证据**：硬失败时附上尾部。
+///
+/// 口径（上游 `bibtex_pass_for_one_aux_file`）：`Spotless` 无事、`Warnings` 提示一行、
+/// `Errors` **只警告不失败**（缺条目这类很常见，TeX 仍能出产物）；只有引擎硬错才失败。
+fn run_bibtex_pass(
+    launcher: &mut CoreBridgeLauncher<'_>,
+    aux: &str,
+    stem: &str,
+    shared: &SharedCapture,
+) -> Result<(), String> {
+    let blg_name = format!("{stem}.blg");
+    let mut engine = BibtexEngine::default();
+    match engine.process(launcher, aux) {
+        Ok(BibtexOutcome::Spotless) => {
+            debug!(aux = %aux, "bib 趟：无告警");
+            Ok(())
+        }
+        Ok(BibtexOutcome::Warnings) => {
+            warn!(aux = %aux, blg = %capture_text(shared, &blg_name).trim(), "bib 趟有告警（继续）");
+            Ok(())
+        }
+        Ok(BibtexOutcome::Errors) => {
+            // 上游同口径：忽略并继续 —— 但把 `.blg` 摊开，不静默。
+            warn!(
+                aux = %aux,
+                blg = %capture_text(shared, &blg_name).trim(),
+                "bib 趟报 Errors（按上游口径忽略并继续；引用可能显示为未解析）"
+            );
+            Ok(())
+        }
+        Err(e) => {
+            let blg = capture_text(shared, &blg_name);
+            let tail: String = blg.lines().rev().take(8).collect::<Vec<_>>().into_iter().rev().collect::<Vec<_>>().join(" | ");
+            Err(format!(
+                "bib 趟失败（BibTeX 处理 `{aux}`）：{e:#}{}",
+                if tail.trim().is_empty() { String::new() } else { format!("；`.blg` 尾部：{tail}") }
+            ))
+        }
+    }
 }
 
 /// 从捕获表里**取走** dump 出来的 format（上游 `driver.rs:1825-1838`：遍历内存层所有 `*.fmt`）。
@@ -205,6 +338,7 @@ fn run_engines(
     stem: String,
     name: String,
     pdf_dst: PathBuf,
+    requested_kind: CompileKind,
     progress: Arc<dyn CompileProgress>,
     log_ring: Arc<Mutex<Vec<String>>>,
     requests: Arc<Mutex<Vec<String>>>,
@@ -214,6 +348,8 @@ fn run_engines(
     let xdv_name = format!("{stem}.xdv");
     let pdf_name = format!("{stem}.pdf");
     let log_name = format!("{stem}.log");
+    // 强度分档（㉘）：Quick = 单趟直调引擎（引用/目录落后一趟）；Full = 跑到中间产物稳定。
+    let wants_full = matches!(requested_kind, CompileKind::Full);
 
     // ② bundle：`detect_bundle(source, only_cached, Some(产品缓存目录))`（§3.4 第 2 步）。
     let mut bundle = match open_bundle(&bundle_source, only_cached, cache_dir.clone()) {
@@ -256,11 +392,6 @@ fn run_engines(
         requests.clone(),
         Some(cancel),
     );
-    // 判据 5（V-03）：**先看文档要不要 bib 趟**，要就可见地警告（本轮不跑 bib，必须如实收窄声明）。
-    let wants_bib = needs_bib_pass(&String::from_utf8_lossy(&root_bytes));
-    if wants_bib {
-        warn!(name = %name, "{BIB_PASS_MISSING_NOTE}");
-    }
     // 判据 3：主文件**直喂内存**（方案 §4.1 HL-1）。
     io.inject(&name, root_bytes);
     let format_cached = io.format_present();
@@ -277,6 +408,9 @@ fn run_engines(
     // 分阶段计时（P2 的复核证据：库形态的钱花在哪一趟）。命中 format 缓存时 format 趟为 0。
     let t_start = Instant::now();
     let mut phase_ms = (0u128, 0u128, 0u128);
+    // 是否真的收敛（决定 `Success.kind`）：闭包内赋值，收尾处读。
+    let mut converged = false;
+    let mut pass_count = 0usize;
     let engine_result: Result<(), String> = {
         let mut launcher = CoreBridgeLauncher::new(&mut driver, &mut status);
         (|| -> Result<(), String> {
@@ -340,23 +474,87 @@ fn run_engines(
             //    **D-2 / D4 纪律**：`TexEngine::default()` 的 build_date 是 `UNIX_EPOCH`
             //    （`engine_xetex/src/lib.rs:92-96`），忘写就会把 `\today` 静默印成 1970-01-01；
             //    库内**禁止** `build_date_from_env`（进程级全局，会污染同进程其它步骤）。
-            let mut tex = TexEngine::default();
-            tex.halt_on_error_mode(true);
-            tex.synctex(true); // ≡ 子进程档的 `--synctex`
-            tex.build_date(SystemTime::now());
-            tex.process(&mut launcher, crate::FORMAT_NAME, &name)
-                .map_err(|e| format!("排版趟失败：{e:#}"))?;
-            phase_ms.1 = t_start.elapsed().as_millis();
-            // 上游 `driver.rs:1900-1904`：TeX 没产出预期输出文件时要**明说**（多因文档为空），
-            // 否则错误会以"XDV→PDF 失败"的形式出现、指向错误的方向。
-            if capture_len(&shared, &xdv_name) == 0 {
-                return Err(format!(
-                    "排版趟没有产出 `{xdv_name}`（空文档或引擎提前停下）；I/O 层输入请求：{}",
-                    summarize(
-                        &requests.lock().unwrap_or_else(|e| e.into_inner()).clone()
-                    )
-                ));
+            // ⑤ 排版趟 + **重跑循环**（上游 `default_pass` 的主循环；上限 `MAX_TEX_PASSES`）。
+            //
+            // 为什么必须有这个循环：`latex → bibtex → latex` **还不等于**引用解析好了 ——
+            // LaTeX 在 `\begin{document}` 读 `.aux`，而 `\bibcite`（引用编号）是**上一趟**才写进去的，
+            // 所以 `\cite` 要第三趟才解析出来（实测：第二趟读到 `.bbl` 后仍报
+            // `Citation 'knuth1984' undefined` + `Label(s) may have changed. Rerun`）。
+            // 也就是说**只有 bib 趟而没有重跑循环，等于白跑**。
+            //
+            // 趟数按请求的强度分档（与 ㉘ 的产品语义对齐）：
+            // - `Quick`（编辑触发）：**单趟**，跑完即止 —— "引用/目录落后一趟"正是它的语义，
+            //   由 ㉘ 的「引用待更新」+ 空闲收敛兜底；bib 趟也留到 Full 再做。
+            // - `Full`（首编 / 手动编译 / 空闲收敛）：跑到 rerun 相关中间产物**稳定**为止。
+            let aux_name = format!("{stem}.aux");
+            let mut passes = 0usize;
+            let mut bib_done = false;
+            let mut stable = false;
+            let mut unsupported_tool: Option<&'static str> = None;
+            loop {
+                let before = rerun_snapshot(&shared);
+                let what = if passes == 0 { "排版趟" } else { "排版趟（重跑）" };
+                run_tex_pass(&mut launcher, &name, what)?;
+                passes += 1;
+                if passes == 1 {
+                    phase_ms.1 = t_start.elapsed().as_millis();
+                    // 上游 `driver.rs:1900-1904`：TeX 没产出预期输出文件时要**明说**（多因文档为空），
+                    // 否则错误会以"XDV→PDF 失败"的形式出现、指向错误的方向。
+                    if capture_len(&shared, &xdv_name) == 0 {
+                        return Err(format!(
+                            "排版趟没有产出 `{xdv_name}`（空文档或引擎提前停下）；I/O 层输入请求：{}",
+                            summarize(&requests.lock().unwrap_or_else(|e| e.into_inner()).clone())
+                        ));
+                    }
+                }
+
+                // 外部工具类（biber / makeindex / glossaries）：库形态不跑外部工具 ⇒ 登记后
+                // **不得声称已收敛**（下面 kind 会退回 Quick）。检出信号取上游口径：
+                // biber = `<stem>.run.xml`（`check_biber_requirement`）。
+                if biber_requested(&shared, &stem) {
+                    unsupported_tool = Some("biber（biblatex）");
+                }
+                if rerun_snapshot(&shared).keys().any(|k| k.ends_with(".idx")) {
+                    unsupported_tool = Some("makeindex（`.idx`）");
+                }
+
+                let mut force_rerun = false;
+                if wants_full && !bib_done {
+                    let aux_needing_bib = aux_files_requesting_bibtex(&shared, &aux_name);
+                    if !aux_needing_bib.is_empty() {
+                        for aux in &aux_needing_bib {
+                            run_bibtex_pass(&mut launcher, aux, &stem, &shared)?;
+                        }
+                        debug!(aux = ?aux_needing_bib, passes, "bib 趟已完成");
+                        bib_done = true;
+                        // 上游 `Some(RerunReason::Bibtex)`：bib 之后**无条件**再跑一趟。
+                        force_rerun = true;
+                    }
+                }
+
+                if !force_rerun && rerun_snapshot(&shared) == before {
+                    stable = true;
+                    break;
+                }
+                if passes >= MAX_TEX_PASSES {
+                    warn!(
+                        passes,
+                        "重跑到上限仍未收敛：停在 {MAX_TEX_PASSES} 趟（引用/目录可能仍落后）"
+                    );
+                    break;
+                }
+                if !wants_full {
+                    break; // Quick：单趟语义，哪怕中间产物还在变也交给 ㉘ 兜底
+                }
             }
+            if let Some(tool) = unsupported_tool {
+                warn!(stem = %stem, tool, "{}", crate::BIBER_PASS_MISSING_NOTE);
+            }
+            // 收敛支持位与 kind 的取值依据（不得虚报：有外部工具没跑、或跑满上限没稳定，
+            // 都不能说"已收敛"）。
+            converged = wants_full && unsupported_tool.is_none() && stable;
+            pass_count = passes;
+            info!(passes, stable, converged, "库形态排版趟数");
 
             // ⑥ 转换趟（§3.4 第 7 步）：XDV/PDF 以**我们 I/O 层的名字**可达；t5 §2.2 实测整份可行。
             let mut pdf_engine = XdvipdfmxEngine::default();
@@ -433,11 +631,12 @@ fn run_engines(
             );
             CompileOutcome::Success {
                 pdf_path: pdf_dst,
-                // V-04：**按实际趟数报**。本轮只跑一趟 TeX + 一次转换（不收敛、不跑 bib），
-                // 语义 = 子进程档的 `-r 0`（Quick）⇒ 必须报 `Quick`：这样 ㉘ 的 `draft` /
-                // 「引用待更新」才会亮，用户不会把"引用没解析"当成"已收敛"。
-                // 真正实现多趟收敛 + bib 之后再改成 `Full`（见模块头注 5/6）。
-                kind: CompileKind::Quick,
+                // V-04：**按实际做到的事报**（先前固定报 `Full` 是错的 —— 会让 ㉘ 的
+                // "引用待更新"/`draft` 语义失效）：
+                // - 请求 Full **且**没有未跑的外部工具（biber/makeindex…）⇒ 中间产物已稳定 ⇒ `Full`；
+                // - 其余（请求本就是 Quick 的编辑触发、或文档要外部工具而我们跑不了）⇒ `Quick`，
+                //   由 ㉘ 的「引用待更新」+ 空闲收敛兜底。
+                kind: if converged { CompileKind::Full } else { CompileKind::Quick },
                 page_hashes: Vec::new(),
             }
         }
@@ -487,6 +686,8 @@ impl CompileRunner for TectonicLibRunner {
 
         // bundle 的**打开**放到阻塞段里做（`Box<dyn Bundle>` 不是 `Send`，见 `run_engines` 头注）。
         let shared: SharedCapture = new_capture();
+        // 预热上一趟的中间产物（`tmp/`）：让重跑判据有"上一趟"可比较，重复编译收敛的文档只需 1 趟。
+        seed_previous_intermediates(&shared, &tmp_dir);
         let requests: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
         let log_ring: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
         // V-06：协作式取消标志。置位后 `TectonicIo` 的每个入口立刻报错 ⇒ 引擎在**下一个
@@ -497,6 +698,7 @@ impl CompileRunner for TectonicLibRunner {
         let bundle_source = self.bundle.clone();
         let only_cached = self.only_cached;
         let cache_dir = self.cache_dir.clone();
+        let requested_kind = req.kind;
         let project_root = req.project_root.clone();
         let blocking = tokio::task::spawn_blocking(move || {
             run_engines(
@@ -509,6 +711,7 @@ impl CompileRunner for TectonicLibRunner {
                 stem,
                 name,
                 pdf_dst,
+                requested_kind,
                 progress,
                 log_ring,
                 requests,
@@ -559,28 +762,116 @@ impl CompileRunner for TectonicLibRunner {
 mod tests {
     use super::*;
 
-    /// V-03 的反例自证：**带 `\cite` 的夹具必须被标为"需要 bib、本轮不等价"**。
-    #[test]
-    fn citation_fixtures_are_flagged_as_needing_a_bib_pass() {
-        let with_cite = "\\documentclass{article}\n\\begin{document}\n见 \\cite{ref1}。\n\\end{document}\n";
-        assert!(needs_bib_pass(with_cite), "带 \\cite 的文档必须被检出（否则会静默假等价）");
-
-        let with_bib = "\\bibliography{refs}\n\\bibliographystyle{plain}\n";
-        assert!(needs_bib_pass(with_bib), "\\bibliography 也要检出");
-
-        let biblatex = "\\addbibresource{refs.bib}\n\\printbibliography\n";
-        assert!(needs_bib_pass(biblatex), "biblatex 口径也要检出");
-
-        // 反例：不带任何引用命令的文档不该被误标（否则警告会变成噪音）
-        let plain = "\\documentclass{article}\n\\begin{document}\n你好。\n\\end{document}\n";
-        assert!(!needs_bib_pass(plain), "无引用的文档不该报 bib 缺失");
+    /// 造一个只带指定输出的捕获表（喂给下面几个纯判据函数）。
+    fn capture_with(files: &[(&str, &str)]) -> SharedCapture {
+        let c = new_capture();
+        {
+            let mut g = c.lock().unwrap_or_else(|e| e.into_inner());
+            for (name, body) in files {
+                g.files.insert((*name).to_owned(), body.as_bytes().to_vec());
+            }
+        }
+        c
     }
 
-    /// V-03 的声明文案必须点明"不等价"，不能只说"少跑一步"。
+    /// 检出信号是 **`.aux` 里的 `\bibdata`**（上游 `is_bibtex_needed`），不是扫源码找 `\cite`。
+    ///
+    /// 这条同时是 V-03 的回归守卫：先前按源码扫 `\cite` 判，既会漏（`\cite` 只在注释里）又会白跑。
     #[test]
-    fn bib_note_states_the_inequivalence() {
-        assert!(BIB_PASS_MISSING_NOTE.contains("可能未解析"), "{BIB_PASS_MISSING_NOTE}");
-        assert!(BIB_PASS_MISSING_NOTE.contains("不等价"), "{BIB_PASS_MISSING_NOTE}");
+    fn bibtex_is_requested_only_when_the_aux_has_bibdata() {
+        // 用了 \bibliography ⇒ aux 里有 \bibdata ⇒ 要跑
+        let with_bib = capture_with(&[(
+            "main.aux",
+            "\\relax\n\\citation{ref1}\n\\bibdata{refs}\n\\bibstyle{plain}\n",
+        )]);
+        assert_eq!(aux_files_requesting_bibtex(&with_bib, "main.aux"), vec!["main.aux".to_owned()]);
+
+        // `\cite` + `thebibliography`：aux 只有 \citation/\bibcite，**没有** \bibdata ⇒ 不跑
+        let thebib = capture_with(&[("main.aux", "\\relax\n\\citation{ref1}\n\\bibcite{ref1}{1}\n")]);
+        assert!(
+            aux_files_requesting_bibtex(&thebib, "main.aux").is_empty(),
+            "thebibliography 不需要 BibTeX，扫源码的旧口径会在这里白跑一趟"
+        );
+
+        // 完全没有 .aux（空文档）：不跑，也不该 panic
+        let none = capture_with(&[("main.log", "x")]);
+        assert!(aux_files_requesting_bibtex(&none, "main.aux").is_empty());
+    }
+
+    /// `\include` 分章：含 `\bibdata` 的子 aux 也要跑，且主 aux 排在最前（上游口径）。
+    #[test]
+    fn sub_aux_files_with_bibdata_are_included_and_primary_comes_first() {
+        let c = capture_with(&[
+            ("main.aux", "\\relax\n\\@input{ch1.aux}\n\\bibdata{refs}\n"),
+            ("ch1.aux", "\\relax\n\\citation{a}\n"),
+            ("ch2.aux", "\\relax\n\\bibdata{ch2refs}\n"),
+        ]);
+        let got = aux_files_requesting_bibtex(&c, "main.aux");
+        assert_eq!(got, vec!["main.aux".to_owned(), "ch2.aux".to_owned()]);
+        assert!(!got.contains(&"ch1.aux".to_owned()), "无 \\bibdata 的章 aux 不该跑（避免噪音）");
+    }
+
+    /// biber 的检出信号是 `<stem>.run.xml`（上游 `check_biber_requirement`）。
+    #[test]
+    fn biber_is_detected_by_run_xml() {
+        let with = capture_with(&[("main.run.xml", "<requests/>")]);
+        assert!(biber_requested(&with, "main"));
+        let without = capture_with(&[("main.aux", "\\bibdata{refs}")]);
+        assert!(!biber_requested(&without, "main"));
+    }
+
+    /// 声明文案必须点明"可能未解析"，不能只说"少跑一步"（如实收窄，不静默）。
+    #[test]
+    fn biber_note_states_the_possible_nonresolution() {
+        assert!(crate::BIBER_PASS_MISSING_NOTE.contains("可能未解析"), "{}", crate::BIBER_PASS_MISSING_NOTE);
+        assert!(crate::BIBER_PASS_MISSING_NOTE.contains("biber"), "{}", crate::BIBER_PASS_MISSING_NOTE);
+    }
+
+    /// 支持位必须与实现一致：bib 已支持、biber 不支持、收敛**有条件**支持。
+    #[test]
+    fn support_flags_match_the_implementation() {
+        assert!(crate::BIB_PASS_SUPPORTED, "bib 趟已实现 ⇒ 该位必须为 true");
+        assert!(!crate::BIBER_PASS_SUPPORTED, "biber 要外部二进制 ⇒ 仍不支持");
+        assert!(
+            crate::CONVERGENCE_SUPPORTED,
+            "重跑循环已实现（Full 请求下跑到中间产物稳定）⇒ 该位为 true；\
+             但 Quick 请求与含 biber/makeindex 的文档仍会退回 Quick"
+        );
+    }
+
+    /// 重跑判据只覆盖会被回读的中间产物（不做无谓的大文件摘要）。
+    #[test]
+    fn rerun_snapshot_covers_read_back_intermediates_only() {
+        let c = capture_with(&[
+            ("main.aux", "\\relax\n\\bibcite{a}{1}\n"),
+            ("main.toc", "\\contentsline{section}{A}{1}\n"),
+            ("main.bbl", "\\begin{thebibliography}{1}\n"),
+            ("main.pdf", "%PDF-1.5 很大但不会被回读"),
+            ("main.xdv", "xdv"),
+            ("main.log", "log"),
+        ]);
+        let snap = rerun_snapshot(&c);
+        let names: Vec<&str> = snap.keys().map(String::as_str).collect();
+        assert!(names.contains(&"main.aux"), "{names:?}");
+        assert!(names.contains(&"main.toc"), "{names:?}");
+        assert!(names.contains(&"main.bbl"), "{names:?}");
+        for excluded in ["main.pdf", "main.xdv", "main.log"] {
+            assert!(!names.contains(&excluded), "{excluded} 不该进重跑判据：{names:?}");
+        }
+    }
+
+    /// 判据本身：内容变了 ⇒ 摘要变 ⇒ 触发重跑；内容不变 ⇒ 不重跑（收敛）。
+    #[test]
+    fn rerun_snapshot_changes_only_when_content_changes() {
+        let c = capture_with(&[("main.aux", "\\relax\n\\citation{a}\n")]);
+        let first = rerun_snapshot(&c);
+        assert_eq!(rerun_snapshot(&c), first, "内容没动就不该判为变化（否则会无限重跑）");
+
+        {
+            let mut g = c.lock().unwrap_or_else(|e| e.into_inner());
+            g.files.insert("main.aux".to_owned(), b"\\relax\n\\bibcite{a}{1}\n".to_vec());
+        }
+        assert_ne!(rerun_snapshot(&c), first, "aux 变了必须判为变化（否则引用永远解析不出来）");
     }
 }
 

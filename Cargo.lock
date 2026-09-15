@@ -2428,6 +2428,7 @@ dependencies = [
  "latteset-core",
  "tectonic_bridge_core",
  "tectonic_bundles",
+ "tectonic_engine_bibtex",
  "tectonic_engine_xdvipdfmx",
  "tectonic_engine_xetex",
  "tectonic_errors",
@@ -5212,6 +5213,19 @@ checksum = "a0be45d56d592f977e5dc49d5cff15c4a1cea9ed87ff385dd32d34009e4477fb"
 dependencies = [
  "pkg-config",
  "vcpkg",
+]
+
+[[package]]
+name = "tectonic_engine_bibtex"
+version = "0.3.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c0e527b3d414c560e801b19d09a3ddbbf7f1be4f1728da4ff69635f834901b57"
+dependencies = [
+ "indexmap 2.14.0",
+ "libc",
+ "tectonic_bridge_core",
+ "tectonic_errors",
+ "tectonic_io_base",
 ]
 
 [[package]]
