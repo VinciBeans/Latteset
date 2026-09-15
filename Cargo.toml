@@ -1,6 +1,16 @@
 [workspace]
 resolver = "2"
-members = ["src-tauri", "crates/latteset-core", "crates/latteset-infra", "crates/latteset-server"]
+members = ["src-tauri", "crates/latteset-core", "crates/latteset-infra", "crates/latteset-server", "crates/latteset-tectonic"]
+# `default-members`（方案 §3.2 的落点裁决 + 队长决定 3 / N-04）：
+# `crates/latteset-tectonic` 承载 Tectonic 的 C/C++ 链（freetype2/graphite2/harfbuzz/ICU 走外部探测，
+# 探测失败即 build script panic ⇒ 需要 vcpkg）。**不带 `-p` 的根 `cargo build` 不得构建它**，
+# 否则整仓默认构建就永远需要 vcpkg。它只能被显式 `-p latteset-tectonic`（或 src-tauri 的
+# `tectonic-lib` 特性）选中。
+default-members = ["src-tauri", "crates/latteset-core", "crates/latteset-infra", "crates/latteset-server"]
+# 开发期本地素材（Tectonic 上游 checkout 等）**不是**本 workspace 的成员：那份清单自带
+# `[workspace]` 与 `lints.workspace = true`，一旦被当成成员就会去继承**本仓**根清单的
+# `workspace.lints`（本仓没定义）而解析失败。
+exclude = ["test_file/tectonic-src"]
 
 [workspace.package]
 version = "0.1.0"

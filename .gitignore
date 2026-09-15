@@ -83,8 +83,41 @@ test_file/texmf/
 test_file/tectonic-src/
 test_file/tectonic-install/
 
+# ============ Tectonic 库形态本地构建依赖（vcpkg pin rev 检出 + port 构建产物，数 GB，勿上传） ============
+# 用途：本地/CI 构建 tectonic 引擎所需的 C 依赖（graphite2/icu/freetype/fontconfig/harfbuzz）。
+# pin 版本见 test_file/tectonic-src/Cargo.toml 的 [package.metadata.vcpkg] rev。
+# 复现：git clone https://github.com/microsoft/vcpkg test_file/vcpkg && git -C test_file/vcpkg checkout a62ce77d56ee07513b4b67de1ec2daeaebfae51a
+#       && test_file/vcpkg/bootstrap-vcpkg.bat -disableMetrics
+test_file/vcpkg/
+# 上面那条命令的配套产物：装好的端口（installed/，freetype/harfbuzz/ICU… 数百 MB）、
+# 二进制缓存（bincache/）、以及换新版 vcpkg-tool 时的落点（vcpkg-tool-new/）。
+test_file/vcpkg-installed/
+test_file/vcpkg-bincache/
+test_file/vcpkg-tool-new/
+
 # ============ AgentTeams 运行期状态（团队/任务/邮箱，属本地状态勿上传） ============
 .agent-teams/
+
+# ============ Tectonic 库形态调研的实验件（实测 crate/夹具/原始证据，勿上传） ============
+# 注意：test_file/ 本身未被整体忽略，只有下面这些具名子目录被忽略——别把本行当成通配。
+# 需要入库的结论文档请放 docs/research/（见 docs/research/tectonic-lib-evidence.md）。
+test_file/research-tectonic-lib/
+test_file/t14-evidence/
+# `cargo vendor` 的产物（824 MB、650 个包）：只为排查/打补丁临时取回，勿上传。
+test_file/vendor/
+
+# ============ 库形态「真编出 PDF」的夹具与缓存（t10 起，数十 MB，勿上传） ============
+# bundle 是**目录 bundle**（424 个文件 / 34 MB，含 SHA256SUM=6ffe055852…）：它可从 Tectonic 自己的
+# 缓存 `bundles/data/<digest>/` 原样复制出来（那是上游 default_bundle_v33.tar 的解包目录），
+# 因此不必入库——真机复核按 docs/tectonic-library-plan.md §6 P2 现场造一个即可。
+test_file/tectonic-bundle/
+# 产品缓存目录（formats/ 里的 23 MB `.fmt` + bundles/）：一次生成、反复复用，勿上传。
+test_file/tectonic-cache/
+test_file/tectonic-cli-cache/
+# 库形态的真机编译夹具（输入 .tex + 产物 tmp/、*.pdf）。
+test_file/tectonic-lib-run/
+test_file/t21-verify/
+test_file/t24-verify/
 
 # ============ 团队产出的中间 part（正式副本由 T5 落到 docs/research/tectonic-plan-parts/） ============
 test_file/tectonic-plan-parts/

@@ -22,6 +22,8 @@ use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, warn};
 
+use crate::tectonic::{self, BundlePolicy};
+
 /// 编译中间目录（design.md：统一收纳 tmp/，与 core 忽略规则一致）。
 const OUT_DIR: &str = "tmp";
 
@@ -116,6 +118,18 @@ impl LiveFeedback {
         }
         self.last_emitted = Some(fp);
         self.progress.errors(&entries);
+    }
+
+    /// 捕获输出的尾部（最多 `max_chars` 个字符，按字符边界切，不切坏 UTF-8）。
+    ///
+    /// 用途：Tectonic 的 bundle/网络失败只出现在 stderr，而 `.log` 里什么都没有——
+    /// 收尾时用它判定失败类型（见 [`crate::tectonic::bundle_failure_message`]）。
+    fn tail(&self, max_chars: usize) -> String {
+        let total = self.buffer.chars().count();
+        if total <= max_chars {
+            return self.buffer.clone();
+        }
+        self.buffer.chars().skip(total - max_chars).collect()
     }
 }
 
@@ -242,7 +256,10 @@ fn latexmk_input(root_file: &Path, project_root: &Path) -> String {
 /// 编译命令构造（modules.md §2.6 算法）：cwd = 项目根，相对 input/include 才能解析。
 ///
 /// 抽成独立函数是为了**可单测**（参数与环境变量都能直接断言，不必真的起进程）。
-fn compile_command(req: &CompileRequest, kind: CompileKind) -> tokio::process::Command {
+///
+/// `bundle` 是 Tectonic 的 bundle 获取策略（P0/t14，见 [`crate::tectonic`]）；非 Tectonic 引擎
+/// 不看它。生产路径由 `compile()` 探测后传入，测试按需显式传两档。
+fn compile_command(req: &CompileRequest, kind: CompileKind, bundle: BundlePolicy) -> tokio::process::Command {
     let mut cmd = match kind {
         // Quick：直调引擎一趟（实测比完整 latexmk 快 40% 中位，见 design.md §延迟预算实测附节）。
         // 与 latexmk 的差异只在外层机制与收敛趟；产物路径与 Full 一致（都在 tmp/<stem>.pdf）。
@@ -252,7 +269,7 @@ fn compile_command(req: &CompileRequest, kind: CompileKind) -> tokio::process::C
         // latexmk 内部走的也是这条序列（`xelatex -no-pdf` → `xdvipdfmx -E -o …`，见 design.md）。
         CompileKind::Quick => {
             if req.engine == latteset_core::types::Engine::Tectonic {
-                tectonic_command(req, true)
+                tectonic_command(req, true, bundle)
             } else {
                 let mut c = tokio::process::Command::new(req.engine.binary_name());
                 // `-no-pdf`（2026-09，功能点 A）**只对 XeTeX 成立**：直调引擎只产 XDV，PDF 改由收尾时
@@ -272,7 +289,7 @@ fn compile_command(req: &CompileRequest, kind: CompileKind) -> tokio::process::C
         }
         CompileKind::Full => {
             if req.engine == latteset_core::types::Engine::Tectonic {
-                tectonic_command(req, false)
+                tectonic_command(req, false, bundle)
             } else {
                 let mut c = tokio::process::Command::new("latexmk");
                 c.arg(req.engine.latexmk_flag())
@@ -304,18 +321,22 @@ fn compile_command(req: &CompileRequest, kind: CompileKind) -> tokio::process::C
 
 /// Tectonic 命令（路线①；`docs/research/tectonic-test-plan.md` §1.2 / INT-20）。
 ///
-/// 参数按测试方案定为**必带**：
-/// - `-C`：只用缓存资源（离线，不联网下载）；
+/// 参数按测试方案定为**必带**（`-C` 例外，见下）：
+/// - `-C`（仅当 `bundle == CachedOnly`）：只用缓存资源（离线，不联网下载）。**不能无条件加**——
+///   全新机器 + 空缓存时它会让首编必失败（`docs/tectonic-library-plan.md` §6 P0 / E-1）。
+///   判定依据与证据见 [`crate::tectonic`]；
 /// - `-k`：保留中间产物（`.aux`/`.toc`/`.bbl`）—— Quick 的前置条件（`tmp/<stem>.aux`）与 bib 判据都要它；
 /// - `--keep-logs`：保留 `.log`（Tectonic 的日志本来只在内存、收尾才落盘）；
 /// - `--synctex`：产出 `.synctex.gz`（我们的正反向仍走外部 `synctex.exe`，需要本机 TeX Live）；
 /// - `-p`：页进度走 **stdout 的 `[N]`** —— 这是 Tectonic 下唯一的实时页通道；
 /// - `-r 0`（仅 Quick）：单趟不收敛（Full 用默认收敛趟数）；
 /// - `-o tmp`：产物目录与其它引擎一致（`tmp/<stem>.pdf`）。
-fn tectonic_command(req: &CompileRequest, quick: bool) -> tokio::process::Command {
+fn tectonic_command(req: &CompileRequest, quick: bool, bundle: BundlePolicy) -> tokio::process::Command {
     let mut c = tokio::process::Command::new(req.engine.binary_name());
-    c.arg("-C")
-        .arg("-k")
+    if bundle == BundlePolicy::CachedOnly {
+        c.arg("-C");
+    }
+    c.arg("-k")
         .arg("--keep-logs")
         .arg("--synctex")
         .arg("-p")
@@ -358,8 +379,24 @@ impl CompileRunner for LatexmkRunner {
             kind = CompileKind::Full;
         }
 
+        // Tectonic 的 bundle 获取策略（P0/t14）：**只有拿到缓存正向证据才加 `-C`**——冷缓存加它
+        // 等于"拒绝联网取 bundle"，首编必失败。判定依据与证据见 crate::tectonic。
+        let bundle = if req.engine == latteset_core::types::Engine::Tectonic {
+            let probe = tectonic::probe();
+            debug!(
+                policy = ?probe.policy,
+                cache_ready = probe.cache_ready,
+                cache_dir = ?probe.cache_dir,
+                forced = ?probe.forced,
+                "Tectonic bundle 策略"
+            );
+            probe.policy
+        } else {
+            BundlePolicy::CachedOnly
+        };
+
         // 命令构造（modules.md §2.6 算法）：cwd = 项目根，相对 input/include 才能解析
-        let mut cmd = compile_command(&req, kind);
+        let mut cmd = compile_command(&req, kind, bundle);
         match kind {
             CompileKind::Quick => debug!(engine = req.engine.binary_name(), "Quick 编译（单趟直调引擎）"),
             CompileKind::Full if req.engine == latteset_core::types::Engine::Tectonic => {
@@ -382,9 +419,10 @@ impl CompileRunner for LatexmkRunner {
                 return CompileOutcome::IoError {
                     message: match (kind, req.engine) {
                         // INT-16：Tectonic 未装时的文案必须**指对方向**（不是"TeX Live 未安装"——
-                        // 它自带 bundle、本来就不依赖 TL）。
+                        // 它自带 bundle、本来就不依赖 TL）；它也不会命中 bundle/缓存失败那条路径
+                        // （那是 spawn 成功之后的失败，见 compile() 收尾的 tectonic 文案）。
                         (_, latteset_core::types::Engine::Tectonic) => format!(
-                            "无法启动 tectonic（Tectonic 未安装，或不在 PATH 里）：{e}"
+                            "无法启动 tectonic（Tectonic 需单独安装、且要在 PATH 里）：{e}"
                         ),
                         (CompileKind::Quick, _) =>
                             format!("无法启动 {}（TeX Live 未安装？）：{e}", req.engine.binary_name()),
@@ -477,6 +515,19 @@ impl CompileRunner for LatexmkRunner {
         stop.store(true, std::sync::atomic::Ordering::Relaxed);
         for p in pumps {
             let _ = tokio::time::timeout(Duration::from_millis(600), p).await;
+        }
+
+        // Tectonic 的 bundle/网络失败**只写 stderr**（连 `tmp/<stem>.log` 都不落），上面那条
+        // ".log 是权威"的路径会报成「编译失败且无法读取日志」这种没有操作信息的兜底文案。
+        // 收尾后拿捕获的输出尾部换成可执行文案（标记与文案见 crate::tectonic）。
+        if req.engine == latteset_core::types::Engine::Tectonic
+            && matches!(outcome, CompileOutcome::IoError { .. } | CompileOutcome::ContentError { .. })
+        {
+            let tail = feedback.lock().await.tail(4 << 10);
+            if let Some(message) = tectonic::bundle_failure_message(bundle, &tail) {
+                warn!(policy = ?bundle, "Tectonic 取 bundle 失败：已换成可执行文案");
+                return CompileOutcome::IoError { message };
+            }
         }
         outcome
     }
@@ -831,9 +882,15 @@ mod tests {
             .collect()
     }
 
+    /// 非 Tectonic 引擎不看 bundle 档（该参数只喂给 `tectonic_command`），这里固定传离线档，
+    /// 让既有 argv 断言保持原口径。Tectonic 的用例直接调 [`compile_command`] 并显式给两档。
+    fn engine_command(req: &CompileRequest, kind: CompileKind) -> tokio::process::Command {
+        compile_command(req, kind, BundlePolicy::CachedOnly)
+    }
+
     #[test]
     fn quick_command_calls_engine_directly() {
-        let cmd = compile_command(&sample_req(), CompileKind::Quick);
+        let cmd = engine_command(&sample_req(), CompileKind::Quick);
         assert_eq!(cmd.as_std().get_program().to_string_lossy(), "xelatex");
         assert_eq!(
             argv(&cmd),
@@ -859,7 +916,7 @@ mod tests {
         ] {
             let mut req = sample_req();
             req.engine = engine;
-            let cmd = compile_command(&req, CompileKind::Quick);
+            let cmd = engine_command(&req, CompileKind::Quick);
             assert_eq!(cmd.as_std().get_program().to_string_lossy(), binary);
             assert_eq!(
                 argv(&cmd),
@@ -877,13 +934,16 @@ mod tests {
     /// Tectonic（2026-09 引入）：自己的命令形态（**不经 latexmk、不走我们的 xdvipdfmx**），参数按
     /// 测试方案必带；**且不能给它设 `SOURCE_DATE_EPOCH`**（D4 裁决：它把该变量当引擎时间源，
     /// 设 0 会让正文 `\today` 印成 1970-01-01；XeTeX 只动 PDF `/ID`）。
+    ///
+    /// `-C` 是**条件**参数（P0/t14，LIB-8）：缓存有证据才加；冷缓存/首跑档不能加，否则
+    /// Tectonic 拒绝联网取 bundle、首编必失败（`docs/tectonic-library-plan.md` §6 P0）。
     #[test]
     fn tectonic_command_and_epoch_scoping() {
         let mut req = sample_req();
         req.engine = latteset_core::types::Engine::Tectonic;
 
-        // Quick = 单趟（-r 0）
-        let quick = compile_command(&req, CompileKind::Quick);
+        // 资源就绪档（缓存有可用 bundle）：`-C` 在首位 —— 离线、不联网
+        let quick = compile_command(&req, CompileKind::Quick, BundlePolicy::CachedOnly);
         assert_eq!(quick.as_std().get_program().to_string_lossy(), "tectonic");
         assert_eq!(
             argv(&quick),
@@ -899,17 +959,34 @@ mod tests {
                 "0",
                 "css/thesis.tex",
             ],
-            "Tectonic Quick 必须是「离线缓存 + 保留中间产物 + 页进度 + 单趟」"
+            "Tectonic Quick（缓存就绪）必须是「离线缓存 + 保留中间产物 + 页进度 + 单趟」"
         );
         // Full = 收敛（不传 -r，用引擎默认趟数）
-        let full = compile_command(&req, CompileKind::Full);
+        let full = compile_command(&req, CompileKind::Full, BundlePolicy::CachedOnly);
         assert_eq!(full.as_std().get_program().to_string_lossy(), "tectonic");
         assert_eq!(
             argv(&full),
             vec!["-C", "-k", "--keep-logs", "--synctex", "-p", "-o", "tmp", "css/thesis.tex"]
         );
 
-        // 环境变量分档（D4）
+        // 首跑档（缓存没证据）：**不含 `-C`**，其余参数逐一相同 —— 让 Tectonic 能按需联网取 bundle。
+        // 反例自证：若 `-C` 变回无条件，下面两条断言必红。
+        for (kind, cold) in [
+            (CompileKind::Quick, compile_command(&req, CompileKind::Quick, BundlePolicy::AllowFetch)),
+            (CompileKind::Full, compile_command(&req, CompileKind::Full, BundlePolicy::AllowFetch)),
+        ] {
+            let cold = argv(&cold);
+            assert!(
+                !cold.iter().any(|a| a == "-C"),
+                "{kind:?} 首跑档不得带 `-C`（带了就永远拿不到 bundle）"
+            );
+            let warm = argv(&compile_command(&req, kind, BundlePolicy::CachedOnly));
+            let mut expected = warm.clone();
+            expected.retain(|a| a != "-C");
+            assert_eq!(cold, expected, "{kind:?} 首跑档与就绪档只差一个 `-C`");
+        }
+
+        // 环境变量分档（D4）：Tectonic 两档都不设 epoch
         let has_epoch = |c: &tokio::process::Command| {
             c.as_std()
                 .get_envs()
@@ -925,16 +1002,18 @@ mod tests {
             let mut r2 = sample_req();
             r2.engine = engine;
             assert!(
-                has_epoch(&compile_command(&r2, CompileKind::Quick)),
+                has_epoch(&engine_command(&r2, CompileKind::Quick)),
                 "{engine:?} 仍必须固定 epoch（㉚ 的可复现前提）"
             );
-            assert!(has_epoch(&compile_command(&r2, CompileKind::Full)), "{engine:?} Full 同");
+            assert!(has_epoch(&engine_command(&r2, CompileKind::Full)), "{engine:?} Full 同");
         }
     }
 
     /// Tectonic 端到端（`#[ignore]`，需要装好 `tectonic`）：走**完整 runner 路径**跑一次中文文档，
     /// 断言"出 PDF + **无页哈希**"——Tectonic 的 PDF 档永不落 `.xdv`，页级复用 A/B/C 在该引擎下不可用
-    /// （下游按"无法判定"保守全量刷新）。这条用例同时真机复核了命令构造（`-C -k --keep-logs --synctex -p`）。
+    /// （下游按"无法判定"保守全量刷新）。命令构造（`-C -k --keep-logs --synctex -p`）由
+    /// [`tectonic_command_and_epoch_scoping`] 断言；这条用例额外复核**本机缓存就绪时 `-C` 档能真跑通**
+    /// （`-C` 是最坏情况：缓存里缺一个宏包就会失败）。
     #[tokio::test]
     #[ignore]
     async fn tectonic_compiles_cjk_pdf_without_page_hashes() {
@@ -953,6 +1032,13 @@ mod tests {
         );
         let mut r = req(&project); // Full（收敛）
         r.engine = latteset_core::types::Engine::Tectonic;
+        // P0（t14）真机证据：走 runner 前先把判定依据打出来（`-- --ignored --nocapture` 可见）。
+        // 冷缓存档：在外层设 `TECTONIC_CACHE_DIR=<空目录>` 跑同一条用例。
+        let probe = crate::tectonic::probe();
+        eprintln!(
+            "Tectonic bundle 策略 = {:?}（cache_ready={}，cache_dir={:?}，forced={:?}）",
+            probe.policy, probe.cache_ready, probe.cache_dir, probe.forced
+        );
         let out = runner.compile(r, CancellationToken::new()).await;
         let CompileOutcome::Success { pdf_path, page_hashes, .. } = &out else {
             panic!("Tectonic 编译应成功，实际：{out:?}");
@@ -1097,7 +1183,7 @@ mod tests {
     fn full_command_uses_latexmk_with_engine_flag() {
         let mut req = sample_req();
         req.engine = latteset_core::types::Engine::LuaLaTeX;
-        let cmd = compile_command(&req, CompileKind::Full);
+        let cmd = engine_command(&req, CompileKind::Full);
         assert_eq!(cmd.as_std().get_program().to_string_lossy(), "latexmk");
         assert_eq!(
             argv(&cmd),
@@ -1116,7 +1202,7 @@ mod tests {
         // roadmap ㉚：不固定这个变量时，同一份源码两次编译的 PDF 只差 trailer 的 /ID（实测 64 字节），
         // 会让"输出 diff / 只重排变化页"分不清"真变了"和"ID 抖了"。
         for kind in [CompileKind::Quick, CompileKind::Full] {
-            let cmd = compile_command(&sample_req(), kind);
+            let cmd = engine_command(&sample_req(), kind);
             let epoch = cmd
                 .as_std()
                 .get_envs()
@@ -1171,9 +1257,19 @@ mod tests {
             root_file: project.dir.join("main.tex"),
             project_root: project.dir.clone(),
             engine: latteset_core::types::Engine::XeLaTeX,
-            timeout: Duration::from_secs(60),
+            timeout: test_timeout(),
             kind: CompileKind::Full,
         }
+    }
+
+    /// 集成用例的超时（默认 60s，与历史口径一致）。
+    ///
+    /// 可用 `LATTESET_TEST_TIMEOUT_SECS` 放长：**冷缓存的 Tectonic 首编**要联网取 bundle
+    /// （实测约 65 MB，几十秒到几分钟），60s 的夹具直接撞超时，量不出"取到 bundle 后能编过"。
+    fn test_timeout() -> Duration {
+        Duration::from_secs(
+            std::env::var("LATTESET_TEST_TIMEOUT_SECS").ok().and_then(|v| v.parse().ok()).unwrap_or(60),
+        )
     }
 
     /// 同一项目上的 Quick 请求（编辑触发的强度）。

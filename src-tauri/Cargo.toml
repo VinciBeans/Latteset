@@ -32,3 +32,12 @@ tracing = "0.1"
 tracing-subscriber = "0.3"
 tauri-plugin-dialog = "2.7.2"
 tauri-plugin-mcp-bridge = "0.13"
+
+# Tectonic **库形态**（路径 B，方案 §3.2 / ADR-0012）：可选依赖 + feature，**默认关**。
+# 关着的时候主产物零原生依赖（不拉 freetype2/harfbuzz/ICU/graphite2 的 C 链、不需要 vcpkg）。
+# 打开：`cargo build -p latteset --features tectonic-lib`（外加运行期开关 LATTESET_TECTONIC_LIB=1）。
+latteset-tectonic = { path = "../crates/latteset-tectonic", optional = true }
+
+[features]
+default = []
+tectonic-lib = ["dep:latteset-tectonic"]

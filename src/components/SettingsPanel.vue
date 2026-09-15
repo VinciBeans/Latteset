@@ -22,7 +22,9 @@ const ENGINES: { value: Engine; label: string; hint: string }[] = [
   {
     value: "tectonic",
     label: "Tectonic",
-    hint: "免装 TeX Live（自带宏包）；首次编译要联网下载 bundle，可能数十秒；该引擎下不启用页级增量复用",
+    // 文案必须与实现一致（runner.rs 的 `-C` 分档）：首次编译（本地缓存没有可用 bundle）**会联网**
+    // 下载宏包集；之后缓存就绪即离线复用。写成"总是联网"或"总是离线"都会与实际行为相反。
+    hint: "免装 TeX Live（自带宏包）；首次编译需联网下载宏包集（约 60 MB，可能数十秒到数分钟），之后离线复用缓存；该引擎下不启用页级增量复用",
   },
 ];
 

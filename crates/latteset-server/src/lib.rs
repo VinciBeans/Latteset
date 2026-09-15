@@ -246,7 +246,7 @@ impl Session {
         };
         // headless 不消费流式反馈（CLI 一条命令一个 JSON；MCP 暂无 notifications）：
         // 传 NoProgress，行为与接线前一致（引擎输出仍被读取，只是不产出事件）。
-        let runner = LatexmkRunner::new(
+        let runner = build_runner(
             self.fs.clone(),
             std::sync::Arc::new(latteset_core::scheduler::NoProgress),
         );
@@ -478,6 +478,39 @@ impl Session {
     pub fn normalize(&self, path: &Path) -> PathBuf {
         PathBuf::from(normalize_path(&path.to_string_lossy()))
     }
+}
+
+/// 组装编译 runner（headless 的**装配点**，与 `src-tauri/src/lib.rs` 的 GUI 装配点同口径）。
+///
+/// 默认 = **子进程形态**（`LatexmkRunner`）；只有在构建时打开 `tectonic-lib` 特性**且**运行期
+/// 开关 `LATTESET_TECTONIC_LIB=1` 时才用 Tectonic 库形态（方案 §3.5：默认关闭）。
+/// **D1：失败不自动回退** —— 这里只决定装配哪个 runner，运行中失败就是失败。
+///
+/// 库形态的两条配置走环境变量（设置面的形态位属后续收口）：
+/// - `LATTESET_TECTONIC_BUNDLE`：bundle 来源（本地目录 bundle 走 `file:///…` 或相对路径）；
+/// - `LATTESET_TECTONIC_CACHE`：产品缓存目录（`bundles/` + `formats/` 的父目录）。
+///
+/// 缓存目录不注入会把 ~24 MB 的 `.fmt` 扔进用户项目（方案 §5.2 / HL-11 硬约束），所以这里的
+/// 兜底也必须是**空的**缓存目录而不是项目目录：headless 用配置目录同级的 `cache`。
+fn build_runner(
+    fs: Arc<dyn FileSystem>,
+    progress: Arc<dyn latteset_core::scheduler::CompileProgress>,
+) -> Arc<dyn CompileRunner> {
+    #[cfg(feature = "tectonic-lib")]
+    {
+        if latteset_tectonic::lib_form_enabled() {
+            let mut lib = latteset_tectonic::TectonicLibRunner::new(fs.clone(), progress);
+            let cache = latteset_tectonic::cache_dir_from_env().or_else(|| {
+                let dir = default_config_dir().parent().map(|p| p.join("cache"));
+                dir
+            });
+            if let Some(cache) = cache {
+                lib = lib.with_cache_dir(cache);
+            }
+            return Arc::new(lib.with_bundle(latteset_tectonic::bundle_from_env()));
+        }
+    }
+    Arc::new(LatexmkRunner::new(fs, progress))
 }
 
 fn engine_name(s: &Settings) -> String {

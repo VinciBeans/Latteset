@@ -288,6 +288,31 @@ LiveFeedback::feed(text, force_parse)：
 
 **信息局部性**：runner 无内部状态（`&self` 不可变；`fs` / `progress` 都是注入依赖），一次调用完全独立；每次调用所需信息全部在 `CompileRequest` 里。
 
+### 2.7 TectonicLibRunner — Tectonic 库形态（路径 B，crates/latteset-tectonic）
+
+> 契约依据：`docs/tectonic-library-plan.md` §3.2（落点裁决）/ §3.4（路径 B 九步）/ §4.2 X-5（本 crate 是外部依赖与 C 链的**第二个落点**）；决策记录 `docs/adr/0012-tectonic-library-form-engine.md`。
+
+| 项 | 内容 |
+|---|---|
+| 位置 | **独立 workspace 成员** `crates/latteset-tectonic/`（`Cargo.toml` + `build.rs` + `src/{lib,io,status,bundle,runner}.rs` + `examples/xdvscan.rs`） |
+| 为什么独立 | 它的依赖闭包必然拉 C/C++ 链（freetype2/graphite2/harfbuzz/ICU 外部探测，失败即 build script panic）⇒ 放进 `latteset-infra` 会让**整仓默认构建**永远需要 vcpkg。根 `Cargo.toml` 用 `default-members` 把它排除在**不带 `-p`** 的构建之外（`Cargo.toml:3-14`） |
+| 构建前置 | `build.rs` 在 Windows 补发静态 ICU 需要的 MSVC 隐式系统库（`advapi32` 等 8 个）。**不加它 `cargo check` 过、`cargo test`/example 链接必失败**（`icuuc.lib(wintz.ao)` 未解析 `__imp_RegCloseKey`）；出发点是 vcpkg 自己的 `lib/pkgconfig/icu-uc.pc` 的 `baselibs` |
+| 装配 | **两个入口各一处**（GUI 与 headless）：`src-tauri/src/lib.rs` 与 `crates/latteset-server/src/lib.rs` 的 `build_runner()`，口径相同 —— `tectonic-lib` 特性（默认关）+ 运行期 `LATTESET_TECTONIC_LIB=1`（D1：失败不回退）。deps 侧 `src-tauri/Cargo.toml` 与 `crates/latteset-server/Cargo.toml` 都是 optional |
+| 运行期配置（3 个环境变量） | `LATTESET_TECTONIC_LIB`（形态位）、`LATTESET_TECTONIC_BUNDLE`（bundle 源：`file:///…` 或**相对路径**；`none`/`off` = 不要 bundle；未设 = 上游兜底**网络**地址，未开 `network-bundle` 特性时会显式报错并给出用法）、`LATTESET_TECTONIC_CACHE`（产品缓存目录，覆盖宿主默认值）。设置面 UI 属后续收口（方案 §3.5） |
+| 引擎调用 | `TectonicIo`（`IoProvider`）→ `MinimalDriver` → `CoreBridgeLauncher` → `TexEngine`（format 趟 → 排版趟）→ `XdvipdfmxEngine::process`。**没有**"向 `ProcessingSession` 注入 `IoProvider`"这条写法（0.17 没有该入口，方案 §3.4 理由 2） |
+| 输入四层 | 内存直喂（主文件）→ **本次产物层**（`IoCapture`；LaTeX 在 `\end{document}` 用**原语** `\@@input\jobname.aux` 回读刚写的 aux，不过 `\IfFileExists` ⇒ 少这层就 abort `failed to open input file "<stem>.aux"`；上游顺序见 `driver.rs` 的 `bridgestate_ioprovider_cascade`：primary → **mem** → fs → … → bundle）→ 项目磁盘（`\input` 子文件，`input_open_name_with_abspath` 供 SyncTeX 用真实源码路径）→ bundle（宏包/字体/cmap） |
+| 输出 | 全部先落 `IoCapture`（`Arc<Mutex<..>>`，运行中可读，供 P5 探针用），并镜像到 `tmp/`；**format 趟的输出不镜像**（dump 名是占位，上游在 format 趟后清空内存层）；PDF 收尾**原子替换**到项目根（`{stem}.pdf.tmp` → rename，与子进程档同口径） |
+| format | 键 = **bundle digest**（`{digest}-latex-33.fmt`，与上游 `FormatCache` 同名，换 bundle 必换文件、不会复用旧 format）；落点 = `<cache_dir>/formats/`（**不是**缓存根）。未命中则跑 initex 趟：主输入换成合成的 `\input tectonic-format-latex.tex`（上游 `enter_format_mode`）、`halt_on_error_mode(true)`、`Ok(TexOutcome::Errors)` 也算失败、dump 出的 `*.fmt` 由 runner 收集后按 **format 的 stem** 落盘（上游 `make_format_pass`）。算不出落点时**显式报错**，不落项目目录（方案 §5.2 硬约束） |
+| 时间源（D4） | 库内**显式** `build_date(SystemTime::now())`（format 趟与排版趟各一次）；`TexEngine::default()` 的 build_date 是 `UNIX_EPOCH`（`engine_xetex/src/lib.rs:92-96`），不写会把 `\today` 静默印成 1970-01-01。**禁止** `build_date_from_env`（进程级全局，会污染同进程其它步骤，D-3） |
+| 页哈希 | **显式不支持**（`PAGE_HASH_SUPPORTED = false` + `PAGE_HASH_NOTE`）：路径 B 的 XDV 只在内存文件表里 ⇒ `Success.page_hashes` 给空表（= 无法判定，下游保守全量刷新）。**不是**静默跳过 |
+| bib 趟 / 收敛 | **都不支持**（`BIB_PASS_SUPPORTED = false` / `CONVERGENCE_SUPPORTED = false`）：无 `tectonic_engine_bibtex` 依赖 ⇒ 检出 `\cite`/`\bibliography`/`\addbibresource`/`\printbibliography`/`\nocite` 时 `warn!` 一行「可能未解析、与子进程 Full **不等价**」，且 `Success.kind` 报 **`Quick`**（让 ㉘ 的 `draft`/「引用待更新」生效，用户不会误以为已收敛） |
+| 失败面 | 先 `parse_log` + `diagnose` 出结构化 `ContentError`；`.log` 为空时给 `IoError`，附「I/O 层输入请求摘要（缺哪些文件）+ 引擎状态尾部」；Cancel/超时走**协作式**：置位后每个 I/O 入口立刻报错，引擎在下一个回调处中止（库形态没有进程可树杀） |
+| 分阶段计时 | 每次成功编译 `info!` 一行「库形态分阶段耗时」：`format_ms` / `typeset_ms` / `convert_ms` + 输入请求分类计数（`req_ram/mem/disk/bundle/miss`）——这是 P2/P4 的一手证据，也是"慢在哪一趟"的定位入口 |
+| ADR-0010 例外 | `IoProvider` 是**同步** trait（`io_base/src/lib.rs:433-533`）而 core 的 `FileSystem` 是 async（`project/fs.rs:15-16`）⇒ 本层的磁盘读写只能在 `spawn_blocking` 里用 `std::fs`（只碰 `project_root` 与 `tmp/`）。这是 X-5 登记的"第二落点"，**与方案 §4.1 写的"代理到 core FileSystem"有出入**（技术上前者不可达），已记入 t21 的交付说明 |
+| 复核入口 | **P2/P3 主入口**：建 CLI（见方案 §6.1 的完整环境前置）→ `latteset-cli --project <dir> compile` → `node scripts/validate-pdf.mjs --pdf <out.pdf> --expect-pages N --expect-text <子串>`；另有 `cargo check -p latteset-tectonic`、`node scripts/tectonic-lib-xdvscan.mjs --pages-xdv <main.xdv> --chunk 16384`、`node scripts/bench-tectonic-lib.mjs --runs 3 --mode fresh\|resident` |
+| 当前状态（2026-09-15，t10/t11 收口） | **已能真编出 PDF**：中文夹具 1 页，产物 7590 B，`validate-pdf` 六项全过（页数、文本层含「你好，世界」、无 U+FFFD）。release 实测：冷缓存 **1943 ms**（format 1495 / 排版 335 / 转换 114）、热缓存 **372–642 ms**，与子进程 `tectonic.exe -r 0`（1857 / 395–458 ms）**同速**。仍未支持：bib 趟、页哈希、多趟收敛、常驻（P4 闸门） |
+
+
 ## 3. 项目子系统（project 大模块）
 
 ### 3.1 拆分

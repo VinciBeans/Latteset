@@ -13,10 +13,12 @@
 //! - 本 crate 不含业务策略：触发条件（compose）、失败语义（scheduler/policy）仍在 core。
 //!
 //! 模块：fs（tokio::fs 实现 FileSystem + verbatim 前缀剥离）、runner（latexmk 执行器）、
-//! synctex（synctex CLI）、storage（设置存储：原子写 + 自写盘过滤）、watch（notify 文件监视）。
+//! synctex（synctex CLI）、storage（设置存储：原子写 + 自写盘过滤）、watch（notify 文件监视）、
+//! tectonic（Tectonic 的 bundle 获取策略与缓存判定）。
 
 pub mod fs;
 pub mod runner;
 pub mod storage;
 pub mod synctex;
+pub mod tectonic;
 pub mod watch;
