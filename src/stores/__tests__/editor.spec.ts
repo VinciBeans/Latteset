@@ -113,4 +113,43 @@ describe("editorStore", () => {
     expect(editor.openError).toBeNull();
     expect(editor.tabs.map((t) => t.path)).toEqual([MAIN]);
   });
+
+  // ---- 2026-09-15 真机回归：同一次自保存会来多条事件 ----
+  // Windows notify 对**一次**写盘投递 2 条（实测同一毫秒、都在 `markSaved` 之前到达）。
+  // 旧实现把 `lastSaved` "消费一次"，于是第二条撞上"仍脏" ⇒ 每次编辑都误报「外部修改」；
+  // 而那个提示的动作是 `acceptExternal`（**放弃本地**）⇒ 误报 + 一点击就丢输入。
+  // ⚠ 这三条会改共享 mock 的返回值，所以放在文件**末尾**，避免影响上面的用例。
+
+  it("onFilesChanged：同一次自保存的两条事件（markSaved 尚未跑）→ 不得误报冲突", async () => {
+    const editor = useEditorStore();
+    await editor.openFile(MAIN);
+    // 真实保存时序：markSaving 先落（乐观记录），磁盘已是新内容，但脏标记还没清
+    const saved = "probe-A";
+    editor.buffers.set(MAIN, saved);
+    editor.markDirty(MAIN, saved);
+    editor.markSaving([MAIN]);
+    vi.mocked(ipc.readFile).mockResolvedValue(saved); // 磁盘 == 缓冲（自己刚写的）
+    await editor.onFilesChanged([MAIN, MAIN]); // notify 的两条事件，同一批逐条投递
+    expect(editor.externalConflict.has(MAIN)).toBe(false);
+    expect(editor.buffers.get(MAIN)).toBe(saved); // 本地未被覆盖
+  });
+
+  it("onFilesChanged：窗口之外，磁盘与缓冲一致 → 仍不算冲突（不靠时间猜）", async () => {
+    const editor = useEditorStore();
+    await editor.openFile(MAIN);
+    editor.markDirty(MAIN, "同内容");
+    vi.mocked(ipc.readFile).mockResolvedValue("同内容");
+    await editor.onFilesChanged([MAIN]); // 无 lastSaved ⇒ withinSelfSave 为假
+    expect(editor.externalConflict.has(MAIN)).toBe(false);
+  });
+
+  it("onFilesChanged：窗口之外，磁盘与缓冲不一致 → 仍然要报冲突（别把真冲突修没了）", async () => {
+    const editor = useEditorStore();
+    await editor.openFile(MAIN);
+    editor.markDirty(MAIN, "我的未保存输入");
+    vi.mocked(ipc.readFile).mockResolvedValue("外部工具写的内容");
+    await editor.onFilesChanged([MAIN]);
+    expect(editor.externalConflict.has(MAIN)).toBe(true);
+    expect(editor.buffers.get(MAIN)).toBe("我的未保存输入"); // 本地不丢
+  });
 });

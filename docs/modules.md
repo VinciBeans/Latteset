@@ -606,6 +606,8 @@ pub fn is_self_write(&self, path: &Path, content: &str) -> bool;  // 自写盘 h
 
 **热更新（设计决策 D6）**：watch 识别 `.latteset/settings.json` 变化 → 重载 → 广播 `settings-changed`。**自写盘过滤**：`update_settings` 写盘时记录 `(path, content_hash)`；watch 事件到达时比对 hash，相同则跳过（防"自己写 → 自己重载 → 重复广播"）。hash 存在 `storage.last_write` 内，不跨模块。
 
+**源文件的"自写盘"没有这层过滤，靠前端兜**（`editor.ts` 的 `onFilesChanged`）：Windows notify 对**同一次**写盘会投递**多条**事件（2026-09-15 真机实测：一次 Monaco 编辑 → 2 条 `files-changed`、**同一毫秒**、都在 `saveAll` 的 promise 续体跑完之前到达）。因此脏分支的时间窗口判据**不能"消费一次"**——一消费，第二条就会撞上"仍脏"并误报 `外部修改`，而该提示的动作是 `acceptExternal`（**放弃本地**，见 `editor.ts` 注释）⇒ 误报 + 一点击 = 丢输入。现行规则：窗口内（<2s）直接忽略；窗口外**再比一次磁盘内容**，与缓冲一致就不算冲突，不一致才报。真机两侧都验过（重复事件不再误报；外部工具写入仍被标记）。
+
 **覆盖清洗（`sanitize_overrides`，core `settings/validate.rs`）**：读回项目覆盖时**逐字段**校验——越界/非法的 `root_file` 置 `None`（回退全局探测），合法的 compile 覆盖保留。整包丢弃会连带丢掉同一文件里合法的 compile 覆盖，不可取。
 
 **信息局部性**：core 的合并/校验是纯函数；全局设置快照是 §1 清单里唯一的 `RwLock` 共享态——写者只有 storage 模块，读方（组合层构造 CompileRequest 时）只取一次性快照拷贝，不持有引用。
