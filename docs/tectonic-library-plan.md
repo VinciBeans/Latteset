@@ -616,8 +616,9 @@ node scripts/validate-pdf.mjs --pdf <dir>\<stem>.pdf --expect-pages 1 --expect-t
 | **Quick（内容未变）** | **A 触发**：`convert_ms=0`、`reused_pdf=true`、**475 ms**（跳过转换与拷贝） |
 | **改中间一章的一个词** | 页数 28→28，**只有第 16 页变**（1/28）—— 债 #26 的 V1 口径端到端成立 |
 
-**边界**：空表仍只表示**无法判定**（XDV 缺失/损坏）⇒ 前端保守全量刷新；A **只对 Quick**（与子进程档同闸门，
-Full 的语义就是完整刷新一遍）。
+**边界**：空表仍只表示**无法判定**（XDV 缺失/损坏）⇒ 前端保守全量刷新（真机见 §6.3 的 V7）；A **只对 Quick**
+（与子进程档同闸门，Full 的语义就是完整刷新一遍）。这两件事**判据不同、别混**：A 看的是 `.pages` 缓存
+（runner 侧），"无法判定"看的是 `pages == 0`（前端侧）。
 
 ### §6.3 GUI 真机验证（2026-09-15；V6 暴露一个真缺陷，已修）
 
@@ -634,8 +635,15 @@ GUI 里从没跑过**。本节把同一份 28 页多文件夹具（`test_file/te
 | V3 | **A**（Quick + 内容未变） | Monaco 在 `ch08.tex` 末尾加一行**纯注释**（输出不变） | `触发编译（编辑触发 = Quick 单趟）`、`passes=1`；**`页哈希与上次逐页相同：跳过 XDV→PDF 转换与拷贝 pages=28`**；`convert_ms=1 reused_pdf=true`（对照冷 Full 的 `convert_ms=6399`）；`changed=0` ⇒ 控制台 3 次 `[preview] 跳过重载：28 页逐页未变`，**全程没有第二次 reload** |
 | V4a | **B/C**（改一章、跨页重排） | 同一行再追加 6 个字 | `changed=3`；预览 `reload#2 … render=4ms pagesRendered=0 pagesReused=7`（对照首轮 `reload#1 render=66ms pagesRendered=7`） |
 | V4b | **B/C**（严格"改一个词"） | 等长逐字替换 `追加`→`替换`→`变更`（断行不变） | **`changed=1`**，且逐页比对确认**恰好第 16 页**（与 §6.3 的 CLI 结论一致）；两次替换均复现 |
-| V5 | 判据缓存缺失的退化 | 删 `tmp/main.tectonic.pages` → 编辑 | 该轮 **A 不触发**（`reused_pdf=false convert_ms=1928`）并**写回缓存**；下一轮立刻恢复 `convert_ms=1 reused_pdf=true` ⇒ 文档说的"只退化一轮"端到端成立 |
+| V5 | 判据缓存缺失的退化（**这条是 A 的判据，不是"无法判定"**） | 删 `tmp/main.tectonic.pages` → 编辑 | 该轮 **A 不触发**（`reused_pdf=false convert_ms=1928`）并**写回缓存**；下一轮立刻恢复 `convert_ms=1 reused_pdf=true` ⇒ 文档说的"只退化一轮"端到端成立 |
 | V6 | 换引擎不串档 | 面板切 XeLaTeX → 点「编译」 | **首轮 FAIL**（见下）。修复后：`Full 编译（完整 latexmk 收敛） engine="-xelatex"`、`changed=28`、**新生成 `tmp/main.xelatex.pages`**，`main.tectonic.pages` 原样保留；两份缓存行数与首行完全相同（`v1` + 28 行）⇒ 口径可比，**28/28 页哈希不同**（两个引擎的 XDV 确实不同，不是误报）；PDF 82,586 → 74,506 B |
+| V7 | **「空表 ⇒ 无法判定 ⇒ 全量刷新」**（§2.7 页哈希行的第 4 条契约） | 面板切回 Tectonic 的**子进程**档（`lib_form=false`）→ 点「编译」 | 日志 **`pages=0 changed=0`**（该档 PDF 不落 XDV ⇒ 页哈希为空），前端 `reload#10` —— **是重载、不是"跳过重载"** ⇒ 保守全量刷新成立 |
+
+> **V7 是复查补的**：上一轮我把"无法判定"错当成"删掉 `.pages` 缓存"来验（写成了 V5）。其实两者是不同的东西——
+> `.pages` 只是 **A 的判据**（runner 侧），而"无法判定"的信号是 **runner 返回空页哈希**（`pages == 0`），
+> 前端据此走全量刷新（`preview.ts`：`unchanged = pages > 0 && changedPages.length === 0`）。
+> 真正能触发它的是**子进程 Tectonic 档**：`latteset-infra/src/runner.rs:1027` 的用例就断言"PDF 档没有 XDV
+> ⇒ 页哈希必须为空"。V5 与 V7 现已分开记录。
 
 **V4a 的 3 页不是缺陷**：追加 6 个汉字会让正文**重排**、跨过页边界。把"改一个词"做成**等长替换**（V4b）
 后就是 1 页——页哈希给的是"这一页的字节变了没有"，它如实反映重排，不看编辑的字符数。
