@@ -7,8 +7,11 @@ name: CI
 on:
   push:
     branches: [master]
+    # 版本 tag 也触发：库形态的发布构建档只在 tag/手动时跑（见下）。
+    tags: ['v*']
   pull_request:
     branches: [master]
+  workflow_dispatch:
 
 jobs:
   check:
@@ -71,18 +74,19 @@ jobs:
   # Tectonic 库形态（路径 B，ADR-0012）是**正式的构建变体**：发布产物要同时具备两种形态
   # （子进程 / 库内嵌，由设置面选），所以这一档必须在 CI 里存在 —— 否则用户装到的包根本没有库形态。
   #
-  # 触发面刻意收窄（workflow_dispatch + tag）：它要装整套 vcpkg 端口，冷构建约 +15–20 min
-  # （t4 §7 的参照），挂在每次 push 上会把常规反馈拖慢一个量级。发布前手动或打 tag 触发。
+  # 触发面刻意收窄（版本 tag / 手动 dispatch）：它要装整套 vcpkg 端口，冷构建约 +15–20 min
+  # （t4 §7 的参照），挂在每次 push 上会把常规反馈拖慢一个量级。
   #
   # 本档**只管"带库形态的发布构建能不能成"**：装依赖 → 产品自己的前置校验 → 库形态单测 →
   # `tauri build --features tectonic-lib`。真编文档的端到端门禁不在这里 —— 它还要 bundle
   # （目录 bundle 需自带 SHA256SUM）与网络口径，那两件在 P2/P3 的复核入口里做（见方案 §6）。
+  #
+  # ⚠ VCPKG_ROOT 只能在**步骤级**设（job 级 env 不允许引用 `runner` 上下文，用了会让整个
+  #    workflow 文件校验失败、0 秒红）；步骤间传递走 `$GITHUB_ENV`。
   build-windows-tectonic-lib:
     name: Windows build (tectonic-lib variant)
     runs-on: windows-latest
     if: github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/')
-    env:
-      VCPKG_ROOT: ${{ runner.temp }}/vcpkg
     steps:
       - uses: actions/checkout@v4
 
@@ -105,12 +109,15 @@ jobs:
       - name: Setup vcpkg
         shell: pwsh
         run: |
-          git clone https://github.com/microsoft/vcpkg "$env:VCPKG_ROOT"
-          & "$env:VCPKG_ROOT/bootstrap-vcpkg.bat" -disableMetrics
+          $vcpkgRoot = Join-Path $env:RUNNER_TEMP 'vcpkg'
+          git clone https://github.com/microsoft/vcpkg $vcpkgRoot
+          & "$vcpkgRoot/bootstrap-vcpkg.bat" -disableMetrics
           $env:VCPKG_DEFAULT_TRIPLET = 'x64-windows-static-release'
           $env:VCPKG_DEFAULT_HOST_TRIPLET = 'x64-windows-static-release'
-          & "$env:VCPKG_ROOT/vcpkg.exe" install freetype harfbuzz graphite2 icu fontconfig libpng --triplet x64-windows-static-release
+          & "$vcpkgRoot/vcpkg.exe" install freetype harfbuzz graphite2 icu fontconfig libpng --triplet x64-windows-static-release
           if ($LASTEXITCODE -ne 0) { throw "vcpkg install 失败（exit $LASTEXITCODE）" }
+          # 交给后续步骤（步骤级 env 才允许用 runner 上下文，所以走 GITHUB_ENV）。
+          "VCPKG_ROOT=$vcpkgRoot" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
 
       # 前置校验走产品自己的脚本（单一落点）——失败时给的是可执行文案，不是 build script panic。
       - name: Check tectonic-lib prerequisites
