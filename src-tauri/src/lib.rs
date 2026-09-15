@@ -2,6 +2,7 @@
 
 mod commands;
 mod events;
+mod runner_switch;
 
 use commands::AppState;
 use events::{
@@ -14,7 +15,7 @@ use tauri::Manager;
 use latteset_core::scheduler::Scheduler;
 use latteset_core::settings::Settings;
 use latteset_infra::{
-    fs::TokioFs, runner::LatexmkRunner, storage::SettingsStorage,
+    fs::TokioFs, storage::SettingsStorage,
     watch::{spawn_watcher, WatchState},
 };
 use tokio::sync::RwLock;
@@ -84,42 +85,7 @@ pub fn run() {
                 Arc::new(TauriProgress {
                     app: app.handle().clone(),
                 });
-            // 装配点（方案 §3.2 / §4.1「装配点单一」）：默认 = **子进程形态**（LatexmkRunner）。
-            // 打开 `tectonic-lib` 特性 **且** 运行期开关 `LATTESET_TECTONIC_LIB=1` 时才用库形态
-            // （方案 §3.5：默认关闭；设置面的形态位属后续收口）。**D1：失败不自动回退** ——
-            // 这里只决定装配哪个 runner，运行中失败就是失败。
-            let runner: Arc<dyn latteset_core::scheduler::CompileRunner> = {
-                #[cfg(feature = "tectonic-lib")]
-                {
-                    if latteset_tectonic::lib_form_enabled() {
-                        let mut lib = latteset_tectonic::TectonicLibRunner::new(fs.clone(), progress);
-                        // 产品缓存目录（方案 §5.2 硬约束：format 必须落产品缓存目录，不得落项目目录）。
-                        // 运行期覆盖 `LATTESET_TECTONIC_CACHE` 优先（验证/放缓存隔离用）。
-                        let cache = latteset_tectonic::cache_dir_from_env()
-                            .or_else(|| app.path().app_cache_dir().ok());
-                        if let Some(cache) = cache {
-                            lib = lib.with_cache_dir(cache);
-                        }
-                        // bundle 来源（方案 §5.6 / t10）：默认 = 上游兜底网络地址；**离线/内网部署必须**
-                        // 用 `LATTESET_TECTONIC_BUNDLE=<file:///… 或相对路径>` 指本地目录 bundle
-                        // （目录要自带 SHA256SUM）。未开 `network-bundle` 特性时网络源会在打开阶段
-                        // 显式报错并给出该变量的用法——不静默、不回退（D1）。
-                        lib = lib.with_bundle(latteset_tectonic::bundle_from_env());
-                        Arc::new(lib)
-                    } else {
-                        Arc::new(LatexmkRunner::new(fs.clone(), progress))
-                    }
-                }
-                #[cfg(not(feature = "tectonic-lib"))]
-                {
-                    Arc::new(LatexmkRunner::new(fs.clone(), progress))
-                }
-            };
-            // setup 闭包不是 tokio 上下文：用 tauri 的 runtime（任何线程可用）
-            let (scheduler, scheduler_task) = Scheduler::create(runner, emitter);
-            tauri::async_runtime::spawn(scheduler_task.run());
-
-            // 共享状态
+            // 共享状态（设置要在 runner 之前建：`SwitchableRunner` 每趟读它选形态）
             let project: Arc<RwLock<Option<latteset_core::project::ProjectState>>> =
                 Arc::new(RwLock::new(None));
             let settings: Arc<RwLock<Settings>> = Arc::new(RwLock::new(
@@ -127,6 +93,21 @@ pub fn run() {
             ));
             let overrides: Arc<RwLock<latteset_core::settings::ProjectOverrides>> =
                 Arc::new(RwLock::new(Default::default()));
+
+            // 装配点（方案 §3.2 / §4.1「装配点单一」）：装一个**可切换** runner ——
+            // 它每趟编译读一次 `settings.tectonic`（形态 / bundle / 缓存目录），
+            // **改设置即生效、不需要重启**（方案 §3.5 的设置面收口）。
+            // **D1：失败不静默回退** —— 选了库形态而没编进特性时显式报错（见 runner_switch）。
+            let runner: Arc<dyn latteset_core::scheduler::CompileRunner> =
+                Arc::new(runner_switch::SwitchableRunner::new(
+                    fs.clone(),
+                    progress,
+                    settings.clone(),
+                    app.path().app_cache_dir().ok(),
+                ));
+            // setup 闭包不是 tokio 上下文：用 tauri 的 runtime（任何线程可用）
+            let (scheduler, scheduler_task) = Scheduler::create(runner, emitter);
+            tauri::async_runtime::spawn(scheduler_task.run());
 
             // 监视任务（事件出口与运行时句柄由本层注入，infra 不认识 Tauri）
             let watch_state = Arc::new(WatchState {
@@ -178,6 +159,7 @@ fn build_specta_builder() -> tauri_specta::Builder<tauri::Wry> {
             commands::synctex_inverse,
             commands::get_settings,
             commands::update_settings,
+            commands::lib_form_available,
         ])
         .events(tauri_specta::collect_events![
             CompileStatusEvent,

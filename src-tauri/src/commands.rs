@@ -360,6 +360,16 @@ pub async fn abort_compile(state: State<'_, AppState>) -> Result<(), CmdError> {
     Ok(())
 }
 
+/// 本次构建是否编入了 Tectonic **库形态**（`tectonic-lib` 特性）。
+///
+/// 设置面据此**禁用**该选项并说明原因，而不是让用户选了之后到编译时才炸 —— 那正是"功能开不出来"
+/// 的另一面。（选了但没编进来时 runner 会显式报错，D1：不静默回退到子进程。）
+#[tauri::command]
+#[specta::specta]
+pub fn lib_form_available() -> bool {
+    crate::runner_switch::LIB_FORM_COMPILED_IN
+}
+
 // ---------------------------------------------------------------- SyncTeX
 
 #[tauri::command]

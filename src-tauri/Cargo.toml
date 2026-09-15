@@ -25,6 +25,9 @@ specta-typescript = "0.0.12"
 specta = { version = "=2.0.0-rc.25", features = ["derive"] }
 latteset-core = { path = "../crates/latteset-core" }
 latteset-infra = { path = "../crates/latteset-infra" }
+# `SwitchableRunner` 要 impl `CompileRunner`（`#[async_trait]`）——宏依赖，不引 C。
+async-trait.workspace = true
+tokio-util.workspace = true
 serde.workspace = true
 tokio.workspace = true
 thiserror.workspace = true

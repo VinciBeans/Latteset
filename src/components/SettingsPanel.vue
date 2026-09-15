@@ -4,12 +4,20 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from "vue";
 import { useSettingsStore } from "../stores/settings";
+import { ipc } from "../services/ipc";
 import type { CompileMode, Engine } from "../bindings";
 
 const emit = defineEmits<{ close: [] }>();
 
 const store = useSettingsStore();
 const settings = computed(() => store.settings);
+/**
+ * 形态与资源。`tectonic` 在绑定里是**可选**字段（后端 `#[serde(default)]` 是为了让旧
+ * settings.json 没有这个键时仍能加载升级）⇒ 这里补默认值，模板与逻辑里就不必到处写 `?.`。
+ */
+const tectonic = computed(
+  () => settings.value?.tectonic ?? { lib_form: false, bundle: null, cache_dir: null },
+);
 
 const MODES: { value: CompileMode; label: string; hint: string }[] = [
   { value: "continuous", label: "连续编译", hint: "编辑后 500ms 自动编译" },
@@ -121,6 +129,83 @@ async function resetDefaults() {
   await store.update({ mode: "continuous", debounce_ms: 500, timeout_secs: 120, engine: "xelatex" });
   snapshotInputs();
 }
+
+// ---------------------------------------------------------------- Tectonic 形态（⑫ 里程碑）
+
+/** 本次构建是否编入库形态：没编进来就禁用该选项（而不是让用户选了到编译时才炸）。 */
+const libAvailable = ref<boolean | null>(null);
+const bundleInput = ref("");
+/** 留空 = 用上游兜底网络地址（`None`）；`true` = 用本地目录 bundle。 */
+const bundleLocal = ref(false);
+const cacheInput = ref("");
+const formError = ref("");
+
+onMounted(async () => {
+  try {
+    libAvailable.value = await ipc.libFormAvailable();
+  } catch {
+    libAvailable.value = false;
+  }
+  const t = tectonic.value;
+  if (t) {
+    bundleLocal.value = !!t.bundle;
+    bundleInput.value = t.bundle ?? "";
+    cacheInput.value = t.cache_dir ?? "";
+  }
+});
+
+/** 形态切换：即点即存，**下一趟编译就生效**（runner 每趟读设置，不需要重启）。 */
+async function setLibForm(useLib: boolean) {
+  if (tectonic.value.lib_form === useLib) return;
+  formError.value = "";
+  try {
+    await store.update({ lib_form: useLib });
+  } catch (e) {
+    formError.value = String((e as { message?: string })?.message ?? e);
+  }
+}
+
+/** bundle 来源：留空 = 上游兜底（网络）；填了就必须是 `file:///…` 或相对路径。 */
+async function applyBundle() {
+  formError.value = "";
+  const raw = bundleInput.value.trim();
+  if (!bundleLocal.value || raw === "") {
+    // 切回"上游兜底"：空串 = 清除
+    if (tectonic.value.bundle) {
+      try {
+        await store.update({ bundle: "" });
+      } catch (e) {
+        formError.value = String((e as { message?: string })?.message ?? e);
+      }
+    }
+    return;
+  }
+  if (/^[A-Za-z]:/.test(raw)) {
+    // 设置面就拦住：上游会把它当 URL scheme 解析成 Ok(None)（方案 §5.6 LB-4）
+    formError.value = `不能写绝对 Windows 路径；请写 file:///${raw.replace(/\\/g, "/")} 或相对路径`;
+    return;
+  }
+  if (raw !== (tectonic.value.bundle ?? "")) {
+    try {
+      await store.update({ bundle: raw });
+    } catch (e) {
+      formError.value = String((e as { message?: string })?.message ?? e);
+    }
+  }
+}
+
+/** 缓存目录：留空 = 宿主的应用缓存目录（必须绝对路径，相对路径会被后端拒绝）。 */
+async function applyCacheDir() {
+  formError.value = "";
+  const raw = cacheInput.value.trim();
+  const cur = tectonic.value.cache_dir ?? "";
+  if (raw === cur) return;
+  try {
+    await store.update({ cache_dir: raw });
+  } catch (e) {
+    formError.value = String((e as { message?: string })?.message ?? e);
+  }
+}
 </script>
 
 <template>
@@ -218,6 +303,103 @@ async function resetDefaults() {
               {{ rootFileError || (settings.root_file ? `当前覆盖：${settings.root_file}` : "留空时自动探测根文件") }}
             </p>
           </div>
+        </section>
+
+        <!-- Tectonic 形态（⑫ 里程碑的设置面） -->
+        <section class="sec">
+          <h3 class="sec-title">Tectonic 引擎形态</h3>
+
+          <div class="field">
+            <label class="field-label" for="set-form">驱动形态</label>
+            <div class="mode-seg" id="set-form">
+              <button
+                class="seg-btn"
+                :class="{ on: !tectonic.lib_form }"
+                title="运行官方 tectonic.exe：稳定、与上游行为一致；需要 PATH 上有 tectonic"
+                @click="setLibForm(false)"
+              >子进程</button>
+              <button
+                class="seg-btn"
+                :class="{ on: tectonic.lib_form }"
+                :disabled="libAvailable === false"
+                :title="libAvailable === false
+                  ? '本次构建未编入 tectonic-lib 特性，无法使用库形态'
+                  : '把 Tectonic 引擎嵌进产品进程：免装 TeX Live（自带宏包）、支持 BibTeX 与多趟收敛、可做页级增量复用；不支持 biber/makeindex 这类外部工具'"
+                @click="setLibForm(true)"
+              >库内嵌</button>
+            </div>
+            <p class="field-hint" :class="{ err: formError }">
+              {{ formError || (libAvailable === false
+                ? "库形态在本次构建中不可用（需以 --features tectonic-lib 构建）"
+                : tectonic.lib_form
+                  ? "库形态：切换后**下一趟编译即生效**（无需重启）；不支持 biber/makeindex（外部工具），检出时会提示"
+                  : "子进程形态：与上游 tectonic.exe 行为一致（默认）") }}
+            </p>
+          </div>
+
+          <div class="field">
+            <label class="field-label" for="set-bundle-path">宏包集（bundle）来源</label>
+            <div class="mode-seg" id="set-bundle-source">
+              <button
+                class="seg-btn"
+                :class="{ on: !bundleLocal }"
+                title="用上游兜底地址首次联网下载（约 60 MB），之后离线复用缓存"
+                @click="bundleLocal = false; bundleInput = ''; applyBundle()"
+              >自动（联网）</button>
+              <button
+                class="seg-btn"
+                :class="{ on: bundleLocal }"
+                title="指向本地目录 bundle：离线/内网部署必须用这个（目录需自带 SHA256SUM）"
+                @click="bundleLocal = true"
+              >本地目录</button>
+            </div>
+            <div class="root-row" v-if="bundleLocal" style="margin-top: 6px">
+              <input
+                id="set-bundle-path"
+                class="input"
+                type="text"
+                spellcheck="false"
+                placeholder="file:///E:/bundles/tex  或  bundles/tex"
+                v-model="bundleInput"
+                @keydown.enter="applyBundle"
+              />
+              <button class="btn small" @click="applyBundle">应用</button>
+            </div>
+            <p class="field-hint">
+              {{ tectonic.bundle
+                ? `当前：${tectonic.bundle}`
+                : "当前：上游兜底地址（首次编译需联网下载宏包集）" }}
+            </p>
+          </div>
+
+          <div class="field">
+            <label class="field-label" for="set-cache">缓存目录（format / bundle）</label>
+            <div class="root-row">
+              <input
+                id="set-cache"
+                class="input"
+                type="text"
+                spellcheck="false"
+                placeholder="留空 = 应用缓存目录"
+                v-model="cacheInput"
+                @keydown.enter="applyCacheDir"
+              />
+              <button class="btn small" @click="applyCacheDir">应用</button>
+              <button
+                class="btn small ghost"
+                :disabled="!tectonic.cache_dir"
+                title="回到应用缓存目录"
+                @click="cacheInput = ''; applyCacheDir()"
+              >清除</button>
+            </div>
+            <p class="field-hint">
+              必填绝对路径：留空时用应用缓存目录。格式文件（约 24 MB）**不会**落进你的项目目录。
+            </p>
+          </div>
+
+          <p class="field-hint" v-if="!tectonic.lib_form">
+            以上两项只在<b>库内嵌</b>形态下生效（子进程档由 `tectonic.exe` 自己管缓存）。
+          </p>
         </section>
       </div>
 

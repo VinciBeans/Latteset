@@ -1,6 +1,7 @@
 //! 设置合并与局部更新（modules.md §6）。
 
 use super::model::{ProjectOverrides, Settings, SettingsPatch};
+use std::path::PathBuf;
 
 /// 项目覆盖全局：字段级 Option 语义，缺失继承全局（modules.md §6 merge 算法）。
 ///
@@ -47,6 +48,16 @@ pub fn apply_patch(settings: &mut Settings, patch: &SettingsPatch) -> Result<(),
     if let Some(v) = &patch.root_file {
         next.root_file = v.clone();
     }
+    // Tectonic 形态与资源（全局；空串 = 清除，见 `SettingsPatch` 的字段说明）
+    if let Some(v) = patch.lib_form {
+        next.tectonic.lib_form = v;
+    }
+    if let Some(v) = &patch.bundle {
+        next.tectonic.bundle = Some(v.trim().to_owned()).filter(|s| !s.is_empty());
+    }
+    if let Some(v) = &patch.cache_dir {
+        next.tectonic.cache_dir = Some(PathBuf::from(v.trim())).filter(|p| !p.as_os_str().is_empty());
+    }
     super::validate::validate(&next)?;
     *settings = next;
     Ok(())
@@ -68,6 +79,7 @@ mod tests {
                 timeout_secs: 120,
                 engine: Engine::XeLaTeX,
             },
+            tectonic: Default::default(),
             root_file: None,
         }
     }

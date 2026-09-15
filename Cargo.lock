@@ -2354,6 +2354,7 @@ dependencies = [
 name = "latteset"
 version = "0.1.0"
 dependencies = [
+ "async-trait",
  "latteset-core",
  "latteset-infra",
  "latteset-tectonic",
@@ -2370,6 +2371,7 @@ dependencies = [
  "tauri-specta",
  "thiserror 2.0.20",
  "tokio",
+ "tokio-util",
  "tracing",
  "tracing-subscriber",
 ]

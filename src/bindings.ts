@@ -44,6 +44,13 @@ export const commands = {
 	 *  root_file → 项目覆盖文件；随后重算有效设置并广播 settings-changed。
 	 */
 	updateSettings: (patch: SettingsPatch_Deserialize) => typedError<Settings, CmdError>(__TAURI_INVOKE("update_settings", { patch })),
+	/**
+	 *  本次构建是否编入了 Tectonic **库形态**（`tectonic-lib` 特性）。
+	 * 
+	 *  设置面据此**禁用**该选项并说明原因，而不是让用户选了之后到编译时才炸 —— 那正是"功能开不出来"
+	 *  的另一面。（选了但没编进来时 runner 会显式报错，D1：不静默回退到子进程。）
+	 */
+	libFormAvailable: () => __TAURI_INVOKE<boolean>("lib_form_available"),
 };
 
 /** Events */
@@ -314,6 +321,8 @@ export type ProjectInfo = {
 export type Settings = {
 	schema_version: number,
 	compile: CompileSettings,
+	/**  Tectonic 形态与资源（全局；见 [`TectonicSettings`] 的说明）。 */
+	tectonic?: TectonicSettings,
 	/**  根文件手动覆盖（探测结果的逃生门，ADR-0009）。 */
 	root_file: string | null,
 };
@@ -338,6 +347,17 @@ export type SettingsPatch_Deserialize = {
 	timeout_secs?: number | null,
 	engine?: Engine | null,
 	root_file?: string | null,
+	/**  引擎形态（Tectonic 库内嵌）：`None` = 不动。 */
+	lib_form?: boolean | null,
+	/**
+	 *  bundle 来源：`None` = 不动；**空串 = 清除**（回到上游兜底）；其它 = 设置。
+	 * 
+	 *  用"空串 = 清除"而不是 `Option<Option<..>>`：设置面总是发具体值，用户清空输入框就是清除，
+	 *  语义够用且少一层 `null` 歧义（对比 `root_file` 的历史包袱）。
+	 */
+	bundle?: string | null,
+	/**  缓存目录：同上，**空串 = 清除**（回到宿主应用缓存目录）。 */
+	cache_dir?: string | null,
 };
 
 /**
@@ -351,6 +371,17 @@ export type SettingsPatch_Serialize = {
 	timeout_secs?: number | null,
 	engine?: Engine | null,
 	root_file?: string | null,
+	/**  引擎形态（Tectonic 库内嵌）：`None` = 不动。 */
+	lib_form?: boolean | null,
+	/**
+	 *  bundle 来源：`None` = 不动；**空串 = 清除**（回到上游兜底）；其它 = 设置。
+	 * 
+	 *  用"空串 = 清除"而不是 `Option<Option<..>>`：设置面总是发具体值，用户清空输入框就是清除，
+	 *  语义够用且少一层 `null` 歧义（对比 `root_file` 的历史包袱）。
+	 */
+	bundle?: string | null,
+	/**  缓存目录：同上，**空串 = 清除**（回到宿主应用缓存目录）。 */
+	cache_dir?: string | null,
 };
 
 /**  SyncTeX 反向定位结果（PDF → 源码）。 */
@@ -366,6 +397,38 @@ export type SyncTexTarget = {
 	page: number,
 	x: number | null,
 	y: number | null,
+};
+
+/**
+ *  Tectonic 形态与资源设置（⑫ 里程碑的设置面收口项；方案 §3.5）。
+ * 
+ *  **只在全局设置里**（不进 [`ProjectOverrides`]）：引擎形态由装配点的 runner 决定，而 GUI 侧
+ *  的 runner **每趟编译读一次全局设置**（见 `src-tauri` 的 `SwitchableRunner`）；项目级覆盖要走
+ *  "形态位随 `CompileRequest` 下发"那条路，属后续项 —— 现在放一个项目级字段只会是**看着能覆盖、
+ *  实际不生效**的假开关。
+ */
+export type TectonicSettings = {
+	/**
+	 *  引擎形态：`false`（默认）= **子进程**（`tectonic.exe`）；`true` = **库内嵌**（路径 B，ADR-0012）。
+	 * 
+	 *  需要构建时打开 `tectonic-lib` 特性；没编进去而用户选了库形态时 runner **显式失败**
+	 *  （D1：不静默回退到子进程）。
+	 */
+	lib_form: boolean,
+	/**
+	 *  bundle 来源：`None`/空 = 上游兜底**网络地址**；否则 `file:///…` 或**相对路径**的目录 bundle。
+	 * 
+	 *  ⚠ 不能写 `E:\…`：上游 `detect_bundle` 会把它当 URL scheme 解析成 `Ok(None)`（方案 §5.6 LB-4）。
+	 *  设置面**当场拒绝**这种写法（[`super::validate`]）。
+	 */
+	bundle: string | null,
+	/**
+	 *  产品缓存目录（`formats/` + `bundles/` 的父目录）：`None`/空 = 宿主的应用缓存目录。
+	 * 
+	 *  **必须显式给**（或由宿主注入）：上游 format 默认落**项目目录**，不注入就会往用户项目扔
+	 *  24 MB 的 `.fmt`（方案 §5.2 硬约束）。
+	 */
+	cache_dir: string | null,
 };
 
 /* Tauri Specta runtime */

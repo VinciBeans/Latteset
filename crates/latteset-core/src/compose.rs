@@ -94,6 +94,7 @@ mod tests {
                 timeout_secs: 120,
                 engine: Engine::XeLaTeX,
             },
+            tectonic: Default::default(),
             root_file: None,
         }
     }

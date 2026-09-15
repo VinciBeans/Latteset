@@ -31,4 +31,11 @@ export const ipc = {
   getSettings: () => unwrap(commands.getSettings()),
   updateSettings: (patch: Parameters<typeof commands.updateSettings>[0]) =>
     unwrap(commands.updateSettings(patch)),
+  /**
+   * 本次构建是否编入了 Tectonic 库形态（设置面据此禁用选项，而不是让用户选了才炸）。
+   *
+   * 注意：该命令直接返回 `bool`（不是 `Result`），所以**不走 `unwrap`** —— specta 只为
+   * `Result<_, CmdError>` 的命令生成 `typedError` 包装。
+   */
+  libFormAvailable: () => commands.libFormAvailable(),
 };

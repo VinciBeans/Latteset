@@ -29,11 +29,44 @@ pub fn validate(s: &Settings) -> Result<(), Vec<String>> {
             s.compile.debounce_ms
         ));
     }
+    errs.extend(validate_tectonic(&s.tectonic));
     if errs.is_empty() {
         Ok(())
     } else {
         Err(errs)
     }
+}
+
+/// Tectonic 形态与资源的校验（**在设置面就拦住**，而不是等到编译才报错）。
+///
+/// 两条都是实测过的坑，在这里拦能给出可执行的文案：
+/// - **bundle 写绝对 Windows 路径**：上游 `detect_bundle` 先 `Url::parse`，`E:\…`/`E:/…` 会被当成
+///   scheme `e` 解析成功 ⇒ 返回 `Ok(None)` ⇒ 报一句"不是有效 bundle"（方案 §5.6 LB-4 实测）。
+/// - **缓存目录写相对路径**：它以进程 cwd 为基准，而 cwd 会随宿主不同（GUI/headless/测试）⇒ 同一份
+///   设置指向不同目录（format 缓存会"莫名重建"）。要求绝对路径。
+pub fn validate_tectonic(t: &super::model::TectonicSettings) -> Vec<String> {
+    let mut errs = Vec::new();
+    if let Some(raw) = t.bundle.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+        let looks_absolute_windows = raw.len() > 2 && raw.as_bytes().get(1) == Some(&b':');
+        if looks_absolute_windows && !raw.starts_with("file://") {
+            errs.push(format!(
+                "bundle 不能写绝对 Windows 路径（{raw}）：上游会把它当 URL scheme 解析、判为「不是 bundle」\
+                 ⇒ 请写 `file:///{}` 或相对路径",
+                raw.replace('\\', "/")
+            ));
+        }
+    }
+    if let Some(raw) = t.cache_dir.as_deref() {
+        let p = raw.to_string_lossy();
+        let s = p.trim();
+        if !s.is_empty() && !Path::new(s).is_absolute() {
+            errs.push(format!(
+                "缓存目录必须是绝对路径（当前 {s}）：相对路径以进程 cwd 为基准，\
+                 换宿主（GUI/headless）会指向不同目录，format 缓存会反复重建"
+            ));
+        }
+    }
+    errs
 }
 
 /// root_file 基本形式校验：非空、不含跨过项目根的 `..` 组件。
@@ -112,6 +145,49 @@ pub fn validate_overrides(o: &ProjectOverrides) -> Result<(), Vec<String>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::settings::model::{Settings, TectonicSettings};
+
+    /// bundle 写绝对 Windows 路径要在设置面就被拦住（LB-4），并给出正确写法。
+    #[test]
+    fn absolute_windows_bundle_is_rejected_with_the_fix() {
+        let t = TectonicSettings {
+            bundle: Some(r"E:\Works\bundle".to_owned()),
+            ..Default::default()
+        };
+        let errs = validate_tectonic(&t);
+        assert_eq!(errs.len(), 1, "{errs:?}");
+        assert!(errs[0].contains("file:///"), "要点明正确写法：{}", errs[0]);
+    }
+
+    /// `file:///…` 与相对路径都必须放行（它们是可行的两种给法）。
+    #[test]
+    fn url_and_relative_bundle_pass() {
+        for ok in ["file:///E:/Works/bundle", "bundles/local", ""] {
+            let t = TectonicSettings {
+                bundle: Some(ok.to_owned()),
+                ..Default::default()
+            };
+            assert!(validate_tectonic(&t).is_empty(), "{ok} 不该被拒");
+        }
+    }
+
+    /// 缓存目录必须绝对（相对路径换宿主就指向别处 ⇒ format 缓存反复重建）。
+    #[test]
+    fn relative_cache_dir_is_rejected() {
+        let t = TectonicSettings {
+            cache_dir: Some(std::path::PathBuf::from("cache")),
+            ..Default::default()
+        };
+        let errs = validate_tectonic(&t);
+        assert_eq!(errs.len(), 1, "{errs:?}");
+        assert!(errs[0].contains("绝对路径"), "{}", errs[0]);
+    }
+
+    /// 默认形态（子进程、无 bundle/缓存覆盖）必须通过校验。
+    #[test]
+    fn defaults_pass_validation() {
+        assert!(validate(&Settings::default()).is_ok());
+    }
 
     #[test]
     fn default_passes() {
