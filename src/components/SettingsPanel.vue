@@ -18,6 +18,19 @@ const settings = computed(() => store.settings);
 const tectonic = computed(
   () => settings.value?.tectonic ?? { lib_form: false, bundle: null, cache_dir: null },
 );
+/** 用户是否存过任何 Tectonic 专属设置——用于在引擎不是 Tectonic 时提示"存了但不生效"。 */
+const hasTectonicSettings = computed(
+  () => tectonic.value.lib_form || !!tectonic.value.bundle || !!tectonic.value.cache_dir,
+);
+const tectonicSettingsSummary = computed(() =>
+  [
+    tectonic.value.lib_form ? "库内嵌" : null,
+    tectonic.value.bundle ? "宏包集" : null,
+    tectonic.value.cache_dir ? "缓存目录" : null,
+  ]
+    .filter(Boolean)
+    .join(" / "),
+);
 
 const MODES: { value: CompileMode; label: string; hint: string }[] = [
   { value: "continuous", label: "连续编译", hint: "编辑后 500ms 自动编译" },
@@ -255,6 +268,12 @@ async function applyCacheDir() {
             <select id="set-engine" class="input select" :value="settings.compile.engine" @change="setEngine(($event.target as HTMLSelectElement).value as Engine)">
               <option v-for="e in ENGINES" :key="e.value" :value="e.value">{{ e.label }} — {{ e.hint }}</option>
             </select>
+            <!-- Tectonic 段只在选中 Tectonic 时显示（下面那条 section 的 v-if），所以这里必须
+                 把"已经存了 Tectonic 设置、但当前不生效"讲出来——否则用户切到 XeLaTeX 后
+                 那几项连看都看不到，成了隐形开关。 -->
+            <p class="field-hint warn" v-if="settings.compile.engine !== 'tectonic' && hasTectonicSettings">
+              已保存 Tectonic 形态设置（{{ tectonicSettingsSummary }}）；<b>仅在选择 Tectonic 引擎时生效</b>，当前引擎不受影响。
+            </p>
           </div>
 
           <div class="field-row">
@@ -346,7 +365,7 @@ async function applyCacheDir() {
               {{ formError || (libAvailable === false
                 ? "库形态在本次构建中不可用（需以 --features tectonic-lib 构建）"
                 : tectonic.lib_form
-                  ? "库形态：切换后**下一趟编译即生效**（无需重启）；不支持 biber/makeindex（外部工具），检出时会提示"
+                  ? "库形态：切过去后，下一趟编译即生效（无需重启）；不支持 biber/makeindex（外部工具），检出时会提示"
                   : "子进程形态：与上游 tectonic.exe 行为一致（默认）") }}
             </p>
           </div>
@@ -407,7 +426,7 @@ async function applyCacheDir() {
               >清除</button>
             </div>
             <p class="field-hint">
-              必填绝对路径：留空时用应用缓存目录。格式文件（约 24 MB）**不会**落进你的项目目录。
+              必填绝对路径：留空时用应用缓存目录。格式文件（约 24 MB）<b>不会</b>落进你的项目目录。
             </p>
           </div>
 
@@ -498,6 +517,8 @@ async function applyCacheDir() {
 }
 .field-hint { margin: 6px 0 0; font-size: 11px; color: var(--ink-faint); }
 .field-hint.err { color: #e85f52; }
+/* 「存了但当前不生效」——不能用 err（不是错误），但也不能与普通灰字同权重 */
+.field-hint.warn { color: var(--sienna, #b26a2b); }
 
 .input {
   width: 100%;

@@ -619,6 +619,39 @@ node scripts/validate-pdf.mjs --pdf <dir>\<stem>.pdf --expect-pages 1 --expect-t
 **边界**：空表仍只表示**无法判定**（XDV 缺失/损坏）⇒ 前端保守全量刷新；A **只对 Quick**（与子进程档同闸门，
 Full 的语义就是完整刷新一遍）。
 
+### §6.3 GUI 真机验证（2026-09-15；V6 暴露一个真缺陷，已修）
+
+§6.3 的数字全部来自 release 档的 bench harness（`latteset-cli` 是一次性语义）——**库形态这条路径在真机
+GUI 里从没跑过**。本节把同一份 28 页多文件夹具（`test_file/tectonic-lib-run/proj-26`：8 章 `\include`
++ toc + `\bibliography`）搬进真实窗口，用 tauri server MCP 驱动：
+`npm run tauri dev -- --features tectonic-lib`（+ `VITE_LATTESET_PROJECT` 自动打开项目）。
+⚠ dev profile 下 C 引擎是 `-O0`，所以**耗时只作同环境对照，不作性能结论**。
+
+| # | 场景 | 操作 | 实测 |
+|---|---|---|---|
+| V1 | 冷启动 Full | 清 `tmp/` + 根 PDF → 点「编译」 | `库形态排版趟数 passes=3 stable=true converged=true`；`pages=28 reused_pdf=false`；`changed=28`；项目根出 **82,586 B** PDF |
+| V2 | 产物与判据缓存 | — | `tmp/main.tectonic.pages` = `v1` + 28 行；`validate-pdf.mjs` → pdf.js `numPages=28`、文本层 13,570 字符、0 个 U+FFFD |
+| V3 | **A**（Quick + 内容未变） | Monaco 在 `ch08.tex` 末尾加一行**纯注释**（输出不变） | `触发编译（编辑触发 = Quick 单趟）`、`passes=1`；**`页哈希与上次逐页相同：跳过 XDV→PDF 转换与拷贝 pages=28`**；`convert_ms=1 reused_pdf=true`（对照冷 Full 的 `convert_ms=6399`）；`changed=0` ⇒ 控制台 3 次 `[preview] 跳过重载：28 页逐页未变`，**全程没有第二次 reload** |
+| V4a | **B/C**（改一章、跨页重排） | 同一行再追加 6 个字 | `changed=3`；预览 `reload#2 … render=4ms pagesRendered=0 pagesReused=7`（对照首轮 `reload#1 render=66ms pagesRendered=7`） |
+| V4b | **B/C**（严格"改一个词"） | 等长逐字替换 `追加`→`替换`→`变更`（断行不变） | **`changed=1`**，且逐页比对确认**恰好第 16 页**（与 §6.3 的 CLI 结论一致）；两次替换均复现 |
+| V5 | 判据缓存缺失的退化 | 删 `tmp/main.tectonic.pages` → 编辑 | 该轮 **A 不触发**（`reused_pdf=false convert_ms=1928`）并**写回缓存**；下一轮立刻恢复 `convert_ms=1 reused_pdf=true` ⇒ 文档说的"只退化一轮"端到端成立 |
+| V6 | 换引擎不串档 | 面板切 XeLaTeX → 点「编译」 | **首轮 FAIL**（见下）。修复后：`Full 编译（完整 latexmk 收敛） engine="-xelatex"`、`changed=28`、**新生成 `tmp/main.xelatex.pages`**，`main.tectonic.pages` 原样保留；两份缓存行数与首行完全相同（`v1` + 28 行）⇒ 口径可比，**28/28 页哈希不同**（两个引擎的 XDV 确实不同，不是误报）；PDF 82,586 → 74,506 B |
+
+**V4a 的 3 页不是缺陷**：追加 6 个汉字会让正文**重排**、跨过页边界。把"改一个词"做成**等长替换**（V4b）
+后就是 1 页——页哈希给的是"这一页的字节变了没有"，它如实反映重排，不看编辑的字符数。
+
+**V6 第一次跑就 FAIL，暴露一个真缺陷（本轮已修）**：`SwitchableRunner` 只用 `tectonic.lib_form` 决定形态，
+**不看 `req.engine`** ⇒ `engine=xelatex` + `lib_form=true` 时**静默跑 Tectonic 库形态**，而状态栏报的是
+**XeLaTeX**——UI 说谎。日志里 `库形态排版趟数` / `库形态分阶段耗时` 都在，却既不产 `main.xelatex.pages`、
+`changed` 又是 0（Tectonic 忠实复现了同一份页面 ⇒ 逐页哈希全同）。这恰好把 **INT-92 的两条判据全踩反**。
+
+- **修法**：判定上提到 core 的 `TectonicSettings::use_library_form(engine, env_forced)`——`lib_form` 只在
+  `engine == Tectonic` 时生效；`LATTESET_TECTONIC_LIB=1` 按文档"压过设置"**保留**为显式覆盖（复核/CI 的逃生门）。
+- **连带的 UI 陷阱（同期修）**：形态段现在只在选中 Tectonic 时渲染（见 [modules.md](./modules.md) §6），
+  于是"存过 `lib_form` 却切到 XeLaTeX"会变成**看不见的开关**。引擎那一栏现在会点名提示
+  「已保存 Tectonic 形态设置（库内嵌 / 宏包集 / 缓存目录）；仅在选择 Tectonic 引擎时生效」。
+- 修复后 V6 复验通过：状态栏说 XeLaTeX、**实际就跑 XeLaTeX**，基线不串。
+
 ### §6.4 P4 常驻档实测（J1 判决：**不成立**，2026-09-15）
 
 复核入口：`scripts/bench-tectonic-lib.mjs --mode resident` 驱动

@@ -18,11 +18,12 @@ let stored: PanelSettings;
 function freshSettings(
   engine: Settings["compile"]["engine"],
   bundle: string | null,
+  libForm = false,
 ): PanelSettings {
   return {
     schema_version: 1,
     compile: { mode: "continuous", debounce_ms: 500, timeout_secs: 120, engine },
-    tectonic: { lib_form: false, bundle, cache_dir: null },
+    tectonic: { lib_form: libForm, bundle, cache_dir: null },
     root_file: null,
   };
 }
@@ -45,8 +46,12 @@ vi.mock("../../services/ipc", () => ({
 }));
 
 /** 面板假定 store 已由 App 初始化过 ⇒ 这里直接把设置塞进 store，再挂载。 */
-async function mountPanel(engine: Settings["compile"]["engine"], bundle: string | null = null) {
-  stored = freshSettings(engine, bundle);
+async function mountPanel(
+  engine: Settings["compile"]["engine"],
+  bundle: string | null = null,
+  libForm = false,
+) {
+  stored = freshSettings(engine, bundle, libForm);
   const pinia = createPinia();
   setActivePinia(pinia);
   useSettingsStore().setSettings(structuredClone(stored));
@@ -85,6 +90,39 @@ describe("SettingsPanel：Tectonic 段的显示条件", () => {
     await w.find("#set-engine").setValue("tectonic");
     await flushPromises();
     expect(w.find("#set-form").exists()).toBe(true);
+    w.unmount();
+  });
+});
+
+// 段被隐藏 + 设置仍然存着 = 隐形开关（2026-09-15 真机踩到：`lib_form=true` 时把引擎切到
+// XeLaTeX，界面毫无提示，而编译仍跑 Tectonic 库形态）⇒ 必须在引擎那一栏把它讲出来。
+describe("SettingsPanel：引擎不是 Tectonic 时的「存了但不生效」提示", () => {
+  const notice = (w: ReturnType<typeof mount>) => w.find(".field-hint.warn");
+
+  it("存过库内嵌而引擎是 XeLaTeX ⇒ 提示出现并点名是哪几项", async () => {
+    const w = await mountPanel("xelatex", null, true);
+    expect(notice(w).exists()).toBe(true);
+    expect(notice(w).text()).toContain("库内嵌");
+    expect(notice(w).text()).toContain("仅在选择 Tectonic 引擎时生效");
+    w.unmount();
+  });
+
+  it("宏包集/缓存目录也算「存过」", async () => {
+    const w = await mountPanel("pdflatex", "file:///E:/bundles/tex");
+    expect(notice(w).exists()).toBe(true);
+    expect(notice(w).text()).toContain("宏包集");
+    w.unmount();
+  });
+
+  it("什么都没存过 ⇒ 不打扰（不出现提示）", async () => {
+    const w = await mountPanel("xelatex");
+    expect(notice(w).exists()).toBe(false);
+    w.unmount();
+  });
+
+  it("引擎就是 Tectonic ⇒ 设置本来就可见，不该再提示", async () => {
+    const w = await mountPanel("tectonic", null, true);
+    expect(notice(w).exists()).toBe(false);
     w.unmount();
   });
 });

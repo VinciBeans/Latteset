@@ -49,6 +49,20 @@ impl Default for TectonicSettings {
 }
 
 impl TectonicSettings {
+    /// 本趟编译是否走**库内嵌**形态（`false` = 子进程）。
+    ///
+    /// **引擎闸门不可省**：形态位是 Tectonic 引擎的**子选项**，只有 `engine == Tectonic` 时才谈得上。
+    /// 少了 `engine == Tectonic` 这一半，`engine=xelatex` + `lib_form=true` 会**静默跑 Tectonic 库形态**
+    /// ——状态栏报 XeLaTeX、实际引擎是 Tectonic（2026-09-15 真机 GUI 实测到的缺陷；判据由
+    /// `docs/research/tectonic-test-plan.md` 的 INT-92 给出：切回 XeLaTeX 必须产出
+    /// `tmp/<stem>.xelatex.pages` 且首轮 `changed_pages` 为全部页，当时两条都不成立）。
+    ///
+    /// `env_forced`（`LATTESET_TECTONIC_LIB=1`）是**显式覆盖**，按文档"它压过设置"保留原语义：
+    /// 复核/CI 要在不改用户设置的前提下复现库形态那条路径，所以它不受引擎闸门约束。
+    pub fn use_library_form(&self, engine: Engine, env_forced: bool) -> bool {
+        (engine == Engine::Tectonic && self.lib_form) || env_forced
+    }
+
     /// 用户给的 bundle 路径 → **存储形态**（上游 `detect_bundle` 认的 URL 或相对路径）。
     ///
     /// 设置面与命令行拿到的是普通 Windows 路径（资源管理器地址栏、`复制为路径` 还带一对引号），
@@ -263,5 +277,27 @@ mod tests {
         }
         // 只有盘符、没有分隔符的（`E:`）不算绝对路径，交给 validate/上游报错，不要猜
         assert_eq!(TectonicSettings::normalize_bundle("E:"), "E:");
+    }
+
+    /// **库形态只在选中 Tectonic 引擎时才允许**（INT-92 的回归锁）。
+    ///
+    /// 没有引擎闸门时 `engine=xelatex` + `lib_form=true` 会静默跑 Tectonic 库形态，而状态栏
+    /// 报的是 XeLaTeX——真机上就是这样骗过一轮验证的。
+    #[test]
+    fn library_form_requires_the_tectonic_engine() {
+        let lib_on = TectonicSettings { lib_form: true, ..Default::default() };
+        let lib_off = TectonicSettings::default();
+
+        // 形态位开着，但引擎不是 Tectonic ⇒ 一律走子进程（否则引擎选择被静默无视）
+        for e in [Engine::XeLaTeX, Engine::LuaLaTeX, Engine::PdfLaTeX] {
+            assert!(!lib_on.use_library_form(e, false), "{e:?} 不该走库形态");
+        }
+        // 引擎是 Tectonic 时才由形态位决定
+        assert!(lib_on.use_library_form(Engine::Tectonic, false));
+        assert!(!lib_off.use_library_form(Engine::Tectonic, false));
+
+        // 环境变量是显式覆盖：按文档"压过设置"，不受引擎闸门约束（复核/CI 的逃生门）
+        assert!(lib_off.use_library_form(Engine::XeLaTeX, true));
+        assert!(lib_on.use_library_form(Engine::Tectonic, true));
     }
 }

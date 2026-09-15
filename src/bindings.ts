@@ -418,8 +418,10 @@ export type TectonicSettings = {
 	/**
 	 *  bundle 来源：`None`/空 = 上游兜底**网络地址**；否则 `file:///…` 或**相对路径**的目录 bundle。
 	 * 
-	 *  ⚠ 不能写 `E:\…`：上游 `detect_bundle` 会把它当 URL scheme 解析成 `Ok(None)`（方案 §5.6 LB-4）。
-	 *  设置面**当场拒绝**这种写法（[`super::validate`]）。
+	 *  ⚠ **存储形态**不能是 `E:\…`：上游 `detect_bundle` 会把它当 URL scheme 解析成 `Ok(None)`
+	 *  （方案 §5.6 **LB-1**）。不过入口是宽容的——`E:\…` / `E:/…` / 带引号的「复制为路径」都会被
+	 *  [`TectonicSettings::normalize_bundle`] 补成 `file:///…`（`apply_patch` 里归一化在前、
+	 *  校验在后），所以 [`super::validate`] 那条现在只兜底绕过 patch 的写入（手改 `settings.json`）。
 	 */
 	bundle: string | null,
 	/**
