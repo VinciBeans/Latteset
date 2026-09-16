@@ -817,6 +817,8 @@ useAutoSave 依赖 editorStore.dirty + settingsStore（读）
 
 **布局（App.vue）**：左栏文件树与大纲**上下分布**（`SplitPane direction="horizontal"`，比例 0.55）；底部面板默认折叠成约 30px 细条（头部「报告 · 展开」，点击展开/收起；**只在编译失败时**多显示「● N 个错误」——就绪/排版中… 归状态栏 phase chip，同源不重复渲染），展开后错误列表占满底部宽度。分割器自研（不引入 vue-code-layout，多面板布局后置），`.split-pane.vertical` 显式写规则，不依赖默认 flex 行为。
 
+**窗口顶部的两条带子**：目前最上方是**系统标题栏**（Windows 原生，颜色由 `apply_window_theme` 的 DWM 沉浸式深色跟随主题），它下面才是我们自己的工具栏（品牌/打开项目/编译/终止/设置 + 项目路径）。两条带子并存是本轮的结构现状；**把三个系统按钮搬进我们的顶栏（合成一条）已立项为 roadmap ㉟**（`decorations: false` + 自绘顶栏，含技术清单与验收判据）。
+
 **PreviewPane 渲染契约**（滚动/缩放正确性的前提，改这里必须连改本清单）：
 
 - **分页 DOM 虚拟化**：只挂载视口窗口内的页（`mountStart..mountEnd`，前后各 `PAGE_WINDOW=6`），顶部/底部占位撑住总高度；`renderNearViewport` / `updateCurrentPage` 只遍历窗口内页 → 复杂度 O(视口)，不是 O(总页数)。滚动驱动 + 窗口变化 watcher + 容器 `ResizeObserver`（不用 IntersectionObserver）。
