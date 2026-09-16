@@ -173,7 +173,6 @@ const BOP_LEN: usize = 45;
 const BOP_PREV_LEN: usize = 4;
 
 /// 单页的哈希（口径 **V1**：`bop` 头去掉 `prev`，其余原样）。
-/// 单页的哈希（口径 **V1**：`bop` 头去掉 `prev`，其余原样）。
 fn hash_page(slice: &[u8]) -> u64 {
     let mut h = DefaultHasher::new();
     if slice.len() >= BOP_LEN {
@@ -186,11 +185,20 @@ fn hash_page(slice: &[u8]) -> u64 {
     h.finish()
 }
 
-/// 每页的字节哈希，顺序即页号（下标 +1 = 页号）。
+/// 一页在文件里的字节范围：`bop` 起点 → `eop` **之后**的下一个字节。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PageSpan {
+    pub bop: usize,
+    pub end: usize,
+}
+
+/// 走一遍 XDV，给出**完整页**的范围（容错规则与 [`page_hashes`] 完全同一套）。
 ///
-/// 返回 `Vec::new()` 表示**没有可用的页信息**（文件缺失/不是 XDV/首屏就损坏）——调用方
-/// 必须把这当作"无法判定"（前端保守地全量刷新），而不是"零页"。
-pub fn page_hashes(bytes: &[u8]) -> Vec<u64> {    let mut out = Vec::new();
+/// 存在的意义是"页边界只有一份实现"：`page_hashes`（B/C/A 三个功能点）与
+/// [`synthesize_postamble`]（流式出图，roadmap ㉞）都必须认同"哪几页是完整的"——
+/// 两处各写一份必然漂移，而漂移的后果是"能算哈希的页"与"能拿去出图的页"对不上号。
+pub fn complete_pages(bytes: &[u8]) -> Vec<PageSpan> {
+    let mut out = Vec::new();
     let mut p = 0usize;
     // 1) 前导：pre（可选；容忍缺失，与工具一致）
     if bytes.first() == Some(&247) {
@@ -209,14 +217,26 @@ pub fn page_hashes(bytes: &[u8]) -> Vec<u64> {    let mut out = Vec::new();
             p += 1; // 页间填充
             continue;
         }
+        // 页**前**的字体定义：真实 XeTeX 的 XDV 是"首次用到某字体就在当前页里写"，所以顶层一般
+        // 不该出现；但换引擎/换实现后可能变（Tectonic 的 XDV 没逐个核过）⇒ 容忍它、跳过继续找页，
+        // 而不是把整份前缀判成损坏（代价是"页数变少"，那会让合成件缺页）。
+        if FONT_DEF_OPS.contains(&op) || op == NATIVE_FONT_OP {
+            match payload_len(bytes, p) {
+                Some(len) if len != UNKNOWN_OP => {
+                    p += 1 + len;
+                    continue;
+                }
+                _ => break,
+            }
+        }
         if op != BOP {
             break; // 结构损坏：保留已解出的页
         }
         let bop = p;
-        if p + 45 > bytes.len() {
+        if p + BOP_LEN > bytes.len() {
             break;
         }
-        p += 45;
+        p += BOP_LEN;
         let mut saw_eop = false;
         while p < bytes.len() {
             let o = bytes[p];
@@ -226,8 +246,8 @@ pub fn page_hashes(bytes: &[u8]) -> Vec<u64> {    let mut out = Vec::new();
                 break;
             }
             match payload_len(bytes, p) {
-                None => break,                    // 截断：停在这条指令的起点
-                Some(UNKNOWN_OP) => break,        // 未知 opcode：丢弃该页
+                None => break,             // 截断：停在这条指令的起点
+                Some(UNKNOWN_OP) => break, // 未知 opcode：丢弃该页
                 Some(len) => p += 1 + len,
             }
         }
@@ -235,9 +255,122 @@ pub fn page_hashes(bytes: &[u8]) -> Vec<u64> {    let mut out = Vec::new();
         if !saw_eop {
             break;
         }
-        out.push(hash_page(&bytes[bop..p]));
+        out.push(PageSpan { bop, end: p });
     }
     out
+}
+
+/// 每页的字节哈希，顺序即页号（下标 +1 = 页号）。
+///
+/// 返回 `Vec::new()` 表示**没有可用的页信息**（文件缺失/不是 XDV/首屏就损坏）——调用方
+/// 必须把这当作"无法判定"（前端保守地全量刷新），而不是"零页"。
+pub fn page_hashes(bytes: &[u8]) -> Vec<u64> {
+    complete_pages(bytes)
+        .iter()
+        .map(|s| hash_page(&bytes[s.bop..s.end]))
+        .collect()
+}
+
+/// `post` 头：opcode + 28 B 定长载荷。
+const POST_LEN: usize = 29;
+/// `post_post` 的固定部分：opcode + i32 回指指针 + 1 B id（**XDV 的 id 是 1 字节**，见实测）。
+const POST_POST_LEN: usize = 6;
+/// XDV 的 `post_post` id。
+const XDV_ID: u8 = 7;
+/// 合成的 `post` 头之后紧跟的字体定义 opcode（`fnt_def1..4` 与 `define_native_font`）。
+///
+/// **两类都要收**（实测踩过）：只收 `define_native_font`(252) 时 xdvipdfmx 会报
+/// `Tried to select a font that hasn't been defined`。
+const FONT_DEF_OPS: std::ops::RangeInclusive<u8> = 243..=246;
+const NATIVE_FONT_OP: u8 = 252;
+
+/// 合成结果：缝好的**完整 XDV** + 它包含的页数。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PartialXdv {
+    pub bytes: Vec<u8>,
+    pub pages: usize,
+}
+
+/// 把「页前缀」缝成一份**看起来完整**的 XDV（补 postamble），交给 xdvipdfmx 出**部分 PDF**。
+///
+/// 用途（roadmap ㉞「流式出图」）：编译期只有前缀，而 `xdvipdfmx`（外部与库内同一套 C）
+/// 要求文件含 postamble —— 补上之后就能"边编边出图"。整条路的成本与实测（合成 9–12 ms、
+/// 进程内转换 92–131 ms/次、页数全对）见 `docs/research/dvi-preview-feasibility.md` §10。
+///
+/// 三条规则都是当年实测踩出来的（Node 原型 `scripts/xdv-partial.mjs` 同款）：
+/// 1. **顺序 = `post` 头 → 字体定义 → `post_post`**。写成"字体定义在 post 之前"会被
+///    xdvipdfmx 判成 `Tried to select a font that hasn't been defined`；
+/// 2. `last_bop` = 最后一页的 `bop` 偏移，`t` = 页数；
+/// 3. `post_post` 的指针指**本文件里**的 `post` 偏移、id 是 1 字节，尾部补 `0xDF` 到 4 字节
+///    对齐（至少 4 个）。
+///
+/// `num`/`den`/`mag` 从 `pre` 抄（DVI 规范里两处都有）；`l`/`u`/`s`（最大高/宽/栈深）是
+/// **提示量**、不参与寻页，置 0（实测转换结果与逐字段复制整份 post 时一致）。
+///
+/// 返回 `None`：**没有 `pre`、或一页完整页都没有**。调用方必须把它当"无法判定"——
+/// 不要拿空前缀去造一份空 PDF（那会让前端显示一份 0 页的文档）。
+pub fn synthesize_postamble(prefix: &[u8]) -> Option<PartialXdv> {
+    // pre 必须存在：num/den/mag 只能从它抄（布局见 `payload_len` 的 247 分支）
+    if prefix.first() != Some(&247) {
+        return None;
+    }
+    match payload_len(prefix, 0) {
+        Some(len) if len != UNKNOWN_OP => {}
+        _ => return None, // 前导不完整
+    }
+    let pages = complete_pages(prefix);
+    let last = *pages.last()?;
+    // 只取到最后一页的 eop：后面的半页/填充不属于产物
+    let body = &prefix[..last.end];
+
+    // 字体定义（收整条指令的原始字节，原样搬到 post 头之后）
+    let mut fonts: Vec<&[u8]> = Vec::new();
+    let mut p = 0usize;
+    while p < body.len() {
+        let op = body[p];
+        let Some(len) = payload_len(body, p) else { break };
+        if len == UNKNOWN_OP {
+            break;
+        }
+        if FONT_DEF_OPS.contains(&op) || op == NATIVE_FONT_OP {
+            fonts.push(&body[p..p + 1 + len]);
+        }
+        p += 1 + len;
+    }
+
+    let font_bytes: usize = fonts.iter().map(|f| f.len()).sum();
+    // `post` 紧跟在最后一页之后：**字体定义在它后面**（顺序 = body → post 头 → 字体 → post_post）。
+    // 这里踩过一次：写成 `body.len() + font_bytes` 会让 post_post 的回指指针落到字体区中间，
+    // xdvipdfmx 直接判 `Something is wrong. Are you sure this is a DVI file?`。
+    let post_at = body.len();
+    let mut out = Vec::with_capacity(post_at + POST_LEN + POST_POST_LEN + 8);
+    out.extend_from_slice(body);
+
+    let mut post = [0u8; POST_LEN];
+    post[0] = POST;
+    post[1..5].copy_from_slice(&(last.bop as i32).to_be_bytes()); // last_bop
+    post[5..9].copy_from_slice(&prefix[2..6]); // num（pre：version 1 B 之后）
+    post[9..13].copy_from_slice(&prefix[6..10]); // den
+    post[13..17].copy_from_slice(&prefix[10..14]); // mag
+    // l/u/s 留 0；t = 页数
+    post[27..29].copy_from_slice(&(pages.len() as i16).to_be_bytes());
+    out.extend_from_slice(&post);
+
+    for f in &fonts {
+        out.extend_from_slice(f);
+    }
+
+    out.push(POST_POST);
+    out.extend_from_slice(&(post_at as i32).to_be_bytes());
+    out.push(XDV_ID);
+    // 尾部 0xDF：至少 4 个，且补到 4 字节对齐（与真实文件的收尾一致）
+    let mut pad = 4usize;
+    while (out.len() + pad) % 4 != 0 {
+        pad += 1;
+    }
+    out.extend(std::iter::repeat(0xdf).take(pad));
+
+    Some(PartialXdv { bytes: out, pages: pages.len() })
 }
 
 /// 比较两轮的页哈希，给出**变化页号**（1-based）。
@@ -320,6 +453,159 @@ pub fn format_pages_cache(hashes: &[u64]) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// 最小 XDV：`pre` + `n` 页（每页 `bop`+44B 计数器/prev+1B 页体+`eop`）+ `post`+`post_post`。
+    /// 与 `latteset-tectonic` 的测试夹具同构（那边也有一份 `tiny_xdv`）。
+    fn tiny_xdv(pages: usize) -> Vec<u8> {
+        let mut v = pre_bytes();
+        for i in 0..pages {
+            v.push(BOP);
+            v.extend_from_slice(&[0u8; 44]);
+            v.push(i as u8);
+            v.push(EOP);
+        }
+        v.push(POST);
+        v.extend_from_slice(&[0u8; 28]);
+        v.push(POST_POST);
+        v.extend_from_slice(&[0u8; 4]);
+        v.push(XDV_ID);
+        v.extend_from_slice(&[0xdf; 4]);
+        v
+    }
+
+    /// `pre`：opcode + version(1) + num/den/mag(各 4) + k(1) + comment。
+    fn pre_bytes() -> Vec<u8> {
+        let mut v = vec![247u8, 7];
+        v.extend_from_slice(&[0, 0, 0, 1]); // num
+        v.extend_from_slice(&[0, 0, 0, 1]); // den
+        v.extend_from_slice(&[0, 0, 3, 232]); // mag = 1000
+        v.push(0); // k = 0（无注释）
+        v
+    }
+
+    /// 一条 `fnt_def1`（opcode 243）：fontnum(1) + checksum/scale/design(各 4) + area/name 长度 + 两串。
+    fn fnt_def1(fontnum: u8) -> Vec<u8> {
+        let mut v = vec![243u8, fontnum];
+        v.extend_from_slice(&[0u8; 12]);
+        v.push(0); // area 长度
+        v.push(1); // name 长度
+        v.push(b'x');
+        v
+    }
+
+    /// 页走查：前 N 页完整、末页截断 ⇒ 只数完整页（与 `page_hashes` 同一条规则）。
+    #[test]
+    fn complete_pages_counts_only_finished_pages() {
+        let full = tiny_xdv(3);
+        let spans = complete_pages(&full);
+        assert_eq!(spans.len(), 3);
+        // 砍掉**第 3 页的 eop**（不是文件尾的填充）⇒ 只剩 2 页完整
+        let truncated = &full[..spans[2].end - 1];
+        let kept = complete_pages(truncated);
+        assert_eq!(kept.len(), 2, "eop 缺失的页不算完整页");
+        assert!(kept[1].bop >= kept[0].end, "页边界单调");
+    }
+
+    /// `page_hashes` 与 `complete_pages` 必须认同同一批页（重构后不许漂移）。
+    #[test]
+    fn page_hashes_and_complete_pages_agree() {
+        let full = tiny_xdv(4);
+        assert_eq!(page_hashes(&full).len(), complete_pages(&full).len());
+        let truncated = &full[..full.len() - 2];
+        assert_eq!(page_hashes(truncated).len(), complete_pages(truncated).len());
+    }
+
+    /// 合成：产出以 `pre` 开头、以 `post_post` 收尾，页数正确，`last_bop` 指向最后一页。
+    #[test]
+    fn synthesized_prefix_is_a_well_formed_xdv() {
+        let prefix = tiny_xdv(2);
+        let out = synthesize_postamble(&prefix).expect("两页完整 ⇒ 应能合成");
+        assert_eq!(out.pages, 2);
+        assert_eq!(out.bytes[0], 247, "仍以 pre 开头");
+        assert_eq!(out.bytes.len() % 4, 0, "尾部补齐到 4 字节对齐");
+
+        // 找到我们写的 post：在最后一页 eop 之后
+        let spans = complete_pages(&out.bytes);
+        assert_eq!(spans.len(), 2, "合成件自身必须仍解析出 2 页");
+        let post_at = spans.last().unwrap().end;
+        assert_eq!(out.bytes[post_at], POST);
+        let last_bop = i32::from_be_bytes(out.bytes[post_at + 1..post_at + 5].try_into().unwrap());
+        assert_eq!(last_bop as usize, spans.last().unwrap().bop, "last_bop 指向最后一页");
+        let t = i16::from_be_bytes(out.bytes[post_at + 27..post_at + 29].try_into().unwrap());
+        assert_eq!(t, 2, "t = 页数");
+        // num/den/mag 从 pre 抄
+        assert_eq!(&out.bytes[post_at + 5..post_at + 9], &[0, 0, 0, 1]);
+        assert_eq!(&out.bytes[post_at + 13..post_at + 17], &[0, 0, 3, 232]);
+
+        // post_post：指针必须指回 post
+        let pp_at = out.bytes.len() - 1 - trailing_df(&out.bytes);
+        let pp = out.bytes.iter().rposition(|b| *b == POST_POST).expect("应有 post_post");
+        assert_eq!(pp, pp_at - 5, "post_post 在补齐之前");
+        let back = i32::from_be_bytes(out.bytes[pp + 1..pp + 5].try_into().unwrap());
+        assert_eq!(back as usize, post_at, "回指指针必须指向 post");
+        assert_eq!(out.bytes[pp + 5], XDV_ID, "id 是 1 字节");
+    }
+
+    /// 尾部 0xDF 的个数（用于反推 post_post 的位置）。
+    fn trailing_df(bytes: &[u8]) -> usize {
+        bytes.iter().rev().take_while(|b| **b == 0xdf).count()
+    }
+
+    /// 字体定义要**原样搬到 post 头之后**（两类都收）：漏掉就会被 xdvipdfmx 判
+    /// "选了未定义的字体"。
+    #[test]
+    fn font_definitions_are_carried_after_the_post_header() {
+        let mut prefix = pre_bytes();
+        prefix.push(BOP);
+        prefix.extend_from_slice(&[0u8; 44]);
+        // 字体定义**在页内**（真实布局：XeTeX 首次用到该字体时才写，那时已经在页里了）
+        prefix.extend_from_slice(&fnt_def1(3));
+        prefix.push(9); // 一点页体
+        prefix.push(EOP);
+
+        let spans_in = complete_pages(&prefix);
+        assert_eq!(spans_in.len(), 1, "夹具本身应解析出 1 页（否则测的不是合成）");
+        let out = synthesize_postamble(&prefix).expect("有一页完整页");
+        let spans = complete_pages(&out.bytes);
+        let post_at = spans.last().unwrap().end;
+        assert_eq!(out.bytes[post_at], POST);
+        // post 头之后紧跟的就是那条字体定义（同一串字节）
+        let def = fnt_def1(3);
+        assert_eq!(&out.bytes[post_at + POST_LEN..post_at + POST_LEN + def.len()], &def[..]);
+
+        // ⚠ **回指指针必须指 post 头本身**，不是"post + 字体字节"。
+        // 这条断言是回归守卫：夹具里**必须有字体定义**（font_bytes > 0），否则两条写法等价、
+        // 测试抓不到——实测就是这么漏过去的（真机上 xdvipdfmx 报
+        // `Something is wrong. Are you sure this is a DVI file?`）。
+        assert!(def.len() > 0, "夹具必须带字体定义，否则这条断言没有区分力");
+        let pp = out.bytes.iter().rposition(|b| *b == POST_POST).expect("应有 post_post");
+        let back = i32::from_be_bytes(out.bytes[pp + 1..pp + 5].try_into().unwrap());
+        assert_eq!(back as usize, post_at, "回指指针要指到 post 头（踩过的坑）");
+        assert_eq!(out.bytes[back as usize], POST, "指针必须落在一个 post 指令上");
+    }
+
+    /// 没有 `pre`、或一页完整页都没有 ⇒ `None`（调用方据此保持"无法判定"，不造空 PDF）。
+    #[test]
+    fn synthesis_refuses_prefixes_without_pre_or_without_pages() {
+        assert!(synthesize_postamble(&[]).is_none());
+        assert!(synthesize_postamble(&[BOP]).is_none());
+        // 有 pre 但没有完整页
+        assert!(synthesize_postamble(&pre_bytes()).is_none());
+        // 有 pre + 半页
+        let mut half = pre_bytes();
+        half.push(BOP);
+        half.extend_from_slice(&[0u8; 44]);
+        assert!(synthesize_postamble(&half).is_none());
+    }
+
+    /// 已经带 postamble 的完整文件再合成一次：仍能解析出同样的页数（幂等到"页"这一层）。
+    #[test]
+    fn synthesis_on_a_complete_file_keeps_page_count() {
+        let full = tiny_xdv(3);
+        let out = synthesize_postamble(&full).expect("完整文件也应能合成");
+        assert_eq!(out.pages, 3);
+        assert_eq!(page_hashes(&out.bytes).len(), 3);
+    }
 
     /// 页哈希缓存往返：`format_pages_cache` → `parse_pages_cache` 必须无损。
     #[test]
