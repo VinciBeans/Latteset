@@ -1,7 +1,7 @@
 // 服务层（modules.md §9.1）：唯一碰 IPC 的层。
 // 命令类型由 tauri-specta 自动生成（src/bindings.ts），本文件只做结果解包。
 
-import { commands, type CmdError, type FileContent } from "../bindings";
+import { commands, type CmdError, type FileContent, type UiTheme } from "../bindings";
 
 type Result<T> = Promise<{ status: "ok"; data: T } | { status: "error"; error: CmdError }>;
 
@@ -43,4 +43,11 @@ export const ipc = {
    * 前端只渲染：形态不能从 settings 推，环境变量能压过它。
    */
   engineForm: () => unwrap(commands.engineForm()),
+  /**
+   * 把**原生标题栏**也纳入主题（Windows 走 DWM 沉浸式深色）。
+   *
+   * 传**设置值**（`light|dark|system`）而不是解析后的深浅：`system` 交给系统跟。
+   * 窗口首次出现那一下由后端在 `setup` 里直接从磁盘设置定色，所以这里失败不影响可用性。
+   */
+  setWindowTheme: (theme: UiTheme) => unwrap(commands.setWindowTheme(theme)),
 };

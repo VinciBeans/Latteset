@@ -417,6 +417,108 @@ pub async fn engine_form(state: State<'_, AppState>) -> Result<EngineFormDto, Cm
     })
 }
 
+// ---------------------------------------------------------------- 窗口外观
+
+/// 把**原生标题栏**也纳入主题（Windows 走 DWM 沉浸式深色，经 tao 的 `set_theme`）。
+///
+/// 传的是**设置值**（`light|dark|system`）而不是解析后的深浅：`system` 交给系统去跟
+/// （`set_theme(None)`，tao 自己监听系统主题变化）—— 若前端把解析结果推过来，用户切系统主题后
+/// 标题栏就会卡在旧值上。
+///
+/// 前端在主题变化时调用；**窗口刚出现那一下由 `setup` 直接从磁盘设置定色**（见 `lib.rs`）——
+/// 只靠这条命令会先闪一条白标题栏。
+#[tauri::command]
+#[specta::specta]
+pub async fn set_window_theme(
+    window: tauri::WebviewWindow,
+    theme: latteset_core::settings::UiTheme,
+) -> Result<(), CmdError> {
+    apply_window_theme(&window, theme);
+    Ok(())
+}
+
+/// 把主题落到系统层。失败**不致命**（平台不支持 / 无标题栏时只是外观没跟上），只记一条 warn。
+///
+/// **两条路都走**：
+/// 1. `window.set_theme(..)`：Tauri 官方口径，也是非 Windows 平台唯一的路（菜单/内部状态跟着走）；
+/// 2. Windows 上**再自己写一次 DWM 属性**：实测 `set_theme(Light)` **关不掉**已打开的沉浸式深色
+///    （命令返回 Ok，但 `DWMWA_USE_IMMERSIVE_DARK_MODE` 仍是 1，标题栏卡在深色）⇒ 由我们决定
+///    "深/浅"这个布尔，两个方向都写。
+pub fn apply_window_theme(window: &tauri::WebviewWindow, theme: latteset_core::settings::UiTheme) {
+    use latteset_core::settings::UiTheme;
+    let t = match theme {
+        UiTheme::Light => Some(tauri::Theme::Light),
+        UiTheme::Dark => Some(tauri::Theme::Dark),
+        UiTheme::System => None, // None = 跟随系统
+    };
+    if let Err(e) = window.set_theme(t) {
+        tracing::warn!("设置窗口主题失败（标题栏可能没跟上）：{e}");
+    }
+    #[cfg(windows)]
+    {
+        let dark = match theme {
+            UiTheme::Dark => true,
+            UiTheme::Light => false,
+            // `system` 在 Tauri 里没有"读当前系统深浅"的公开 API ⇒ 读注册表（与 tao 同源）
+            UiTheme::System => !os_prefers_light(),
+        };
+        if let Ok(hwnd) = window.hwnd() {
+            set_immersive_dark_titlebar(hwnd.0 as isize, dark);
+        }
+    }
+}
+
+/// 读 Windows 的"应用浅色"偏好（`AppsUseLightTheme`，0 = 深色）。
+///
+/// 读不到时**按浅色**处理（与 tao 的兜底一致）：宁可标题栏浅一点，也不要让浅色用户看到深色条。
+#[cfg(windows)]
+fn os_prefers_light() -> bool {
+    use windows::Win32::System::Registry::{RegGetValueW, HKEY_CURRENT_USER, RRF_RT_REG_DWORD};
+    use windows::core::w;
+    let mut value: u32 = 1;
+    let mut size = std::mem::size_of::<u32>() as u32;
+    let ok = unsafe {
+        RegGetValueW(
+            HKEY_CURRENT_USER,
+            w!("Software\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize"),
+            w!("AppsUseLightTheme"),
+            RRF_RT_REG_DWORD,
+            None,
+            Some(&mut value as *mut u32 as *mut _),
+            Some(&mut size),
+        )
+    };
+    ok.is_ok() && value != 0
+}
+
+/// 直接写 `DWMWA_USE_IMMERSIVE_DARK_MODE`（`true` = 深色标题栏）。
+///
+/// 属性号 20 是 Win10 20H1+ / Win11；老版本（1809–1909）是 19 ⇒ 20 失败时回退 19。
+/// 两次都失败只记 debug：这是纯外观，不该冒泡成错误。
+#[cfg(windows)]
+fn set_immersive_dark_titlebar(hwnd: isize, dark: bool) {
+    use windows::Win32::Foundation::HWND;
+    use windows::Win32::Graphics::Dwm::{DwmSetWindowAttribute, DWMWINDOWATTRIBUTE};
+    let value: i32 = if dark { 1 } else { 0 };
+    let h = HWND(hwnd as *mut _);
+    let size = std::mem::size_of::<i32>() as u32;
+    for attr in [20u32, 19u32] {
+        let r = unsafe {
+            DwmSetWindowAttribute(
+                h,
+                DWMWINDOWATTRIBUTE(attr as i32),
+                &value as *const i32 as *const _,
+                size,
+            )
+        };
+        if r.is_ok() {
+            tracing::debug!(dark, attr, "标题栏深色属性已写入");
+            return;
+        }
+    }
+    tracing::debug!(dark, "标题栏深色属性写入失败（该 Windows 版本可能不支持）");
+}
+
 // ---------------------------------------------------------------- SyncTeX
 
 #[tauri::command]

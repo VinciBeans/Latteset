@@ -41,6 +41,13 @@ tauri-plugin-mcp-bridge = "0.13"
 # 打开：`cargo build -p latteset --features tectonic-lib`（外加运行期开关 LATTESET_TECTONIC_LIB=1）。
 latteset-tectonic = { path = "../crates/latteset-tectonic", optional = true }
 
+# 原生标题栏的深色（DWM 沉浸式深色）。**为什么不用 tauri 的 `set_theme` 就够了**：
+# 实测（Windows 11 / tauri 2.11.5）`set_theme(Dark)` 能开，`set_theme(Light)` **关不掉** ——
+# 命令返回 Ok，但 `DWMWA_USE_IMMERSIVE_DARK_MODE` 仍是 1（标题栏卡在深色）。所以自己写这个属性。
+# 版本与 lock 里已有的 `windows`（tao 拉的）对齐，避免编进第二份。
+[target.'cfg(windows)'.dependencies]
+windows = { version = "0.61", features = ["Win32_Foundation", "Win32_Graphics_Dwm"] }
+
 [features]
 default = []
 tectonic-lib = ["dep:latteset-tectonic"]

@@ -9,6 +9,7 @@
 import { onBeforeUnmount, watch } from "vue";
 import type { UiTheme } from "../bindings";
 import { applyMonacoTheme } from "../monacoTheme";
+import { ipc } from "../services/ipc";
 import { useSettingsStore } from "../stores/settings";
 
 /** localStorage 键（内联脚本里是同一个字符串，改一处要两处一起改）。 */
@@ -44,8 +45,18 @@ export function useTheme() {
   const settings = useSettingsStore();
   const media = typeof window !== "undefined" ? window.matchMedia?.("(prefers-color-scheme: dark)") : undefined;
 
+  /** 原生标题栏跟随**设置值**（不是解析后的深浅）：`system` 要让系统自己跟。 */
+  function pushWindowTheme(theme: UiTheme | undefined) {
+    ipc.setWindowTheme(theme ?? "light").catch((e) => {
+      // 平台不支持 / 没有标题栏：只影响外观，不该打断任何流程
+      console.debug("设置窗口主题失败（标题栏可能没跟上）：", e);
+    });
+  }
+
   const sync = () => {
-    applyTheme(resolveTheme(settings.settings?.ui?.theme, systemPrefersDark()));
+    const theme = settings.settings?.ui?.theme;
+    applyTheme(resolveTheme(theme, systemPrefersDark()));
+    pushWindowTheme(theme);
   };
 
   // 设置变化（含"跟随系统"→ 切到 dark/light）

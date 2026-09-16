@@ -91,6 +91,18 @@ pub fn run() {
             let settings: Arc<RwLock<Settings>> = Arc::new(RwLock::new(
                 tauri::async_runtime::block_on(storage.load_global(fs.as_ref())),
             ));
+            // **标题栏定色赶在窗口画出来之前**：前端要等 WebView 起来 + 一次 IPC 往返才知道主题，
+            // 只靠那条路，深色用户每次启动会先看到一条白标题栏（实测）。这里直接读磁盘设置，
+            // `system` 交给系统跟（`set_theme(None)`）。
+            {
+                let theme = settings
+                    .try_read()
+                    .map(|s| s.ui.theme)
+                    .unwrap_or_default();
+                if let Some(w) = app.get_webview_window("main") {
+                    commands::apply_window_theme(&w, theme);
+                }
+            }
             let overrides: Arc<RwLock<latteset_core::settings::ProjectOverrides>> =
                 Arc::new(RwLock::new(Default::default()));
 
@@ -161,6 +173,7 @@ fn build_specta_builder() -> tauri_specta::Builder<tauri::Wry> {
             commands::update_settings,
             commands::lib_form_available,
             commands::engine_form,
+            commands::set_window_theme,
         ])
         .events(tauri_specta::collect_events![
             CompileStatusEvent,

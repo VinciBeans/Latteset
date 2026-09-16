@@ -60,6 +60,17 @@ export const commands = {
 	 *  只看设置会报出与实际不符的形态。
 	 */
 	engineForm: () => typedError<EngineFormDto, CmdError>(__TAURI_INVOKE("engine_form")),
+	/**
+	 *  把**原生标题栏**也纳入主题（Windows 走 DWM 沉浸式深色，经 tao 的 `set_theme`）。
+	 * 
+	 *  传的是**设置值**（`light|dark|system`）而不是解析后的深浅：`system` 交给系统去跟
+	 *  （`set_theme(None)`，tao 自己监听系统主题变化）—— 若前端把解析结果推过来，用户切系统主题后
+	 *  标题栏就会卡在旧值上。
+	 * 
+	 *  前端在主题变化时调用；**窗口刚出现那一下由 `setup` 直接从磁盘设置定色**（见 `lib.rs`）——
+	 *  只靠这条命令会先闪一条白标题栏。
+	 */
+	setWindowTheme: (theme: UiTheme) => typedError<null, CmdError>(__TAURI_INVOKE("set_window_theme", { theme })),
 };
 
 /** Events */
