@@ -90,8 +90,16 @@ const structuralEpoch = ref(0);
  * scrollHeight 变短、滚动条拖不到底）。
  */
 const layoutRev = ref(0);
-/** 上次加载的 PDF 路径：判断“同文件内容重载”（复用 DOM/页高） vs “换文档”（重建）。 */
+/** 上次加载的**文档身份**：判断“同文件内容重载”（复用 DOM/页高） vs “换文档”（重建）。 */
 let lastDocPath = "";
+/**
+ * 上一次加载取的是**编译中的部分 PDF**（roadmap ㉞）。
+ *
+ * 为什么单独记一位：部分 PDF 的页字节来自**中间趟**，与权威 PDF 不可比。`changed_pages` 是
+ * 相对**上一份权威 PDF** 算的，而画布上此刻留的是部分 PDF 的位图 ⇒ 拿它复用会留下错页。
+ * 所以"预览过"这件事必须让下一轮（权威产物落地那轮）也走全量重绘。
+ */
+let lastLoadWasPreview = false;
 /** 本次 reload 实际完成绘制的页数（插桩统计：诊断重载渲染成本）。 */
 let pagesRenderedThisLoad = 0;
 /**
@@ -595,11 +603,27 @@ function onWheel(e: WheelEvent) {
   void setScale(scale.value + (e.deltaY < 0 ? 0.25 : -0.25));
 }
 
-/** 加载 PDF；带滚动恢复。同文件内容重载复用 DOM/页高，换文档才重建。 */
+/**
+ * 加载 PDF；带滚动恢复。同文件内容重载复用 DOM/页高，换文档才重建。
+ *
+ * **身份与字节来源分开**（roadmap ㉞）：编译中屏幕上放的是**部分 PDF**（另一个文件），但它
+ * 属于**同一篇文档** ⇒ 身份仍取权威路径（首编无权威产物时才用它兜底）。这样换帧不会走
+ * "换文档"分支：不重建 canvas DOM、不重置页高、滚动位置不动。
+ */
 async function load() {
   const mySeq = ++loadSeq;
-  const path = preview.pdfPath;
-  if (!path) return;
+  const identity = preview.docIdentity;
+  const path = preview.sourcePath;
+  if (!path || !identity) {
+    // 没有任何可显示的来源（例如首编在预览态里失败/被中止后退出预览态）：把视图清干净，
+    // 否则 `.pages` 会留着上一次的残页、与空态提示同时出现。
+    numPages.value = 0;
+    lastDocPath = "";
+    renderedScale.clear();
+    return;
+  }
+  /** 本次的字节来自**编译中的部分 PDF**（中间趟的产物，与权威 PDF 不可比）。 */
+  const isPreviewLoad = preview.livePreview !== null;
   const keepScroll = scrollTop;
   pagesRenderedThisLoad = 0;
   pagesReusedThisLoad = 0;
@@ -622,11 +646,11 @@ async function load() {
     if (unmounted || mySeq !== loadSeq) return; // 组件已卸载或已被更新的加载取代
     // 切换文档：取消并等待所有在途渲染结束（旧 doc 的 RenderTask 不允许继续写画布）
     await cancelAllRenders();
-    const isSameFile = path === lastDocPath;
+    const isSameFile = identity === lastDocPath;
     if (!isSameFile) {
       // 换文档：重建 canvas DOM（全新 2D context）并清空页高缓存
       structuralEpoch.value++;
-      lastDocPath = path;
+      lastDocPath = identity;
       pageH1.length = 0;
       pageH1[0] = 0;
       prefixH1.length = 0;
@@ -644,8 +668,16 @@ async function load() {
     //   - 换文档 / 页信息不可判定（pages == 0）/ 页数与上次不一致 → **全部重绘**（现状，保守）；
     //   - 同文件 + 页数一致 + 有变化页集合 → **只让变化页失效**，其余页沿用旧 canvas 位图。
     //     安全依据：页哈希相同 ⇒ 页字节等价 ⇒ 页尺寸与内容都不变（页数也一致时不可能错位）。
+    //   - **编译中预览**（roadmap ㉞）→ 一律全量重绘：那份字节来自中间趟，`changed_pages` 是相对
+    //     上一份**权威** PDF 算的，两者不能混用（混用会把"中间趟的旧页"留在屏幕上）。上一轮若是
+    //     预览，本轮（权威产物落地）同样全量重绘，理由相同。
     const changed = new Set(preview.changedPages ?? []);
-    const canReuse = isSameFile && preview.pagesTotal > 0 && preview.pagesTotal === totalPages;
+    const canReuse =
+      isSameFile &&
+      !isPreviewLoad &&
+      !lastLoadWasPreview &&
+      preview.pagesTotal > 0 &&
+      preview.pagesTotal === totalPages;
     if (canReuse) {
       for (const n of changed) renderedScale.delete(n);
       // 插桩：本次能复用的页数 = 原本已渲染、且不在变化集合里的页
@@ -653,6 +685,7 @@ async function load() {
     } else {
       renderedScale.clear();
     }
+    lastLoadWasPreview = isPreviewLoad;
     currentPageIdx.value = Math.min(currentPageIdx.value, numPages.value);
     if (!fittedOnce) {
       fittedOnce = true;
@@ -676,6 +709,8 @@ async function load() {
     const timing = {
       reload: mySeq,
       file: path.split(/[\\/]/).pop() || path,
+      /** 本次取的是编译中的部分 PDF（roadmap ㉞）——端到端读数的判据之一。 */
+      live: isPreviewLoad,
       pages: numPages.value,
       bytes: byteLen,
       fetch: Math.round(tFetch - t0),
@@ -687,9 +722,9 @@ async function load() {
     };
     (window as any).__previewLastReload = timing; // 端到端测试读取
     // 无 Rust 变更的观测通道：把耗时放进窗口标题，便于外部(如 pc-control list_windows)读取
-    document.title = `Latteset | reload ${timing.total}ms (fetch ${timing.fetch} parse ${timing.parse} render ${timing.render}) pages ${timing.pages} rendered ${timing.pagesRendered} reused ${timing.pagesReused}`;
+    document.title = `Latteset | reload ${timing.total}ms (fetch ${timing.fetch} parse ${timing.parse} render ${timing.render}) pages ${timing.pages} rendered ${timing.pagesRendered} reused ${timing.pagesReused}${isPreviewLoad ? " LIVE" : ""}`;
     console.log(
-      `[preview] reload#${mySeq} ${timing.file} pages=${timing.pages} bytes=${timing.bytes} ` +
+      `[preview] reload#${mySeq} ${timing.file}${isPreviewLoad ? "（编译中预览）" : ""} pages=${timing.pages} bytes=${timing.bytes} ` +
         `fetch=${timing.fetch}ms parse=${timing.parse}ms render=${timing.render}ms ` +
         `total=${timing.total}ms pagesRendered=${timing.pagesRendered} pagesReused=${timing.pagesReused}`
     );
@@ -817,7 +852,8 @@ function setupResizeObserver() {
 
 onMounted(() => {
   setupResizeObserver();
-  if (preview.pdfPath) load();
+  // `displayPath`：权威产物**或**编译中的部分 PDF（首编时屏幕上先有的是后者）
+  if (preview.displayPath) load();
 });
 
 onBeforeUnmount(() => {
@@ -884,9 +920,16 @@ onBeforeUnmount(() => clearTimeout(draftTimer));
       </span>
       <!-- SyncTeX 提示（roadmap ⑤）：落到生成文件/同步不可用时的可见反馈，几秒后自动消失 -->
       <span class="sync-note" v-if="preview.syncNote" :title="preview.syncNote">{{ preview.syncNote }}</span>
+      <!-- 编译中预览（roadmap ㉞）：屏幕上这份是**部分 PDF**，不是最终产物。只在真的收到帧时出现
+           （子进程档 / 短编译不会走到这里，行为与今天一致），因此它同时就是这条能力的"能力位" -->
+      <span
+        class="live-preview"
+        v-if="preview.livePreview"
+        title="编译中：这是已完成页缝出来的部分 PDF（目录/引用可能还没更新）。编译结束后会被最终 PDF 取代"
+      >编译中预览 · {{ preview.livePreview.pages }} 页</span>
     </div>
     <div ref="container" class="preview-pane" @scroll.passive="onScroll" @wheel="onWheel">
-      <div v-if="!preview.pdfPath" class="empty">
+      <div v-if="!preview.displayPath" class="empty">
         <span class="empty-icon">📕</span>
         <span class="empty-title">PDF 在这里等你</span>
         <span class="empty-hint">写好 main.tex，点「编译」就能提前看到成品</span>
@@ -957,6 +1000,16 @@ onBeforeUnmount(() => clearTimeout(draftTimer));
   color: var(--warn-ink);
   font-size: 11.5px;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+/* 编译中预览（roadmap ㉞）：进度语义用信息色（与状态栏"排版中"同族），与 sync-note 的警示色区分开 */
+.live-preview {
+  margin-left: 10px;
+  padding: 2px 9px;
+  border-radius: 5px;
+  background: var(--tint-blueberry-weak);
+  color: var(--blueberry);
+  font-size: 11.5px;
+  white-space: nowrap;
 }
 .page-indicator {
   margin-left: auto;

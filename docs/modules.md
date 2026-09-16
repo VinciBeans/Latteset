@@ -317,7 +317,7 @@ LiveFeedback::feed(text, force_parse)：
 | `tmp/` 是合法输入（上一趟的中间产物） | `disk_path` 的顺序是 **项目源文件 → 上一趟的 `tmp/` 副本 → bundle**，但第二档**只放行 `RERUN_EXTENSIONS` 那几类**（`.pdf`/`.xdv` 明确排除，否则 `\includegraphics{main.pdf}` 会读到我们自己的产物）。依据：latexmk 正是靠它让 Quick 档的目录/引用**不倒退**——少了这一条实测两个症状：Full 出来的参考文献表在下一次 Quick 里消失；每次编译中间产物都从零开始 ⇒ 永远要 2 趟。编译开始时还会把这些副本**预热进内存层**（`seed_previous_intermediates`），重跑判据才有"上一趟"可比较。⚠ 预热**必须递归**且键用**正斜杠**：`\include` 分章时 `chapters/chNN.aux` 在子目录里，只扫 `tmp/` 顶层会让它们每趟都算"新出现" ⇒ 多文件档永远收敛不了（实测 28 页 8 章档：不递归每轮必跑 2 趟 `engine_total_ms≈1104`；递归后 1 趟 `≈646`） |
 | 失败面 | 先 `parse_log` + `diagnose` 出结构化 `ContentError`；`.log` 为空时给 `IoError`，附「I/O 层输入请求摘要（缺哪些文件）+ 引擎状态尾部」；Cancel/超时走**协作式**：置位后每个 I/O 入口立刻报错，引擎在下一个回调处中止（库形态没有进程可树杀） |
 | 分阶段计时 | 每次成功编译 `info!` 一行「库形态分阶段耗时」：`format_ms` / `typeset_ms` / `convert_ms` + 输入请求分类计数（`req_ram/mem/disk/bundle/miss`）——这是 P2/P4 的一手证据，也是"慢在哪一趟"的定位入口。⚠ 口径：`typeset_ms` **只含第 1 趟**（`phase_ms.1` 在第 1 趟末打点），`convert_ms` = 第 2 趟起 + 中间产物收尾 + 最终转换 ⇒ 别把它当"一次转换的耗时"读 |
-| **流式出图**（roadmap ㉞，切片 2） | 编译期把**已完成页**缝成部分 PDF（`tmp/<stem>.preview.pdf`，原子替换）交预览。**只能在趟边界出图**：`tectonic_bridge_core::CoreBridgeLauncher::with_global_lock` 用 `static ENGINE_LOCK` 把**整个 C 引擎调用**串起来（上游理由：C 侧 `setjmp/longjmp` 跨 FFI 是 UB）⇒ 同进程内排版趟与转换**不可能并行**（探测：`crates/latteset-tectonic/examples/engine-lock-probe.rs`，4 线程并发墙钟 533 ms == 单线程跑 4 次 541 ms）。实现：重跑循环**末尾**（两个 `break` 之后 = 确定还会再跑一趟）同步调 `PartialPainter::paint`，闸门 = 第 1 趟 ≥500 ms ∧ 页数有涨 ∧ 总次数 ≤8 ∧ 未取消。`bench/large` 冷编实测：1.72 s 出 121 页（转换 130 ms）、4.2 s 出 125 页（175 ms）、权威 PDF 7.4 s ⇒ 提前 ≈5.5 s 可见，代价 +326 ms（+4.4%）。⚠ 中间态**不得**喂页哈希缓存 / A 闸门 / `pdf-updated`；Tectonic **子进程档不落 XDV ⇒ 该档没有这条能力**（须如实显示"不可用"，不得静默不生效）。**事件已接线**（`compile-preview`，切片 3 已真机验证：中间态严格早于权威 `pdf-updated`、`pages` 单调、权威事件未被污染）；前端「编译中预览」的表现属切片 4 |
+| **流式出图**（roadmap ㉞，切片 2） | 编译期把**已完成页**缝成部分 PDF（`tmp/<stem>.preview.pdf`，原子替换）交预览。**只能在趟边界出图**：`tectonic_bridge_core::CoreBridgeLauncher::with_global_lock` 用 `static ENGINE_LOCK` 把**整个 C 引擎调用**串起来（上游理由：C 侧 `setjmp/longjmp` 跨 FFI 是 UB）⇒ 同进程内排版趟与转换**不可能并行**（探测：`crates/latteset-tectonic/examples/engine-lock-probe.rs`，4 线程并发墙钟 533 ms == 单线程跑 4 次 541 ms）。实现：重跑循环**末尾**（两个 `break` 之后 = 确定还会再跑一趟）同步调 `PartialPainter::paint`，闸门 = 第 1 趟 ≥500 ms ∧ 页数有涨 ∧ 总次数 ≤8 ∧ 未取消。`bench/large` 冷编实测：1.72 s 出 121 页（转换 130 ms）、4.2 s 出 125 页（175 ms）、权威 PDF 7.4 s ⇒ 提前 ≈5.5 s 可见，代价 +326 ms（+4.4%）。⚠ 中间态**不得**喂页哈希缓存 / A 闸门 / `pdf-updated`；Tectonic **子进程档不落 XDV ⇒ 该档没有这条能力**（须如实显示"不可用"，不得静默不生效）。**事件已接线**（`compile-preview`，切片 3 已真机验证：中间态严格早于权威 `pdf-updated`、`pages` 单调、权威事件未被污染）；**前端已接线**（切片 4「编译中预览」：换字节不换身份 ⇒ 无 DOM 重建、滚动零漂移、预览帧 0 long task，中止后 106 ms 退回权威 PDF；契约见 §9.4 渲染契约）—— ㉞ 四刀齐活 |
 | ADR-0010 例外 | `IoProvider` 是**同步** trait（`io_base/src/lib.rs:433-533`）而 core 的 `FileSystem` 是 async（`project/fs.rs:15-16`）⇒ 本层的磁盘读写只能在 `spawn_blocking` 里用 `std::fs`（只碰 `project_root` 与 `tmp/`）。这是 X-5 登记的"第二落点"，**与方案 §4.1 写的"代理到 core FileSystem"有出入**（技术上前者不可达），已记入 t21 的交付说明 |
 | 复核入口 | **P2/P3 主入口**：建 CLI（见方案 §6.1 的完整环境前置）→ `latteset-cli --project <dir> compile` → `node scripts/validate-pdf.mjs --pdf <out.pdf> --expect-pages N --expect-text <子串>`；另有 `cargo check -p latteset-tectonic`、`node scripts/tectonic-lib-xdvscan.mjs --pages-xdv <main.xdv> --chunk 16384`、`node scripts/bench-tectonic-lib.mjs --runs 3 --mode fresh\|resident` |
 | 当前状态（2026-09-15，t10/t11 收口 + bib/收敛补齐） | **已能真编出 PDF 并解析引用**：中文夹具 1 页 7590 B；带 `\cite` 的夹具（`ctexart` + `refs.bib`）→ 引用渲染成 `[1]`、参考文献表印出（PDF 文本层含 `Knuth`/`The TeXbook`），`node scripts/validate-pdf.mjs` 全过。release 实测（同目录 bundle、热 format）：`zh-min` 冷 2 趟 **616 ms** / 已收敛 1 趟 **358 ms**；`cite` 冷 3 趟 **954 ms** / 热 2 趟 **679 ms** / Quick 1 趟 **405 ms** —— 对照子进程 `tectonic.exe`（收敛档）同夹具 **571 / 869 ms**，**同速**；已收敛文档因为跳过无用趟而更快。仍未支持：biber/makeindex/glossaries（外部工具）、常驻（P4 闸门已判不成立） |
@@ -753,6 +753,7 @@ export function subscribeEvents(): () => void
 //   compile-errors   → compileStore.setLiveErrors（中间态：仅 running 时采纳）
 //   errors-updated   → compileStore.setErrors（**权威终态**，无条件写入）
 //   pdf-updated    → previewStore.onPdfUpdated（含 changed_pages/pages：可能**不重载**）
+//   compile-preview → previewStore.onCompilePreview（中间态：仅 running 时采纳；roadmap ㉞ 编译中预览）
 //   files-changed  → editorStore.onFilesChanged(paths)（过滤+重载判定）
 //                     projectStore.refreshTreeDebounced(structural)（300ms 防抖；仅结构变化重建）
 //   settings-changed → settingsStore.setSettings
@@ -773,7 +774,7 @@ useAutoSave 依赖 editorStore.dirty + settingsStore（读）
 | projectStore | project、rootFile、fileTree | openProject、refreshTree、refreshTreeDebounced、resolvePath、relativizePath（绝对 → 项目内相对路径，`update_settings` 唯一可接受的形态）、syncProject（经 `get_project` 重新同步） |
 | editorStore | openTabs[]、activePath、dirtyPaths:Set、lastSaved:Map<path,time>、buffers、externalConflict | openFile、closeTab、markDirty、markSaved、saveAll、onFilesChanged、acceptExternal |
 | compileStore | phase、kind、draft、errors[]、pages | setStatus、setProgress、setLiveErrors、setErrors |
-| previewStore | pdfPath、reloadKey、highlight、syncNote、changedPages、pagesTotal、skippedReloads | onPdfUpdated（**页哈希全同则不递增 reloadKey**）、setHighlight、setSyncNote |
+| previewStore | pdfPath、reloadKey、highlight、syncNote、changedPages、pagesTotal、skippedReloads、**livePreview**（编译中的部分 PDF）、**docIdentity / sourcePath / displayPath**（派生：身份 / 字节来源 / 可显示） | onPdfUpdated（**页哈希全同则不递增 reloadKey**；但屏幕上是部分 PDF 时必须重载一次）、onCompilePreview（帧版本号 = `pages`，只增不减 ⇒ 旧帧丢弃）、clearLivePreview（编译终态收口；返回"刚才是否在预览"）、setHighlight、setSyncNote |
 | settingsStore | settings | setSettings、updateSettings |
 
 **前端自保存过滤算法（editorStore.onFilesChanged）**：入参 paths 中，`lastSaved` 里存在且时间近（< 2s）的路径判定为"自己刚保存"→ 忽略；其余 → 已打开且不脏 → 重载内容；已打开且脏 → **磁盘与缓冲一致则什么都不做，不一致才**保留 + 状态栏提示；未打开 → 忽略（文件树自会刷新）。`lastSaved` 是 editorStore 模块内状态，不进任何函数参数。
@@ -811,7 +812,7 @@ useAutoSave 依赖 editorStore.dirty + settingsStore（读）
 | 组件 | 输入（props/事件） | 输出（emit） | 模块内信息 |
 |---|---|---|---|
 | EditorPane | model(路径)、内容、语言 | 变更事件 → useAutoSave | Monaco 实例、worker、IME 组合状态；**无活动文件 → 显示"还没有打开文件"占位提示**（覆盖 Monaco）+ `readOnly`，打开文件才可编辑 |
-| PreviewPane | pdfPath、highlight、syncNote | 点击坐标 → useSyncTex | pdf.js 文档句柄、滚动位置缓存、canvas 代次与页高（见下方渲染契约） |
+| PreviewPane | pdfPath、highlight、syncNote、**livePreview（编译中的部分 PDF）** | 点击坐标 → useSyncTex | pdf.js 文档句柄、滚动位置缓存、canvas 代次与页高（见下方渲染契约，含"编译中预览 = 换字节不换身份"） |
 | FileTree | 树数据、激活路径 | 打开文件/目录展开 | 展开状态（只在前端本地） |
 | RootFilePicker | root、candidates（探测候选）、fallbackFiles（零候选时全部 .tex）、busy、error | `select`（**项目内相对路径**）、`close` | 无（纯展示；相对路径由 `relativizePath` 计算） |
 | ErrorList | errors[] | 点击条目 → openFile+定位 | 无；**诊断展示**（roadmap ④）：条目带 `diagnosis` 时渲染两行（原因 + 建议），无诊断降级为原文首行；头部「已诊断 N」。**去重/截断**：同源（文件 + 首行消息相同）聚合为一条并显示 `×N`；不同源最多展示 `MAX_DISPLAY=30` 组，超出提示隐藏数量（错误雪崩时不刷屏） |
@@ -825,6 +826,11 @@ useAutoSave 依赖 editorStore.dirty + settingsStore（读）
 
 - **分页 DOM 虚拟化**：只挂载视口窗口内的页（`mountStart..mountEnd`，前后各 `PAGE_WINDOW=6`），顶部/底部占位撑住总高度；`renderNearViewport` / `updateCurrentPage` 只遍历窗口内页 → 复杂度 O(视口)，不是 O(总页数)。滚动驱动 + 窗口变化 watcher + 容器 `ResizeObserver`（不用 IntersectionObserver）。
 - **canvas 代次**：`structuralEpoch` **仅在缩放 / 换文档时递增**（重建 canvas DOM）；同文件内容重载**复用 DOM**（`doRenderPage` 每次 `canvas.width=` 即重置 2D context），`pageH1` 保留 → 滚动恢复精确。
+- **编译中预览 = 换字节不换身份**（2026-09-16，roadmap ㉞ 切片 4）：`load()` 把"**身份**"（`preview.docIdentity`，决定 DOM 复用/页高重置）与"**字节来源**"（`preview.sourcePath`，编译中 = `tmp/<stem>.preview.pdf`）**分开**——部分 PDF 是另一个文件，但它属于同一篇文档。只让来源跟着帧走，换帧就不会走"换文档"分支。
+  - **复用必须关掉**（`canReuse` 加 `!isPreviewLoad && !lastLoadWasPreview`）：部分 PDF 的页字节来自**中间趟**，而 `changed_pages` 是相对**上一份权威 PDF** 算的 ⇒ 混用会把中间趟的旧页留在屏幕上。故"预览过"要影响**下一轮**（权威产物落地那轮）也只能全量重绘。
+  - **收口**：`compile-status` 终态（成功/失败/中止）与权威 `pdf-updated` 都会 `clearLivePreview()`；失败/中止时不会有 `pdf-updated`，全靠前者把屏幕拉回权威视图（否则中间态会留着冒充结果）。首编无权威产物时身份由部分 PDF 兜底，权威到达那一次走一次"换文档"（与今天首次出 PDF 同款）。
+  - 真机读数（`bench/large` 125 页冷编，debug）：3 次加载 85/79/78 ms；**14 个页 DOM 节点跨三次加载全部存活**（无重建）、滚动 11839 帧 `min=max`（零漂移）、**预览帧 0 long task**；中止后 **106 ms** 退回权威 PDF。
+  - 可见性：工具栏「编译中预览 · N 页」只在**真的收到帧**时出现（子进程档与短编译不出现 ⇒ 与今天行为一致），它同时就是这条能力的"能力位"。
 - **只重绘变化页**（2026-09，[incremental-edit-x-dvi.md](./research/incremental-edit-x-dvi.md) 功能点 C）：`load()` 不再无条件 `renderedScale.clear()`——**同文件 + 页数一致 + 有变化页集合**时只让变化页失效，其余页沿用旧 canvas（`renderPage` 的 `renderedScale.get(n) === scale` 闸门自然跳过重绘）。安全依据：XDV 页哈希相同 ⇒ 页字节等价 ⇒ 页尺寸与内容都不变。其余情形（换文档 / `pages == 0` 无法判定 / 页数变了）仍全部重绘。实测：74 页文档改末章 → `pagesRendered 7→0`、`pagesReused 7`、render 102ms→7ms。
 - **页高是布局的唯一驱动**：`.page-wrap` 高度绑定 `pageH1[n]×scale`（`pageWrapHeight(n)`），不依赖 canvas 尺寸。两类复发路径：① 释放/重建把 canvas 置 0×0 时页-wrap 塌缩到只剩边距 → `scrollHeight` 变短（滚动条拖不到真实末尾），且 `renderNearViewport` 用 `getBoundingClientRect`（0 高）把近页误判为远页而释放（PDF 消失）；② `pageH1`/`prefixH1` 是普通数组（非响应式），页高变化必须靠 `layoutRev` 自增让相关 computed 重算。`.page-wrap canvas { display:block }` 消除内联 canvas 在强制高度下的基线缝隙。
 - **跳转先预热页高**：`renderPage` 返回渲染链 promise（`await` 真正完成 + `setHeight` 记录页高），跳转前预热目标页及之前页高并 `nextTick`，用瞬间定位（`behavior:"auto"`）——平滑滚动会在中途布局变化下跳不到位。页码输入与 SyncTeX 正向共用 `goToPage(n)`（展开窗口 + 预热 + 渲染 + 居中）。

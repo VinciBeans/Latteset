@@ -16,6 +16,10 @@ export function subscribeEvents(): () => void {
     events.compileStatus.listen((e) => {
       const dto = e.payload;
       useCompileStore().setStatus(dto.phase, dto.kind, dto.draft);
+      // 编译终态 ⇒ 退出"编译中预览"（roadmap ㉞）。成功时 `pdf-updated` 通常已经先退出过一次
+      // （那时这里是空操作）；**失败/中止**时不会有 `pdf-updated`，必须在这里收口，否则屏幕上
+      // 会留着中间态的部分 PDF 冒充结果。
+      if (dto.phase !== "running") usePreviewStore().clearLivePreview();
       // 编译成功 = 文档结构已确立 → 重建大纲（source 结构变化后保持同步）
       if (dto.phase === "success") useOutlineStore().refresh().catch(() => {});
     }),
@@ -23,6 +27,12 @@ export function subscribeEvents(): () => void {
     // 两者都是**非权威中间态**，只走各自的新事件；终态由 compile-status / errors-updated 给。
     events.compileProgress.listen((e) => {
       useCompileStore().setProgress(e.payload.pages);
+    }),
+    // 编译中的**部分 PDF**（roadmap ㉞，只库形态会发）：让长编译在跑的时候就能看上几页。
+    // 与上面两个中间态同一守卫口径：只在"排版中"采纳（终态之后到达的中间态一律丢弃）。
+    events.compilePreview.listen((e) => {
+      if (useCompileStore().phase !== "running") return;
+      usePreviewStore().onCompilePreview(e.payload);
     }),
     events.compileErrors.listen((e) => {
       useCompileStore().setLiveErrors(e.payload);
