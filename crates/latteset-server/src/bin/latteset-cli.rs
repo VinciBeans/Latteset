@@ -1,7 +1,7 @@
 //! `latteset-cli`：headless 命令行入口（roadmap ⑥）。
 //!
 //! 约定（面向 Agent/脚本）：
-//! - **stdout 只有 JSON**（一条命令一个 JSON 对象）；日志走 stderr。
+//! - **stdout 只有 JSON**（一条命令一个 JSON 对象）；日志走 stderr，级别走 `RUST_LOG`（默认 `info`）。
 //! - 退出码：0 = 命令成功（`compile` 仅当 `status == "success"`）；1 = 编译未通过；2 = 用法/路径类错误；3 = 内部错误。
 //! - 每个进程只跑一条命令（一次性语义）：不 spawn watcher、不跑调度器。
 //!
@@ -167,9 +167,14 @@ fn take_value(raw: &[String], i: &mut usize, flag: &str) -> Result<String, Strin
 
 #[tokio::main]
 async fn main() {
-    // 日志走 stderr：stdout 留给 JSON（脚本/Agent 直接管道）
+    // 日志走 stderr：stdout 留给 JSON（脚本/Agent 直接管道）。
+    // 级别可用 `RUST_LOG` 细调（默认 `info`）—— 冷编译诊断要看 `latteset_tectonic=debug`
+    // 那些"钱花在哪一趟"的读数，硬编码级别会把它们挡掉。口径与 `examples/`、GUI 侧一致。
     tracing_subscriber::fmt()
-        .with_max_level(tracing::Level::INFO)
+        .with_env_filter(
+            tracing_subscriber::EnvFilter::try_from_default_env()
+                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info")),
+        )
         .with_target(false)
         .with_writer(std::io::stderr)
         .init();

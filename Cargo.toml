@@ -26,3 +26,7 @@ regex = "1"
 notify = "8.2"
 # 日志门面（roadmap ㉛）：core 也要能打"编译决策"日志（facade 不是 IO，ADR-0006 仍成立）
 tracing = "0.1"
+# 日志实现（只在二进制/壳里装配）。`env-filter` 是给 `RUST_LOG` 用的：`latteset-cli` /
+# `latteset-mcp` / GUI 都按"默认 info、可用 RUST_LOG 细调"同一口径，否则冷编译诊断
+# （`latteset_tectonic=debug` 那些"钱花在哪一趟"的读数）在 CLI 上会被级别挡掉。
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }

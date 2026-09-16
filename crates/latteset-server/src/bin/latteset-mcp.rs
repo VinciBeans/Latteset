@@ -66,9 +66,13 @@ async fn main() {
         i += 1;
     }
 
-    // 日志走 stderr；MCP 的 stdout 只放协议消息
+    // 日志走 stderr；MCP 的 stdout 只放协议消息。级别可用 `RUST_LOG` 细调（默认 `info`），
+    // 与 `latteset-cli` / `examples/` 同一口径。
     tracing_subscriber::fmt()
-        .with_max_level(tracing::Level::INFO)
+        .with_env_filter(
+            tracing_subscriber::EnvFilter::try_from_default_env()
+                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info")),
+        )
         .with_target(false)
         .with_writer(std::io::stderr)
         .init();

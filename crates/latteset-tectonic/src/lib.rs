@@ -20,6 +20,7 @@
 
 pub mod bundle;
 pub mod io;
+pub mod preview;
 pub mod runner;
 pub mod status;
 

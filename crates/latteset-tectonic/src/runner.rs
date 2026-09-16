@@ -577,6 +577,28 @@ fn run_engines(
     // 强度分档（㉘）：Quick = 单趟直调引擎（引用/目录落后一趟）；Full = 跑到中间产物稳定。
     let wants_full = matches!(requested_kind, CompileKind::Full);
 
+    // ---- 流式出图（roadmap ㉞）：编译期把"已完成页"变成部分 PDF，写 `tmp/<stem>.preview.pdf` ----
+    // 上下文必须**在这里**组装：紧接着 `project_root`/`tmp_dir`/`cache_dir`/`cancel` 就被
+    // `TectonicIo` 与 format 缓存路径拿走了。闸门（"还会再跑一趟" + 第 1 趟够长 + 页数有涨 +
+    // 总数 ≤8）在 `preview` 模块里；这里只负责**在趟边界**调 `paint()`。
+    // `LATTESET_PREVIEW_STREAM=0` 可关（A/B 复核用：对比开/关的编译墙钟）。
+    let mut preview_painter = if crate::preview::stream_enabled() {
+        Some(crate::preview::PartialPainter::new(crate::preview::PreviewContext {
+            bundle_source: bundle_source.clone(),
+            only_cached,
+            cache_dir: cache_dir.clone(),
+            project_root: project_root.clone(),
+            tmp_dir: tmp_dir.clone(),
+            stem: stem.clone(),
+            xdv_name: xdv_name.clone(),
+            shared: shared.clone(),
+            progress: progress.clone(),
+            cancel: cancel.clone(),
+        }))
+    } else {
+        None
+    };
+
     // ② bundle：`detect_bundle(source, only_cached, Some(产品缓存目录))`（§3.4 第 2 步）。
     let mut bundle = match open_bundle(&bundle_source, only_cached, cache_dir.clone()) {
         Ok(b) => b,
@@ -835,6 +857,13 @@ fn run_engines(
                         "编辑触发档不再追收敛：停在草稿态（交给 ㉘ 的空闲收敛）"
                     );
                     break;
+                }
+
+                // ㉞ 流式出图：走到这里 = **确定还会再跑一趟**（两个 `break` 都过了），
+                // 而这一趟刚收尾 ⇒ 引擎全局锁是空的。此刻出图既新鲜（前缀就是刚排完的那份）
+                // 又不排队、不拖慢下一趟。放在循环末尾而不是开头，正是为了这个"确定"。
+                if let Some(painter) = preview_painter.as_mut() {
+                    painter.paint(first_pass);
                 }
             }
             if let Some(tool) = unsupported_tool {

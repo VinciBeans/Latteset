@@ -30,7 +30,7 @@
 | **编辑触发档在预算内收敛**（草稿从固定档变成判定） | **已落地**（2026-09-15） | 28 页带 bib：已收敛 **1 趟 475–487 ms 报 `Full`**、真实改动 **2 趟 1115 ms 报 `Full`**（旧路径 ≈475 + 2000 + 1115）；125 页：真实改动超闸门 ⇒ **1 趟 1847 ms 报 `Quick`**（退化档）。含反例与闸门依据见 §6.5 |
 | bundle / format 常驻化 | **未开工** | 现成本 `bundle_read_n=2009` 次/编译、23–41 ms/次（§6.4 ④） |
 
-**仍未判 / 未测的**（**不得当成立**）：t5 的 U1–U5（§13）；构建代价三项（§8.3）；"空缓存 + 有网"的真实 bundle 下载行为与文案（U3）；常驻档的内存与并发（LBR-7，随 P4 结案一并搁置）；P5 的提前量阈值（LIB-3d）；**编辑触发档收敛预算的机器自适应**（§6.5：阈值现为常数、按发布档标定，其它机器/CI 上"一趟耗时"的分布未测）；**流式出图的两条**（roadmap ㉞）：与排版**并发**时的 CPU 争抢、以及**内存前缀**直接喂引擎的端到端时延（本轮量的都是串行 + 从文件前缀）。
+**仍未判 / 未测的**（**不得当成立**）：t5 的 U1–U5（§13）；构建代价三项（§8.3）；"空缓存 + 有网"的真实 bundle 下载行为与文案（U3）；常驻档的内存与并发（LBR-7，随 P4 结案一并搁置）；P5 的提前量阈值（LIB-3d）；**编辑触发档收敛预算的机器自适应**（§6.5：阈值现为常数、按发布档标定，其它机器/CI 上"一趟耗时"的分布未测）；~~**流式出图的两条**（roadmap ㉞）：与排版**并发**时的 CPU 争抢、以及**内存前缀**直接喂引擎的端到端时延~~ → **两条都已回（2026-09-16，㉞ 切片 2）**：不是 CPU 争抢而是**进程内全局锁**（并发不可能，实测零并行收益 —— 见上方线程模型行与 [dvi-preview-feasibility.md](./research/dvi-preview-feasibility.md) §11），方案因此定为**趟边界出图**；内存前缀走产品路径的转换实测 **130–175 ms/次**（`open_ms=0`）。
 
 ## §0 摘要与结论
 
@@ -258,7 +258,7 @@ impl latteset_core::scheduler::CompileRunner for TectonicLibRunner {
 
 **路径 A（已评估、未选；保留记录不删）**：`ProcessingSessionBuilder` → 必填三项 `bundle` / `format_name` / `tex_input_name`（t2 §3.2）→ `primary_input_path|primary_input_buffer` → `do_not_write_output_files()` **或** `output_dir(tmp)`（两者不互斥，t2 §4.4）→ `create(&mut status)` / `run(&mut status)` → `into_file_data()`（t2 §4.2）。**未选理由** = 上条 1–3；其全管线（TeX 源码内存输入 → 内存输出）仍是 **t5 U1 未实测**。若将来改选 A，`ProcessingSession` **不是 `Send`**（t2 §4.5 `[推断]`）这条约束仍适用。
 
-**线程模型（B 同样适用）**：引擎有**进程内全局互斥**（`ENGINE_LOCK`，t2 §7.4 第 5 条）⇒ 编译在 `spawn_blocking` 里自建自跑，同一进程内不并发跑两个引擎。
+**线程模型（B 同样适用）**：引擎有**进程内全局互斥**（`ENGINE_LOCK`，t2 §7.4 第 5 条）⇒ 编译在 `spawn_blocking` 里自建自跑，同一进程内不并发跑两个引擎。**2026-09-16 实测坐实**（`crates/latteset-tectonic/examples/engine-lock-probe.rs`，24 逻辑核）：单次 XDV→PDF 转换 130 ms，**4 线程并发墙钟 533 ms == 单线程跑 4 次 541 ms**（每次 132/265/398/530 = 排队序号整倍数）⇒ 零并行收益。`with_global_lock` 在整个 C 引擎调用期间持锁，上游理由是 C 侧 `setjmp/longjmp` 跨 FFI 是 UB。**这条约束直接决定了 roadmap ㉞（流式出图）的形态**：不可能"排版进行中另起线程出图"，只能在**趟边界**出图（见 [dvi-preview-feasibility.md](./research/dvi-preview-feasibility.md) §11）。
 
 ### 3.5 设置面与回退开关
 

@@ -26,7 +26,8 @@ tokio = { workspace = true, features = ["io-std"] }
 tokio-util.workspace = true
 thiserror.workspace = true
 tracing = "0.1"
-tracing-subscriber = "0.3"
+# 与工作区同源：要用 `EnvFilter`（`RUST_LOG` 细调日志级别）就必须带 `env-filter` 特性。
+tracing-subscriber = { workspace = true }
 
 [features]
 default = []

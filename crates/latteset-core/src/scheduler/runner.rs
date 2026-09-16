@@ -5,6 +5,7 @@
 
 use crate::types::{CompileOutcome, CompileRequest, ErrorEntry};
 use async_trait::async_trait;
+use std::path::Path;
 use tokio_util::sync::CancellationToken;
 
 /// 编译执行抽象：core 唯一知道的"怎么编译"。
@@ -37,6 +38,18 @@ pub trait CompileProgress: Send + Sync {
     /// `CompileOutcome` 给出。调用方必须把它当作**只在编译进行中有效**的中间态：终态结果到达后
     /// 覆盖它，且晚到的流式事件不得再改写终态列表（实现在编译收尾阶段仍会补发最后一批）。
     fn errors(&self, _errors: &[ErrorEntry]) {}
+
+    /// **编译中预览**（roadmap ㉞「流式出图」）：已完成页合成出的**部分 PDF** 落在磁盘上的路径。
+    ///
+    /// 契约（与 `pages`/`errors` 同级，都是**非权威**中间态）：
+    /// - 它**不是**最终产物 —— 终态仍以 `CompileOutcome::Success.pdf_path` 为准，前端只能用它在
+    ///   编译期间"先看上几页"；
+    /// - **不得**把它当作页哈希 / A 闸门 / 收敛判断的输入（中间态会污染基线）；
+    /// - `pages` **只增不减**；同一次编译里可能被调用多次（限流后的节拍）。
+    ///
+    /// 默认空实现：只有**库形态**有内存 XDV 可合成；子进程档没有这条通道，headless 也不需要。
+    /// 调用方（runner）负责把"只在编译确实跑得久时才出图"的阈值与限流做在前面。
+    fn partial_pdf(&self, _path: &Path, _pages: u32) {}
 }
 
 /// 什么都不做的反馈实现（headless / 测试用）。

@@ -343,7 +343,7 @@ pub fn synthesize_postamble(prefix: &[u8]) -> Option<PartialXdv> {
     // 这里踩过一次：写成 `body.len() + font_bytes` 会让 post_post 的回指指针落到字体区中间，
     // xdvipdfmx 直接判 `Something is wrong. Are you sure this is a DVI file?`。
     let post_at = body.len();
-    let mut out = Vec::with_capacity(post_at + POST_LEN + POST_POST_LEN + 8);
+    let mut out = Vec::with_capacity(post_at + POST_LEN + font_bytes + POST_POST_LEN + 8);
     out.extend_from_slice(body);
 
     let mut post = [0u8; POST_LEN];
