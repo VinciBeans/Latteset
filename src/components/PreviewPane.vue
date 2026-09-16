@@ -201,7 +201,7 @@ async function paintDraft() {
   ctx.fillText(text, cx, cy);
   // 草稿标记：细下划线（明确"这一行是近似预览"，非最终排版）
   const lineW = Math.min(Math.max(ctx.measureText(text).width, 8), maxW);
-  ctx.strokeStyle = "rgba(93, 95, 239, 0.55)";
+  ctx.strokeStyle = "rgba(var(--blueberry-rgb), 0.55)";
   ctx.lineWidth = 1;
   ctx.beginPath();
   ctx.moveTo(cx, cy + sizePx * 0.2);
@@ -935,7 +935,7 @@ onBeforeUnmount(() => clearTimeout(draftTimer));
   cursor: pointer;
   transition: background 0.12s, border-color 0.12s, color 0.12s;
 }
-.zoom-btn:hover:not(:disabled) { border-color: var(--blueberry); color: var(--blueberry); background: rgba(93, 95, 239, 0.06); }
+.zoom-btn:hover:not(:disabled) { border-color: var(--blueberry); color: var(--blueberry); background: rgba(var(--blueberry-rgb), 0.06); }
 .zoom-btn:disabled { opacity: 0.4; cursor: default; }
 .zoom-btn.fit { font-size: 11.5px; font-weight: 550; }
 .zoom-pct {
@@ -953,8 +953,8 @@ onBeforeUnmount(() => clearTimeout(draftTimer));
   min-width: 0;
   padding: 2px 9px;
   border-radius: 5px;
-  background: rgba(255, 181, 74, 0.16);
-  color: #b8791a;
+  background: var(--tint-mango-weak);
+  color: var(--warn-ink);
   font-size: 11.5px;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
@@ -989,7 +989,7 @@ onBeforeUnmount(() => clearTimeout(draftTimer));
   min-height: 0;
   overflow: auto;
   background:
-    radial-gradient(rgba(93, 95, 239, 0.10) 1.2px, transparent 1.2px) 0 0 / 20px 20px,
+    radial-gradient(var(--tint-blueberry) 1.2px, transparent 1.2px) 0 0 / 20px 20px,
     var(--paper);
 }
 .empty { padding: 56px 24px; color: var(--ink-faint); text-align: center; }
@@ -1004,7 +1004,7 @@ onBeforeUnmount(() => clearTimeout(draftTimer));
   margin: 0 auto 18px;
   width: fit-content;
   border-radius: 3px;
-  box-shadow: 0 6px 28px rgba(43, 36, 56, 0.18), 0 1px 4px rgba(43, 36, 56, 0.12);
+  box-shadow: 0 6px 28px rgba(var(--shadow-rgb), 0.18), 0 1px 4px rgba(var(--shadow-rgb), 0.12);
   outline: 1px solid var(--line);
 }
 /* canvas 块级、充满 .page-wrap 保留高度；避免内联基线缝隙（releasePage 置 0×0 时仅影响宽高，布局仍由 wrap 高度驱动） */
@@ -1020,8 +1020,8 @@ onBeforeUnmount(() => clearTimeout(draftTimer));
 .highlight {
   display: none;
   position: absolute;
-  background: rgba(255, 181, 74, 0.4);
-  border: 1.5px solid #e8a72c;
+  background: rgba(var(--mango-rgb), 0.4);
+  border: 1.5px solid var(--warn-line);
   pointer-events: none;
 }
 </style>

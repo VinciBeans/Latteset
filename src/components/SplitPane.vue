@@ -74,16 +74,16 @@ function onPointerUp() {
   transform: translate(-50%, -50%);
   border-radius: 4px;
   background:
-    radial-gradient(circle at center, #c3bce0 0 1.5px, transparent 1.5px)
+    radial-gradient(circle at center, var(--line-strong) 0 1.5px, transparent 1.5px)
     center / 8px 11px repeat-y;
   opacity: 0.95;
   pointer-events: none;
 }
 .divider:hover .grip,
-.split-pane.dragging .grip { background: radial-gradient(circle at center, #fff 0 1.5px, transparent 1.5px) center / 8px 11px repeat-y; }
-.divider.horizontal .grip { width: 30px; height: 20px; background: radial-gradient(circle at center, #c3bce0 0 1.5px, transparent 1.5px) center / 11px 8px repeat-x; }
+.split-pane.dragging .grip { background: radial-gradient(circle at center, var(--on-accent) 0 1.5px, transparent 1.5px) center / 8px 11px repeat-y; }
+.divider.horizontal .grip { width: 30px; height: 20px; background: radial-gradient(circle at center, var(--line-strong) 0 1.5px, transparent 1.5px) center / 11px 8px repeat-x; }
 .divider.horizontal:hover .grip,
-.split-pane.dragging .divider.horizontal .grip { background: radial-gradient(circle at center, #fff 0 1.5px, transparent 1.5px) center / 11px 8px repeat-x; }
+.split-pane.dragging .divider.horizontal .grip { background: radial-gradient(circle at center, var(--on-accent) 0 1.5px, transparent 1.5px) center / 11px 8px repeat-x; }
 .pane { min-width: 0; min-height: 0; overflow: hidden; }
 .primary { flex: 0 0 v-bind(primaryFlex); }
 .secondary { flex: 1 1 auto; }

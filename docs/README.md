@@ -1,6 +1,6 @@
 # Latteset 文档索引
 
-> 项目状态：**Windows 首发 MVP 已落地，迭代中**——项目/编辑/编译调度/错误诊断/连续 PDF 预览 + SyncTeX/设置页均可用，编译期已有**流式反馈**（状态栏「已排版 N 页」+ 错误列表在编译结束前就报致命错误），并已提供无 GUI 的 CLI + MCP 入口（Agent 可驱动「读 → 改 → 编译验证 → 修」）。
+> 项目状态：**Windows 首发 MVP 已落地，迭代中**——项目/编辑/编译调度/错误诊断/连续 PDF 预览 + SyncTeX/设置页均可用，编译期已有**流式反馈**（状态栏「已排版 N 页」+ 错误列表在编译结束前就报致命错误），**界面有深浅两套主题（Candy Desk，含跟随系统）**，并已提供无 GUI 的 CLI + MCP 入口（Agent 可驱动「读 → 改 → 编译验证 → 修」）。
 > **引擎形态**：XeLaTeX / LuaLaTeX / pdfLaTeX 之外还有 **Tectonic**，含**子进程**与**库内嵌**两种形态（设置面选）。库内嵌是**正式构建变体**（`npm run lib:*`，需 vcpkg），默认构建不含它以保证主产物零原生依赖 —— 见 [ADR-0012](./adr/0012-tectonic-library-form-engine.md) 与 [方案「实施现状」](./tectonic-library-plan.md)。
 > 仓库：GitHub 为 truth、Gitee 为镜像；CI 跑 cargo test + `vue-tsc --noEmit` + 前端 vitest，另有按 tag/手动触发的**库形态发布构建**档。
 > 产品入口与功能清单见[根 README](../README.md)；已完成 roadmap 项及其证据见 [roadmap §1 基线](./research/tex-ide-roadmap-priority.md)；实测数字与结论见 [design.md](./design.md)。

@@ -19,6 +19,7 @@ import { useAutoSave } from "./composables/useAutoSave";
 import { useIdleConvergence } from "./composables/useIdleConvergence";
 import { ipc } from "./services/ipc";
 import { subscribeEvents } from "./services/events";
+import { useTheme } from "./composables/useTheme";
 import SettingsPanel from "./components/SettingsPanel.vue";
 import RootFilePicker from "./components/RootFilePicker.vue";
 import type { ProjectInfo } from "./bindings";
@@ -31,6 +32,9 @@ const outline = useOutlineStore();
 const autoSave = useAutoSave();
 // 空闲收敛（roadmap ㉘）：草稿编译后停手 2s 补一次完整 latexmk，追上目录/引用页码
 const idleConvergence = useIdleConvergence();
+// 主题（roadmap ⑩）：设置 → `<html data-theme>` + Monaco。首帧那份由 index.html 的内联脚本给，
+// 设置读回来后再 sync 一次覆盖（首帧的来源可能过期）。
+const theme = useTheme();
 
 const cursorLine = ref(0);
 const cursorCol = ref(0);
@@ -58,6 +62,9 @@ onMounted(async () => {
   } catch (e) {
     console.error("加载设置失败：", e);
   }
+  // 设置到手后再落一次主题：首帧那份来自 localStorage（可能过期，或本机首次运行尚无记录）。
+  // 加载失败时也调用——此时 theme 落到「跟随系统」，比停在过期值更接近用户预期。
+  theme.sync();
   // Ctrl+S / Cmd+S：立即保存全部脏文件（on_save 模式的「保存触发」；连续模式也立即落盘一次）。
   const onKeyDown = (e: KeyboardEvent) => {
     if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "s") {
@@ -301,13 +308,129 @@ const settingsOpen = ref(false);
   --mint: #2fbf8f;         /* 成功 */
   --radius: 12px;
   --radius-sm: 8px;
-  --shadow-hard: 3px 3px 0 rgba(43, 36, 56, 0.09);
-  --shadow-hard-big: 5px 5px 0 rgba(43, 36, 56, 0.10);
+  --shadow-hard: 3px 3px 0 rgba(var(--shadow-rgb), 0.09);
+  --shadow-hard-big: 5px 5px 0 rgba(var(--shadow-rgb), 0.10);
   --mono: "Cascadia Mono", "JetBrains Mono", Consolas, "Courier New", monospace;
+
+  /* ============ 语义层（2026-09-15，为深色主题引入）============
+     两层：**通道变量** + **角色 token**。
+     - 通道变量（`--X-rgb`）：站点自己拼 alpha（`rgba(var(--blueberry-rgb), 0.10)`）
+       ⇒ 浅色下每个 alpha 逐字保留，深色只改一处通道值就整片生效。
+     - 角色 token：给"强调色当文本/描边"（对表面要有对比度，深浅两态必须换值）与实色用。
+     下面这些**浅色值 = 重构前的字面量，逐字未改** ⇒ 浅色渲染零变化。 */
+  --blueberry-rgb: 93, 95, 239;
+  --coral-rgb: 255, 122, 110;
+  --mango-rgb: 255, 181, 74;
+  --mint-rgb: 47, 191, 143;
+  --violet-rgb: 124, 58, 237;
+  --rose-rgb: 209, 84, 126;
+  --sage-rgb: 127, 151, 126;
+  --ink-rgb: 43, 36, 56;
+  --scrim-rgb: 30, 26, 46;
+  --shadow-rgb: 43, 36, 56;   /* 硬阴影专用：深色下要翻成黑，不能跟着「墨」变亮 */
+
+  --blueberry-hover: #6a5cff;
+  --violet: #7c3aed;
+  --info: #4e9bff;
+  --rose: #d1547e;
+  --danger-ink: #e85f52;   /* 错误文字：浅色压暗、深色提亮 */
+  --warn-ink: #b8791a;
+  --warn-ink-alt: #e09a2e;
+  --warn-ink-deep: #d98d18;
+  --warn-line: #e8a72c;
+  --ok-ink: #23a377;
+  --rose-ink: #c84e74;
+  --sage-ink: #5f7a5e;
+  --sienna: #b26a2b;
+
+  --tint-blueberry: rgba(var(--blueberry-rgb), 0.10);
+  --tint-blueberry-weak: rgba(var(--blueberry-rgb), 0.08);
+  --tint-blueberry-strong: rgba(var(--blueberry-rgb), 0.12);
+  --tint-mango: rgba(var(--mango-rgb), 0.18);
+  --tint-mango-weak: rgba(var(--mango-rgb), 0.16);
+  --tint-coral: rgba(var(--coral-rgb), 0.14);
+  --tint-coral-strong: rgba(var(--coral-rgb), 0.15);
+  --tint-coral-weak: rgba(var(--coral-rgb), 0.13);
+  --tint-violet: rgba(var(--violet-rgb), 0.12);
+  --tint-ink: rgba(var(--ink-rgb), 0.10);
+  --tint-ink-weak: rgba(var(--ink-rgb), 0.06);
+  --scrim: rgba(var(--scrim-rgb), 0.38);
+  --scrim-weak: rgba(var(--ink-rgb), 0.28);
+  --select: #dcd7f6;
+  --line-strong: #c8c0e8;
+  --hover-row: #eeeafd;
+  --danger-tint-soft: #ffe9e5;
+  --scroll-thumb: #c9c2e4;
+  --scroll-thumb-hover: #b3aad6;
+  /* 实底强调色上的文字（主按钮 / 选中的分段按钮）。
+     浅色：白字（底是深蓝莓）；深色：**翻成墨色**（底提亮成 #8a8cff，白字只有 2.4:1）——
+     这是深色主题唯一必须"反转"的一对，实测见 design.md 的主题一节。 */
+  --on-accent: #ffffff;
 }
 
-html, body, #app { height: 100%; margin: 0; }
-body {
+/* ============ Candy Desk · 夜间态（2026-09-15）============
+   设计取向：**不是"黑底 + 荧光色"，而是同一张糖果桌在台灯下**。
+   四条规则（改这里时别破坏它们）：
+   1. **色相不能丢**：纸面用墨紫罗兰（与浅色 `#f4f2fb` 同色系），不用中性灰/纯黑；
+   2. **抬升方向不变**：浅色下卡片比纸面**亮**（白 vs 淡紫）⇒ 深色下卡片仍比纸面亮一档，
+      只是整体压到暗部（"纸"→"墨"，关系没变）；
+   3. **糖果色提亮**：强调色在深底上要"发光"；当文本用的 `*-ink` 一律换成亮版，
+      半透明底走**通道变量**（`--X-rgb`）⇒ 全站 alpha 不用逐个改；
+   4. **硬阴影翻成暗投影**：浅色下 3px 硬偏移是"纸片翘起"，深色下若还取亮色会变成光晕（语义反了）
+      ⇒ `--shadow-rgb` 换成黑。硬边（无模糊）这个签名保留。
+   PDF 预览**不做反色**：页面保持纸白（阅读保真优先，图片/图表反色会失真），只把周边 chrome 压暗。 */
+[data-theme="dark"] {
+  --paper: #16131f;        /* 墨紫罗兰（纸面） */
+  --card: #1f1b2c;         /* 卡片：比纸面亮一档 = 抬升 */
+  --card-2: #292337;       /* 悬停/次级面 */
+  --ink: #ece9f7;          /* 主墨色 → 亮紫白 */
+  --ink-dim: #a49dbb;
+  --ink-faint: #87809d;    /* 三级：抬到 ≥4.4:1（原 #6f6885 只有 3.2:1，提示文字偏糊） */
+  --line: #372f49;
+  --line-soft: #2a2438;
+
+  /* 通道：整体提亮（深底上要发光），alpha 仍由各站点自己决定 */
+  --blueberry-rgb: 138, 140, 255;
+  --coral-rgb: 255, 138, 128;
+  --mango-rgb: 255, 199, 107;
+  --mint-rgb: 77, 214, 166;
+  --violet-rgb: 167, 122, 255;
+  --rose-rgb: 240, 130, 170;
+  --sage-rgb: 160, 186, 158;
+  --ink-rgb: 236, 233, 247;
+  --scrim-rgb: 6, 4, 12;   /* 遮罩：深色下要更实才压得住 */
+  --shadow-rgb: 0, 0, 0;   /* 硬阴影：翻成暗投影 */
+
+  --blueberry: #8a8cff;
+  --blueberry-deep: #a5a6ff;   /* 深色下"更深"= 更亮（它被当文本色用） */
+  --blueberry-hover: #a5a6ff;
+  --coral: #ff8a80;
+  --mango: #ffc76b;
+  --mint: #4dd6a6;
+  --violet: #a77aff;
+  --info: #6db2ff;
+  --rose: #f082aa;
+  --danger-ink: #ff9b90;
+  --warn-ink: #ffc76b;
+  --warn-ink-alt: #ffc76b;
+  --warn-ink-deep: #f0b45a;
+  --warn-line: #ffc76b;
+  --ok-ink: #4dd6a6;
+  --rose-ink: #f082aa;
+  --sage-ink: #a0ba9e;
+  --sienna: #e0a06a;
+
+  --select: #3b3a72;             /* 选中底：蓝莓调的深色（浅色下是淡紫） */
+  --line-strong: #4a4260;
+  --hover-row: #262038;
+  --danger-tint-soft: #3a2530;
+  --scroll-thumb: #3c3550;
+  --scroll-thumb-hover: #4d4566;
+  /* 深色下实底强调色是**亮**的 ⇒ 上面的文字必须翻成墨色（白字只有 2.4:1，实测） */
+  --on-accent: #16131f;
+}
+
+html, body, #app { height: 100%; margin: 0; }body {
   font-family: "Segoe UI", "Microsoft YaHei", "PingFang SC", sans-serif;
   background: var(--paper);
   color: var(--ink);
@@ -315,19 +438,19 @@ body {
   -webkit-font-smoothing: antialiased;
 }
 
-::selection { background: #dcd7f6; }
+::selection { background: var(--select); }
 
 :focus-visible { outline: 2px solid var(--blueberry); outline-offset: 2px; border-radius: 4px; }
 
 ::-webkit-scrollbar { width: 10px; height: 10px; }
 ::-webkit-scrollbar-track { background: transparent; }
 ::-webkit-scrollbar-thumb {
-  background: #c9c2e4;
+  background: var(--scroll-thumb);
   border-radius: 6px;
   border: 2px solid transparent;
   background-clip: content-box;
 }
-::-webkit-scrollbar-thumb:hover { background-color: #b3aad6; }
+::-webkit-scrollbar-thumb:hover { background-color: var(--scroll-thumb-hover); }
 ::-webkit-scrollbar-corner { background: transparent; }
 </style>
 
@@ -373,25 +496,25 @@ body {
 .btn:hover:not(:disabled) {
   transform: translate(-1px, -1px);
   box-shadow: var(--shadow-hard-big);
-  border-color: #c8c0e8;
+  border-color: var(--line-strong);
 }
-.btn:active:not(:disabled) { transform: translate(1px, 1px); box-shadow: 1px 1px 0 rgba(43, 36, 56, 0.08); }
+.btn:active:not(:disabled) { transform: translate(1px, 1px); box-shadow: 1px 1px 0 rgba(var(--shadow-rgb), 0.08); }
 .btn.primary {
-  background: linear-gradient(135deg, #6a5cff 0%, var(--blueberry) 50%, #4e9bff 120%);
+  background: linear-gradient(135deg, var(--blueberry-hover) 0%, var(--blueberry) 50%, var(--info) 120%);
   border-color: transparent;
-  color: #fff;
-  box-shadow: 2.5px 2.5px 0 rgba(93, 95, 239, 0.28);
+  color: var(--on-accent);
+  box-shadow: 2.5px 2.5px 0 rgba(var(--blueberry-rgb), 0.28);
 }
-.btn.primary:hover:not(:disabled) { border-color: transparent; box-shadow: 4px 4px 0 rgba(93, 95, 239, 0.30); }
+.btn.primary:hover:not(:disabled) { border-color: transparent; box-shadow: 4px 4px 0 rgba(var(--blueberry-rgb), 0.30); }
 .btn.primary.typesetting {
-  background: linear-gradient(120deg, #6a5cff, #5d5fef, #4e9bff, #6a5cff);
+  background: linear-gradient(120deg, var(--blueberry-hover), #5d5fef, var(--info), var(--blueberry-hover));
   background-size: 260% 100%;
   animation: typeset-flow 1.1s linear infinite;
 }
 @keyframes typeset-flow { to { background-position: -260% 0; } }
 .btn.ghost {
   background: transparent;
-  border: 1.5px dashed #c8c0e8;
+  border: 1.5px dashed var(--line-strong);
   box-shadow: none;
 }
 .btn.icon { padding: 0 9px; }
@@ -428,7 +551,7 @@ body {
 .bottom-toggle .toggle-status {
   display: inline-flex; align-items: center; gap: 5px;
   font-size: 11.5px; font-weight: 600; letter-spacing: 0;
-  color: #e85f52;
+  color: var(--danger-ink);
 }
 .bottom-toggle .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--coral); }
 .bottom-toggle .spacer { flex: 1 1 auto; }

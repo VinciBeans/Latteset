@@ -95,7 +95,7 @@ function split(rel: string): { dir: string; name: string } {
   display: flex;
   align-items: center;
   justify-content: center;
-  background: rgba(30, 26, 46, 0.38);
+  background: var(--scrim);
   backdrop-filter: blur(2px);
 }
 .picker-panel {
@@ -107,7 +107,7 @@ function split(rel: string): { dir: string; name: string } {
   background: var(--card);
   border: 1.5px solid var(--line);
   border-radius: 14px;
-  box-shadow: 0 24px 64px rgba(43, 36, 56, 0.28), 4px 4px 0 rgba(43, 36, 56, 0.06);
+  box-shadow: 0 24px 64px var(--scrim-weak), 4px 4px 0 var(--tint-ink-weak);
   overflow: hidden;
 }
 .panel-head {
@@ -173,8 +173,8 @@ function split(rel: string): { dir: string; name: string } {
   margin: 8px 0 4px;
   padding: 7px 10px;
   font-size: 11.5px;
-  color: #e85f52;
-  background: rgba(255, 122, 110, 0.12);
+  color: var(--danger-ink);
+  background: rgba(var(--coral-rgb), 0.12);
   border-radius: var(--radius-sm);
 }
 
@@ -197,5 +197,5 @@ function split(rel: string): { dir: string; name: string } {
   cursor: pointer;
   box-shadow: var(--shadow-hard);
 }
-.btn:hover { transform: translate(-1px, -1px); box-shadow: var(--shadow-hard-big); border-color: #c8c0e8; }
+.btn:hover { transform: translate(-1px, -1px); box-shadow: var(--shadow-hard-big); border-color: var(--line-strong); }
 </style>

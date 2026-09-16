@@ -85,6 +85,32 @@ impl TectonicSettings {
     }
 }
 
+/// 界面主题（roadmap ⑩）。`System` = 跟随操作系统的深/浅色偏好。
+///
+/// **默认 `Light`**（不是 `System`）：深色主题是新能力，默认值必须让既有用户升级后**外观不变**
+/// —— 若默认 `System`，系统偏好深色的用户会在升级那一刻被静默换掉整套配色。
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, Type)]
+#[serde(rename_all = "snake_case")]
+pub enum UiTheme {
+    #[default]
+    Light,
+    Dark,
+    /// 跟随系统（前端读 `prefers-color-scheme`）。
+    System,
+}
+
+/// 界面设置（全局，与 [`TectonicSettings`] 同层：不进项目覆盖）。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
+pub struct UiSettings {
+    pub theme: UiTheme,
+}
+
+impl Default for UiSettings {
+    fn default() -> Self {
+        Self { theme: UiTheme::default() }
+    }
+}
+
 /// 编译相关设置。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
 pub struct CompileSettings {
@@ -102,6 +128,9 @@ pub struct Settings {
     /// Tectonic 形态与资源（全局；见 [`TectonicSettings`] 的说明）。
     #[serde(default)]
     pub tectonic: TectonicSettings,
+    /// 界面（全局；`#[serde(default)]` ⇒ 旧 settings.json 没有 `ui` 也能读）。
+    #[serde(default)]
+    pub ui: UiSettings,
     /// 根文件手动覆盖（探测结果的逃生门，ADR-0009）。
     pub root_file: Option<PathBuf>,
 }
@@ -117,6 +146,7 @@ impl Default for Settings {
                 engine: Engine::XeLaTeX,
             },
             tectonic: TectonicSettings::default(),
+            ui: UiSettings::default(),
             root_file: None,
         }
     }
@@ -178,6 +208,9 @@ pub struct SettingsPatch {
     /// 缓存目录：同上，**空串 = 清除**（回到宿主应用缓存目录）。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cache_dir: Option<String>,
+    /// 界面主题（roadmap ⑩）：`None` = 不动。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub theme: Option<UiTheme>,
 }
 
 /// `Option<Option<PathBuf>>` 的 null 歧义处理：

@@ -5,7 +5,7 @@
 import { computed, onMounted, ref } from "vue";
 import { useSettingsStore } from "../stores/settings";
 import { ipc } from "../services/ipc";
-import type { CompileMode, Engine } from "../bindings";
+import type { CompileMode, Engine, UiTheme } from "../bindings";
 
 const emit = defineEmits<{ close: [] }>();
 
@@ -35,6 +35,12 @@ const tectonicSettingsSummary = computed(() =>
 const MODES: { value: CompileMode; label: string; hint: string }[] = [
   { value: "continuous", label: "连续编译", hint: "编辑后 500ms 自动编译" },
   { value: "on_save", label: "保存触发", hint: "手动点「编译」或保存时触发" },
+];
+/** 主题（roadmap ⑩）：全局设置，即点即存。"跟随系统"由前端监听 prefers-color-scheme 落实。 */
+const THEMES: { value: UiTheme; label: string; hint: string }[] = [
+  { value: "light", label: "浅色", hint: "Candy Desk（默认）" },
+  { value: "dark", label: "深色", hint: "夜间态：墨紫罗兰纸面 + 提亮的糖果色" },
+  { value: "system", label: "跟随系统", hint: "按操作系统的深浅色偏好切换" },
 ];
 const ENGINES: { value: Engine; label: string; hint: string }[] = [
   { value: "xelatex", label: "XeLaTeX", hint: "默认，中文支持最佳" },
@@ -104,6 +110,17 @@ async function setMode(mode: CompileMode) {
 async function setEngine(engine: Engine) {
   if (settings.value?.compile.engine === engine) return;
   await store.update({ engine });
+}
+
+/** 主题切换：即点即存；落地（DOM/Monaco）由 useTheme 的 watcher 统一做。 */
+async function setTheme(theme: UiTheme) {
+  if (themeOf(settings.value) === theme) return;
+  await store.update({ theme });
+}
+
+/** 主题的当前值（`ui` 在绑定里可选 ⇒ 缺省按浅色，与后端 `Default for UiSettings` 同口径）。 */
+function themeOf(s: { ui?: { theme: UiTheme } | null } | null | undefined): UiTheme {
+  return s?.ui?.theme ?? "light";
 }
 
 /** 根文件覆盖：仅相对路径；输入为空 = 清除覆盖（自动探测，幂等发送 null patch）。 */
@@ -244,6 +261,25 @@ async function applyCacheDir() {
       </header>
 
       <div class="panel-body" v-if="settings">
+        <!-- 外观（roadmap ⑩） -->
+        <section class="sec">
+          <h3 class="sec-title">外观</h3>
+          <div class="field">
+            <label class="field-label" for="set-theme">主题</label>
+            <div class="mode-seg" id="set-theme">
+              <button
+                v-for="t in THEMES"
+                :key="t.value"
+                class="seg-btn"
+                :class="{ on: themeOf(settings) === t.value }"
+                :title="t.hint"
+                @click="setTheme(t.value)"
+              >{{ t.label }}</button>
+            </div>
+            <p class="field-hint">{{ THEMES.find(t => t.value === themeOf(settings))?.hint }}</p>
+          </div>
+        </section>
+
         <!-- 编译 -->
         <section class="sec">
           <h3 class="sec-title">编译</h3>
@@ -453,7 +489,7 @@ async function applyCacheDir() {
   display: flex;
   align-items: center;
   justify-content: center;
-  background: rgba(30, 26, 46, 0.38);
+  background: var(--scrim);
   backdrop-filter: blur(2px);
 }
 .settings-panel {
@@ -465,7 +501,7 @@ async function applyCacheDir() {
   background: var(--card);
   border: 1.5px solid var(--line);
   border-radius: 14px;
-  box-shadow: 0 24px 64px rgba(43, 36, 56, 0.28), 4px 4px 0 rgba(43, 36, 56, 0.06);
+  box-shadow: 0 24px 64px var(--scrim-weak), 4px 4px 0 var(--tint-ink-weak);
   overflow: hidden;
 }
 
@@ -516,9 +552,9 @@ async function applyCacheDir() {
   color: var(--ink);
 }
 .field-hint { margin: 6px 0 0; font-size: 11px; color: var(--ink-faint); }
-.field-hint.err { color: #e85f52; }
+.field-hint.err { color: var(--danger-ink); }
 /* 「存了但当前不生效」——不能用 err（不是错误），但也不能与普通灰字同权重 */
-.field-hint.warn { color: var(--sienna, #b26a2b); }
+.field-hint.warn { color: var(--sienna, var(--sienna)); }
 
 .input {
   width: 100%;
@@ -532,7 +568,7 @@ async function applyCacheDir() {
   font-family: var(--mono);
   box-sizing: border-box;
 }
-.input:focus { outline: none; border-color: var(--blueberry); box-shadow: 0 0 0 3px rgba(93, 95, 239, 0.14); }
+.input:focus { outline: none; border-color: var(--blueberry); box-shadow: 0 0 0 3px rgba(var(--blueberry-rgb), 0.14); }
 .input.number { font-family: var(--mono); }
 .select { cursor: pointer; }
 
@@ -557,7 +593,7 @@ async function applyCacheDir() {
   transition: all 0.13s;
 }
 .seg-btn:hover { color: var(--ink); }
-.seg-btn.on { background: var(--blueberry); color: #fff; box-shadow: 0 2px 6px rgba(93, 95, 239, 0.35); }
+.seg-btn.on { background: var(--blueberry); color: var(--on-accent); box-shadow: 0 2px 6px rgba(var(--blueberry-rgb), 0.35); }
 
 .root-row { display: flex; gap: 6px; }
 .root-row .input { flex: 1 1 auto; }
@@ -580,11 +616,11 @@ async function applyCacheDir() {
 .btn:hover:not(:disabled) { border-color: var(--blueberry); color: var(--blueberry); }
 .btn.small { height: 32px; padding: 0 12px; }
 .btn.primary {
-  background: linear-gradient(135deg, #6a5cff 0%, var(--blueberry) 60%, #4e9bff 130%);
+  background: linear-gradient(135deg, var(--blueberry-hover) 0%, var(--blueberry) 60%, var(--info) 130%);
   border-color: transparent;
-  color: #fff;
+  color: var(--on-accent);
 }
-.btn.primary:hover:not(:disabled) { color: #fff; border-color: transparent; }
+.btn.primary:hover:not(:disabled) { color: var(--on-accent); border-color: transparent; }
 .btn.ghost { background: transparent; box-shadow: none; }
 .btn:disabled { opacity: 0.45; cursor: default; }
 

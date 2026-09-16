@@ -94,6 +94,14 @@ DEBUG 编辑触发档不再追收敛：停在草稿态（交给 ㉘ 的空闲收
 
 `first_pass_ms > first_pass_max_ms` 即命中（`RUST_LOG=debug`）。**要量真实行为必须 `--release`** —— 同 §6.4 的测量纪律（debug 下库形态数字大 6–8×）。判据与实测见 [tectonic-library-plan.md](./tectonic-library-plan.md) §6.5。
 
+## 改 `App.vue` 的 `<script setup>` 结构后 HMR 可能白屏：刷新一下就好（2026-09 实测）
+
+**现象**：给 `App.vue` 加一个 import + 在 setup 里调一次新 composable（roadmap ⑩ 的主题接线），Vite 只报 `hmr update /src/App.vue`，随后**窗口整个空白**（只剩 body 底色，工具栏/编辑器都不在），console 只有两条空载荷 `ERROR {}`。
+
+**原因**：Vue 的 HMR 对 `<script setup>` 的结构性变化（新增顶层 import/调用）只能做"重新挂载"，而这次中间态没有回到可用状态；`main.ts` 里被搬走的 Monaco 主题定义同理。
+
+**处置**：`location.reload()`（或右键 → Reload）重新引导即可，**不是代码缺陷**——刷新后一切正常（含 `index.html` 的内联首帧脚本）。排查时先看 dev stdout 的 `hmr update` 行确认改的是哪个文件，别急着怀疑自己的改动。
+
 ## 白屏：无 GPU 虚拟机环境的首帧呈现竞态
 
 **现象**：`npm run tauri dev` 启动应用进程时，窗口偶发白屏（webview 页面已加载、JS 正常、devtools Console 无报错，但首帧未呈现）。**右键 → Reload 后立即正常**。

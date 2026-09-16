@@ -61,6 +61,10 @@ pub fn apply_patch(settings: &mut Settings, patch: &SettingsPatch) -> Result<(),
     if let Some(v) = &patch.cache_dir {
         next.tectonic.cache_dir = Some(PathBuf::from(v.trim())).filter(|p| !p.as_os_str().is_empty());
     }
+    // 界面（roadmap ⑩）：全局，无项目覆盖
+    if let Some(v) = patch.theme {
+        next.ui.theme = v;
+    }
     super::validate::validate(&next)?;
     *settings = next;
     Ok(())
@@ -83,8 +87,39 @@ mod tests {
                 engine: Engine::XeLaTeX,
             },
             tectonic: Default::default(),
+            ui: Default::default(),
             root_file: None,
         }
+    }
+
+    /// 主题走 patch：只改 `ui.theme`，且**默认值是 Light**（升级后外观不变）。
+    #[test]
+    fn apply_patch_theme_only_touches_ui() {
+        use crate::settings::model::UiTheme;
+        let mut s = global();
+        assert_eq!(s.ui.theme, UiTheme::Light, "默认必须是浅色：升级不该静默换外观");
+        apply_patch(
+            &mut s,
+            &SettingsPatch {
+                theme: Some(UiTheme::Dark),
+                ..SettingsPatch::default()
+            },
+        )
+        .unwrap();
+        assert_eq!(s.ui.theme, UiTheme::Dark);
+        assert_eq!(s.compile.engine, Engine::XeLaTeX, "其余字段不动");
+        // 不带 theme 的 patch 不改它
+        apply_patch(&mut s, &SettingsPatch { timeout_secs: Some(60), ..Default::default() }).unwrap();
+        assert_eq!(s.ui.theme, UiTheme::Dark);
+    }
+
+    /// 旧 settings.json（没有 `ui` 键）仍要能读 —— 否则升级即丢配置。
+    #[test]
+    fn settings_without_ui_key_deserializes() {
+        let json = r#"{"schema_version":1,"compile":{"mode":"continuous","debounce_ms":500,
+            "timeout_secs":120,"engine":"xelatex"},"root_file":null}"#;
+        let s: Settings = serde_json::from_str(json).expect("缺 ui 键必须能读");
+        assert_eq!(s.ui.theme, crate::settings::model::UiTheme::Light);
     }
 
     #[test]

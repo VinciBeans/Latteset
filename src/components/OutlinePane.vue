@@ -95,8 +95,8 @@ function onClick(node: OutlineNode) {
   display: inline-flex; align-items: center; justify-content: center;
   min-width: 17px; height: 17px; padding: 0 5px;
   border-radius: 9px;
-  background: rgba(124, 58, 237, 0.12);
-  color: var(--violet, #7c3aed);
+  background: var(--tint-violet);
+  color: var(--violet, var(--violet));
   font-size: 10.5px; font-weight: 700;
   letter-spacing: 0;
 }
@@ -110,8 +110,8 @@ function onClick(node: OutlineNode) {
   display: inline-flex; align-items: center; justify-content: center;
   width: 17px; height: 17px;
   border-radius: 50%;
-  background: rgba(124, 58, 237, 0.12);
-  color: var(--violet, #7c3aed);
+  background: var(--tint-violet);
+  color: var(--violet, var(--violet));
   font-size: 11px; font-weight: 700;
 }
 .item {
@@ -132,15 +132,15 @@ function onClick(node: OutlineNode) {
   min-width: 15px; height: 15px; padding: 0 3px;
   border-radius: 4px;
   font-size: 9.5px; font-weight: 800;
-  background: rgba(93, 95, 239, 0.12);
+  background: var(--tint-blueberry-strong);
   color: var(--blueberry-deep);
 }
-.tag.lv-0 { background: rgba(124, 58, 237, 0.14); color: #7c3aed; }
-.tag.lv-1 { background: rgba(93, 95, 239, 0.16); color: var(--blueberry-deep); }
-.tag.lv-2 { background: rgba(127, 151, 126, 0.16); color: #5f7a5e; }
-.tag.lv-3 { background: rgba(209, 84, 126, 0.14); color: #c84e74; }
-.tag.lv-4 { background: rgba(209, 84, 126, 0.12); color: #c84e74; }
-.tag.lv-5, .tag.lv-6 { background: rgba(43, 36, 56, 0.10); color: var(--ink-dim); }
+.tag.lv-0 { background: rgba(var(--violet-rgb), 0.14); color: var(--violet); }
+.tag.lv-1 { background: rgba(var(--blueberry-rgb), 0.16); color: var(--blueberry-deep); }
+.tag.lv-2 { background: rgba(var(--sage-rgb), 0.16); color: var(--sage-ink); }
+.tag.lv-3 { background: rgba(var(--rose-rgb), 0.14); color: var(--rose-ink); }
+.tag.lv-4 { background: rgba(var(--rose-rgb), 0.12); color: var(--rose-ink); }
+.tag.lv-5, .tag.lv-6 { background: var(--tint-ink); color: var(--ink-dim); }
 .title {
   flex: 1 1 auto; min-width: 0;
   color: var(--ink);

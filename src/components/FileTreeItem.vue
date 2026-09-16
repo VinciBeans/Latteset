@@ -68,7 +68,7 @@ export default { name: "FileTreeItem" };
 }
 .row:hover { background: var(--card-2); color: var(--ink); }
 .row.active {
-  background: linear-gradient(90deg, #eeeafd 0%, rgba(93, 95, 239, 0.07) 100%);
+  background: linear-gradient(90deg, var(--hover-row) 0%, rgba(var(--blueberry-rgb), 0.07) 100%);
   color: var(--ink);
 }
 .row.active::before {

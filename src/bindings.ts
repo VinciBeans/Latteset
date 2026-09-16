@@ -350,6 +350,8 @@ export type Settings = {
 	compile: CompileSettings,
 	/**  Tectonic 形态与资源（全局；见 [`TectonicSettings`] 的说明）。 */
 	tectonic?: TectonicSettings,
+	/**  界面（全局；`#[serde(default)]` ⇒ 旧 settings.json 没有 `ui` 也能读）。 */
+	ui?: UiSettings,
 	/**  根文件手动覆盖（探测结果的逃生门，ADR-0009）。 */
 	root_file: string | null,
 };
@@ -385,6 +387,8 @@ export type SettingsPatch_Deserialize = {
 	bundle?: string | null,
 	/**  缓存目录：同上，**空串 = 清除**（回到宿主应用缓存目录）。 */
 	cache_dir?: string | null,
+	/**  界面主题（roadmap ⑩）：`None` = 不动。 */
+	theme?: UiTheme | null,
 };
 
 /**
@@ -409,6 +413,8 @@ export type SettingsPatch_Serialize = {
 	bundle?: string | null,
 	/**  缓存目录：同上，**空串 = 清除**（回到宿主应用缓存目录）。 */
 	cache_dir?: string | null,
+	/**  界面主题（roadmap ⑩）：`None` = 不动。 */
+	theme?: UiTheme | null,
 };
 
 /**  SyncTeX 反向定位结果（PDF → 源码）。 */
@@ -459,6 +465,21 @@ export type TectonicSettings = {
 	 */
 	cache_dir: string | null,
 };
+
+/**  界面设置（全局，与 [`TectonicSettings`] 同层：不进项目覆盖）。 */
+export type UiSettings = {
+	theme: UiTheme,
+};
+
+/**
+ *  界面主题（roadmap ⑩）。`System` = 跟随操作系统的深/浅色偏好。
+ * 
+ *  **默认 `Light`**（不是 `System`）：深色主题是新能力，默认值必须让既有用户升级后**外观不变**
+ *  —— 若默认 `System`，系统偏好深色的用户会在升级那一刻被静默换掉整套配色。
+ */
+export type UiTheme = "light" | "dark" | 
+/**  跟随系统（前端读 `prefers-color-scheme`）。 */
+"system";
 
 /* Tauri Specta runtime */
 async function typedError<T, E>(result: Promise<T>): Promise<{ status: "ok"; data: T } | { status: "error"; error: E }> {

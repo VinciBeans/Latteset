@@ -80,6 +80,6 @@ async function closeTab(path: string) {
   color: var(--ink-faint);
   transition: background 0.12s, color 0.12s;
 }
-.close:hover { background: #ffe9e5; color: var(--coral); }
+.close:hover { background: var(--danger-tint-soft); color: var(--coral); }
 .tab-bar-empty { flex: 1 1 auto; }
 </style>

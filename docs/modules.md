@@ -583,10 +583,14 @@ settings（core）              latteset-infra
 pub struct Settings {
     pub compile: CompileSettings,
     pub tectonic: TectonicSettings,   // 全局；见下「Tectonic 形态的设置面」
+    pub ui: UiSettings,               // 全局；#[serde(default)] ⇒ 旧 settings.json 没有 ui 也能读
     pub root_file: Option<PathBuf>,   // 项目级手动覆盖（探测结果的逃生门）
 }
 pub struct CompileSettings { pub mode: CompileMode, pub debounce_ms: u64, pub timeout_secs: u64, pub engine: Engine }
 pub struct TectonicSettings { pub lib_form: bool, pub bundle: Option<String>, pub cache_dir: Option<PathBuf> }
+/// 界面（roadmap ⑩）。`UiTheme = light | dark | system`，**默认 light** —— 深色是新能力，
+/// 默认值必须让既有用户升级后**外观不变**（默认 system 会在升级那刻静默换掉系统偏好深色用户的配色）。
+pub struct UiSettings { pub theme: UiTheme }
 
 pub fn default_settings() -> Settings;
 /// 项目覆盖全局，逐键合并（项目缺失字段继承全局）

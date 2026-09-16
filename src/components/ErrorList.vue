@@ -136,8 +136,8 @@ async function raiseTimeoutAndRetry(secs: number) {
   display: inline-flex; align-items: center; justify-content: center;
   min-width: 17px; height: 17px; padding: 0 5px;
   border-radius: 9px;
-  background: rgba(255, 122, 110, 0.15);
-  color: #e85f52;
+  background: var(--tint-coral-strong);
+  color: var(--danger-ink);
   font-size: 10.5px; font-weight: 700;
   letter-spacing: 0;
 }
@@ -146,7 +146,7 @@ async function raiseTimeoutAndRetry(secs: number) {
   display: inline-flex; align-items: center;
   padding: 0 7px; height: 17px;
   border-radius: 9px;
-  background: rgba(93, 95, 239, 0.12);
+  background: var(--tint-blueberry-strong);
   color: var(--blueberry);
   font-size: 10.5px; font-weight: 700;
   letter-spacing: 0;
@@ -161,8 +161,8 @@ async function raiseTimeoutAndRetry(secs: number) {
   display: inline-flex; align-items: center; justify-content: center;
   width: 17px; height: 17px;
   border-radius: 50%;
-  background: rgba(47, 191, 143, 0.14);
-  color: #23a377;
+  background: rgba(var(--mint-rgb), 0.14);
+  color: var(--ok-ink);
   font-size: 10px; font-weight: 700;
 }
 .entry {
@@ -197,7 +197,7 @@ async function raiseTimeoutAndRetry(secs: number) {
 .retry-btn {
   display: inline-flex; align-items: center;
   height: 22px; padding: 0 10px;
-  background: rgba(93, 95, 239, 0.10);
+  background: var(--tint-blueberry);
   border: 1.5px solid var(--blueberry);
   border-radius: 6px;
   color: var(--blueberry);
@@ -205,15 +205,15 @@ async function raiseTimeoutAndRetry(secs: number) {
   cursor: pointer;
   transition: background 0.12s;
 }
-.retry-btn:hover:not(:disabled) { background: rgba(93, 95, 239, 0.2); }
+.retry-btn:hover:not(:disabled) { background: rgba(var(--blueberry-rgb), 0.2); }
 .retry-btn:disabled { opacity: 0.5; cursor: default; }
 .badge {
   flex: 0 0 auto;
   display: inline-flex; align-items: center; justify-content: center;
   width: 16px; height: 16px;
   border-radius: 5px;
-  background: rgba(255, 122, 110, 0.15);
-  color: #e85f52;
+  background: var(--tint-coral-strong);
+  color: var(--danger-ink);
   font-size: 11px; font-weight: 800;
 }
 .count {
@@ -221,8 +221,8 @@ async function raiseTimeoutAndRetry(secs: number) {
   display: inline-flex; align-items: center;
   padding: 0 5px; height: 15px;
   border-radius: 8px;
-  background: rgba(255, 181, 74, 0.18);
-  color: #d98d18;
+  background: var(--tint-mango);
+  color: var(--warn-ink-deep);
   font-size: 10.5px; font-weight: 700;
 }
 .loc { color: var(--blueberry); font-family: var(--mono); flex: 0 0 auto; max-width: 45%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

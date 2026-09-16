@@ -99,6 +99,7 @@ mod tests {
                 engine: Engine::XeLaTeX,
             },
             tectonic: Default::default(),
+            ui: Default::default(),
             root_file: None,
         }
     }
