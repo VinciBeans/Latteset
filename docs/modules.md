@@ -704,7 +704,6 @@ pub fn compile_request_manual(ctx: ComposeContext<'_>) -> Option<CompileRequest>
 | save_all | 写盘（`save_content`）——不触发编译逻辑，watch 自然驱动；唯一保存路径 |
 | compile_now | compose.compile_request_manual：只看 root_file（忽略活动文件路径），构造请求入队 |
 | abort_compile | scheduler.send(Abort) |
-| **compile_snippet** | **片段预览**（草稿层真实排版实验 (A)，[research/snippet-preview.md](./research/snippet-preview.md)）：根文件导言区 + 片段 → `<项目>/tmp/snippet/main.tex`（**独立项目根**）→ **同一个 `SwitchableRunner`**（引擎/形态/包设置与主编译一致）→ 返回 `{path, elapsed_ms}`。**不经调度器、进度出口 no-op**（中间产物不得发 `compile-status`/`pdf-updated`，否则污染页哈希基线与权威语义）；每次清空重建（不共享 aux）；`tmp/` 被 watch/文件树忽略 ⇒ 不触发编译。调用方约定：**编译中不调**（引擎是进程内全局锁）、结果只用于"看一眼" |
 | synctex_forward / inverse | 调 provider（失败按 100/200/300ms 退避重试）；`inverse` 输出 `InverseResultDto{source,note}`：命中生成产物/项目外文件时就近回落，落空则只给提示（㉒） |
 | get_settings / update_settings | 读快照 / apply_patch → 校验 → 写盘（记录 hash，供 watch 自写盘过滤）→ 广播 settings-changed。**root_file 分支**：`Some(rel)` 先按 D8 解析为项目内绝对路径（失败即拒绝、**不落盘**）；`null` → 回到自动探测（复用 `detect_root`）；随后**同步内存 `ProjectState.root_file`**——漏掉这一步的症状是「选了根文件仍报未确定根文件，必须重开项目」 |
 
@@ -821,7 +820,6 @@ useAutoSave 依赖 editorStore.dirty + settingsStore（读）
 |---|---|---|---|
 | EditorPane | model(路径)、内容、语言 | 变更事件 → useAutoSave | Monaco 实例、worker、IME 组合状态；**无活动文件 → 显示"还没有打开文件"占位提示**（覆盖 Monaco）+ `readOnly`，打开文件才可编辑 |
 | PreviewPane | pdfPath、highlight、syncNote、**livePreview（编译中的部分 PDF）** | 点击坐标 → useSyncTex | pdf.js 文档句柄、滚动位置缓存、canvas 代次与页高（见下方渲染契约，含"编译中预览 = 换字节不换身份"） |
-| **SnippetPreview** | 无 props（自读 editorStore 的缓冲与 compileStore 的 phase） | 无 emit（悬浮卡） | 去抖 350ms → `services/snippetPatch.ts` 取改动所在段落 → `compile_snippet` → pdf.js 渲第 1 页 → **按文字包围盒裁剪**画进卡片；5s 自动收起、权威 `pdf-updated` 也收起。契约：**编译中不调**（进程内全局锁）、结果只用于看一眼（[snippet-preview.md](./research/snippet-preview.md)） |
 | FileTree | 树数据、激活路径 | 打开文件/目录展开 | 展开状态（只在前端本地） |
 | RootFilePicker | root、candidates（探测候选）、fallbackFiles（零候选时全部 .tex）、busy、error | `select`（**项目内相对路径**）、`close` | 无（纯展示；相对路径由 `relativizePath` 计算） |
 | ErrorList | errors[] | 点击条目 → openFile+定位 | 无；**诊断展示**（roadmap ④）：条目带 `diagnosis` 时渲染两行（原因 + 建议），无诊断降级为原文首行；头部「已诊断 N」。**去重/截断**：同源（文件 + 首行消息相同）聚合为一条并显示 `×N`；不同源最多展示 `MAX_DISPLAY=30` 组，超出提示隐藏数量（错误雪崩时不刷屏） |

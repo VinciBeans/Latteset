@@ -71,22 +71,6 @@ export const commands = {
 	 *  只靠这条命令会先闪一条白标题栏。
 	 */
 	setWindowTheme: (theme: UiTheme) => typedError<null, CmdError>(__TAURI_INVOKE("set_window_theme", { theme })),
-	/**
-	 *  **片段预览**：把「项目导言区 + 片段」装成一份独立小文档，编译成一份小 PDF 交给前端。
-	 * 
-	 *  为什么走**独立项目根**（`<项目>/tmp/snippet/`）而不是给 runner 加输出覆盖：这样它自然就是
-	 *  "另一个项目"——产物落 `tmp/snippet/main.pdf`、中间产物落 `tmp/snippet/tmp/`，既不碰权威
-	 *  `<stem>.pdf`，也不碰主编译的 `tmp/`（那是上一轮实测出的坑：草稿编译会把权威 PDF 覆盖掉）。
-	 *  `tmp/` 在监视器与文件树的忽略清单里 ⇒ 不会反过来触发编译。
-	 * 
-	 *  **不经过调度器**：调度器会在完成时发 `compile-status` / `pdf-updated`，那份中间产物一旦冒充
-	 *  权威产物，页哈希基线、A 闸门与「引用待更新」语义都会被污染。所以这里直接调 runner，
-	 *  并把进度出口换成 no-op（片段的页数与错误不该出现在状态栏与错误列表里）。
-	 * 
-	 *  调用方的两条约定（前端已守）：① **编译中不调**（引擎是进程内全局锁，会把主编译顶住）；
-	 *  ② 结果只用于"看一眼"，**不得**写进当前文档/页哈希/权威产物。
-	 */
-	compileSnippet: (snippet: string) => typedError<SnippetPreviewDto, CmdError>(__TAURI_INVOKE("compile_snippet", { snippet })),
 };
 
 /** Events */
@@ -470,18 +454,6 @@ export type SettingsPatch_Serialize = {
 	cache_dir?: string | null,
 	/**  界面主题（roadmap ⑩）：`None` = 不动。 */
 	theme?: UiTheme | null,
-};
-
-/**  片段预览的结果（草稿层真实排版实验 (A)，`docs/research/snippet-preview.md`）。 */
-export type SnippetPreviewDto = {
-	/**  片段 PDF 的绝对路径（`<项目>/tmp/snippet/main.pdf`）。 */
-	path: string,
-	/**
-	 *  这次片段编译的墙钟（含装配与落盘）。
-	 * 
-	 *  `u32`：specta 禁止把 `u64`/`usize` 导出成 TS（BigInt 精度），而毫秒数用 `u32` 足够。
-	 */
-	elapsed_ms: number,
 };
 
 /**  SyncTeX 反向定位结果（PDF → 源码）。 */
