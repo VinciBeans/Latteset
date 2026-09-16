@@ -614,6 +614,22 @@ pub fn is_self_write(&self, path: &Path, content: &str) -> bool;  // 自写盘 h
 - **bundle 的存储形态 ≠ 展示形态**。上游 `detect_bundle` 先做 `Url::parse`，绝对 Windows 路径会被当成 scheme `e` 吃掉（方案 §5.6 **LB-1**）⇒ **磁盘上必须存** `file:///E:/…` 或相对路径。但用户眼里它就是一条目录路径，所以：**入口宽容**（`TectonicSettings::normalize_bundle` 把 `E:\…` / `E:/…` / 带引号的「复制为路径」统一补成 `file:///…`；`apply_patch` 里归一化在前、校验在后），**出口好看**（`SettingsPanel` 的 `bundleDisplay` 剥掉 `file://` 前缀再显示/回填）。`cache_dir` 不走这套——它是普通路径，没有 URL 形态。
 - **Tectonic 段只在引擎真的选了 Tectonic 时渲染**（`v-if="settings.compile.engine === 'tectonic'"`）。引擎不是它时这几项没有任何作用，摆在面板上只会让人以为"改了没生效"。
 - **形态位受引擎闸门约束**（`TectonicSettings::use_library_form`，core）：`lib_form` 只在 `engine == Tectonic` 时生效。少了它，`engine=xelatex` + `lib_form=true` 会静默跑 Tectonic 库形态而状态栏报 XeLaTeX（见 §2.7 的「形态判定的引擎闸门」）。
+
+**设置面板的分页（标签栏，2026-09）**：面板从"一长条滚动"改为四个标签，按**用户要解决的问题**分页，而不是按字段所属模块：
+
+| 标签 | 内容 | 分页理由 |
+|---|---|---|
+| 外观 | 主题（浅色/深色/跟随系统） | 与文档无关的个人偏好 |
+| 编译 | 编译模式、防抖、超时 | 什么时候编、编多久 |
+| 引擎 | TeX 引擎选择 + **Tectonic 形态与资源**（驱动形态 / 宏包集 / 缓存目录） | 用谁编；Tectonic 那几项只在选中 Tectonic 时才有意义 ⇒ 与引擎选择同页，"存了但不生效"的提示才有落点 |
+| 项目 | 根文件覆盖 | 只影响当前项目 |
+
+四条界面契约（改面板时必须一起维持）：
+
+1. **分页是 `v-if` 而不是隐藏** ⇒ 任一瞬间 DOM 里只有当前页的字段（也避免了跨页重复 `id`）；测试断言据此写（见 `SettingsPanel.spec.ts` 的"每页只渲染自己那组字段"）。
+2. **跨页信息不能丢**：引擎页有"已保存的 Tectonic 设置在当前引擎下不生效"时，**标签上点一颗琥珀点**（`title` 说明原因）——否则切到别的页就再没有线索。
+3. **两级控件形态要分得开**：标签栏用**下划线式**（翻页），面板内选值用**胶囊式** `.seg-btn`（选一个值）。
+4. **记住上次看的那页**：`activeTab` 是**模块级** `ref`（面板 `v-if` 挂载，组件内 ref 每次重开都会回到第一页）；它不进设置、不落盘。
 - **段被隐藏时，存过的设置必须讲出来**：引擎不是 Tectonic 而 `lib_form`/`bundle`/`cache_dir` 有值时，引擎那一栏显示「已保存 Tectonic 形态设置（…）；**仅在选择 Tectonic 引擎时生效**」。否则"隐藏的段 + 存着的值"就是隐形开关。
 
 **算法（merge）**：字段级 Option 语义——全局 `settings.json` 与项目 `.latteset/settings.json` 同 schema（含 `schema_version`）；项目文件只写它覆盖的键，其余继承。

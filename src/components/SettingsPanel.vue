@@ -36,6 +36,41 @@ const MODES: { value: CompileMode; label: string; hint: string }[] = [
   { value: "continuous", label: "连续编译", hint: "编辑后 500ms 自动编译" },
   { value: "on_save", label: "保存触发", hint: "手动点「编译」或保存时触发" },
 ];
+
+/**
+ * 设置分页（标签栏）。四类按"用户要解决的问题"分，而不是按字段所属模块：
+ * - 外观：与文档无关的个人偏好；
+ * - 编译：什么时候编、编多久（模式/防抖/超时）；
+ * - 引擎：用谁编（**引擎选择与 Tectonic 的形态/资源同页** —— 后者只在选中 Tectonic 时才有意义，
+ *   分到两页会让那条"存了但不生效"的提示失去落点）；
+ * - 项目：只影响当前项目的覆盖项（根文件）。
+ */
+const TABS = [
+  { id: "appearance", label: "外观" },
+  { id: "compile", label: "编译" },
+  { id: "engine", label: "引擎" },
+  { id: "project", label: "项目" },
+] as const;
+type TabId = (typeof TABS)[number]["id"];
+
+/**
+ * 当前分页。放在**模块作用域**（不是 setup 内）：`v-if` 每次开关面板都会重建组件，
+ * 组件内的 ref 会回到第一页——而"我刚改完引擎，再打开还想看引擎"是常态。
+ * 模块级变量只为"记住上次看的那页"，不进设置、不落盘（换次启动回到第一页可以接受）。
+ */
+const activeTab = ref<TabId>("appearance");
+
+/** 左右方向键切页（tablist 的键盘约定）。 */
+function onTabKey(e: KeyboardEvent) {
+  const i = TABS.findIndex((t) => t.id === activeTab.value);
+  if (e.key === "ArrowRight") activeTab.value = TABS[(i + 1) % TABS.length].id;
+  else if (e.key === "ArrowLeft") activeTab.value = TABS[(i - 1 + TABS.length) % TABS.length].id;
+  else if (e.key === "Home") activeTab.value = TABS[0].id;
+  else if (e.key === "End") activeTab.value = TABS[TABS.length - 1].id;
+  else return;
+  e.preventDefault();
+}
+
 /** 主题（roadmap ⑩）：全局设置，即点即存。"跟随系统"由前端监听 prefers-color-scheme 落实。 */
 const THEMES: { value: UiTheme; label: string; hint: string }[] = [
   { value: "light", label: "浅色", hint: "Candy Desk（默认）" },
@@ -122,6 +157,14 @@ async function setTheme(theme: UiTheme) {
 function themeOf(s: { ui?: { theme: UiTheme } | null } | null | undefined): UiTheme {
   return s?.ui?.theme ?? "light";
 }
+
+/**
+ * 引擎页上是否有**需要知道但当前页看不见**的事：引擎不是 Tectonic、却存着 Tectonic 专属设置。
+ * 不给标记的话，用户切到 XeLaTeX 后那几项就成了隐形开关（既看不到、也没提示）。
+ */
+const engineTabNotice = computed(
+  () => settings.value?.compile.engine !== "tectonic" && hasTectonicSettings.value,
+);
 
 /** 根文件覆盖：仅相对路径；输入为空 = 清除覆盖（自动探测，幂等发送 null patch）。 */
 async function applyRootFile() {
@@ -260,9 +303,33 @@ async function applyCacheDir() {
         <button class="head-close" title="关闭" @click="emit('close')">×</button>
       </header>
 
+      <!-- 标签栏：**下划线式**（而不是面板里选值用的胶囊式）——两级控件要一眼分得开：
+           这里是"翻页"，面板里那些 .seg-btn 是"选一个值"。 -->
+      <div class="settings-tabs" role="tablist" aria-label="设置分类" @keydown="onTabKey">
+        <button
+          v-for="t in TABS"
+          :key="t.id"
+          class="tab-btn"
+          :class="{ on: activeTab === t.id }"
+          role="tab"
+          :aria-selected="activeTab === t.id"
+          :aria-controls="`tabpanel-${t.id}`"
+          :tabindex="activeTab === t.id ? 0 : -1"
+          @click="activeTab = t.id"
+        >
+          {{ t.label }}
+          <!-- 引擎页有"存了但不生效"的设置时点一颗：否则切到别的页就再没有线索 -->
+          <span
+            v-if="t.id === 'engine' && engineTabNotice"
+            class="tab-dot"
+            title="有已保存的 Tectonic 形态设置在当前引擎下不生效"
+          />
+        </button>
+      </div>
+
       <div class="panel-body" v-if="settings">
         <!-- 外观（roadmap ⑩） -->
-        <section class="sec">
+        <section class="sec" v-if="activeTab === 'appearance'" id="tabpanel-appearance" role="tabpanel">
           <h3 class="sec-title">外观</h3>
           <div class="field">
             <label class="field-label" for="set-theme">主题</label>
@@ -280,8 +347,8 @@ async function applyCacheDir() {
           </div>
         </section>
 
-        <!-- 编译 -->
-        <section class="sec">
+        <!-- 编译：什么时候编、编多久 -->
+        <section class="sec" v-if="activeTab === 'compile'" id="tabpanel-compile" role="tabpanel">
           <h3 class="sec-title">编译</h3>
 
           <div class="field">
@@ -297,19 +364,6 @@ async function applyCacheDir() {
               >{{ m.label }}</button>
             </div>
             <p class="field-hint">{{ MODES.find(m => m.value === settings?.compile.mode)?.hint }}</p>
-          </div>
-
-          <div class="field">
-            <label class="field-label" for="set-engine">TeX 引擎</label>
-            <select id="set-engine" class="input select" :value="settings.compile.engine" @change="setEngine(($event.target as HTMLSelectElement).value as Engine)">
-              <option v-for="e in ENGINES" :key="e.value" :value="e.value">{{ e.label }} — {{ e.hint }}</option>
-            </select>
-            <!-- Tectonic 段只在选中 Tectonic 时显示（下面那条 section 的 v-if），所以这里必须
-                 把"已经存了 Tectonic 设置、但当前不生效"讲出来——否则用户切到 XeLaTeX 后
-                 那几项连看都看不到，成了隐形开关。 -->
-            <p class="field-hint warn" v-if="settings.compile.engine !== 'tectonic' && hasTectonicSettings">
-              已保存 Tectonic 形态设置（{{ tectonicSettingsSummary }}）；<b>仅在选择 Tectonic 引擎时生效</b>，当前引擎不受影响。
-            </p>
           </div>
 
           <div class="field-row">
@@ -344,8 +398,8 @@ async function applyCacheDir() {
           </div>
         </section>
 
-        <!-- 项目 -->
-        <section class="sec">
+        <!-- 项目：只影响当前项目的覆盖项 -->
+        <section class="sec" v-if="activeTab === 'project'" id="tabpanel-project" role="tabpanel">
           <h3 class="sec-title">项目</h3>
           <div class="field">
             <label class="field-label" for="set-root">根文件（覆盖自动探测）</label>
@@ -373,10 +427,28 @@ async function applyCacheDir() {
           </div>
         </section>
 
-        <!-- Tectonic 形态（⑫ 里程碑的设置面）：只在引擎真的选了 Tectonic 时出现——
-             引擎不是它的时候，这几项对用户没有任何作用，摆在面板上只会让人以为"改了没生效" -->
-        <section class="sec" v-if="settings.compile.engine === 'tectonic'">
-          <h3 class="sec-title">Tectonic 引擎形态</h3>
+        <!-- 引擎：用谁编。**引擎选择与 Tectonic 的形态/资源同页** —— 后者只在选中 Tectonic 时
+             才有意义，分到两页会让那条"存了但不生效"的提示失去落点（见 TABS 的注释）。 -->
+        <section class="sec" v-if="activeTab === 'engine'" id="tabpanel-engine" role="tabpanel">
+          <h3 class="sec-title">引擎</h3>
+
+          <div class="field">
+            <label class="field-label" for="set-engine">TeX 引擎</label>
+            <select id="set-engine" class="input select" :value="settings.compile.engine" @change="setEngine(($event.target as HTMLSelectElement).value as Engine)">
+              <option v-for="e in ENGINES" :key="e.value" :value="e.value">{{ e.label }} — {{ e.hint }}</option>
+            </select>
+            <!-- Tectonic 段只在选中 Tectonic 时显示（下面那条 template 的 v-if），所以这里必须
+                 把"已经存了 Tectonic 设置、但当前不生效"讲出来——否则用户切到 XeLaTeX 后
+                 那几项连看都看不到，成了隐形开关。 -->
+            <p class="field-hint warn" v-if="engineTabNotice">
+              已保存 Tectonic 形态设置（{{ tectonicSettingsSummary }}）；<b>仅在选择 Tectonic 引擎时生效</b>，当前引擎不受影响。
+            </p>
+          </div>
+
+          <!-- Tectonic 形态（⑫ 里程碑的设置面）：只在引擎真的选了 Tectonic 时出现——
+               引擎不是它的时候，这几项对用户没有任何作用，摆在面板上只会让人以为"改了没生效" -->
+          <template v-if="settings.compile.engine === 'tectonic'">
+            <h3 class="sec-title sub">Tectonic 形态与资源</h3>
 
           <div class="field">
             <label class="field-label" for="set-form">驱动形态</label>
@@ -469,6 +541,7 @@ async function applyCacheDir() {
           <p class="field-hint" v-if="!tectonic.lib_form">
             以上两项只在<b>库内嵌</b>形态下生效（子进程档由 `tectonic.exe` 自己管缓存）。
           </p>
+          </template>
         </section>
       </div>
 
@@ -529,8 +602,48 @@ async function applyCacheDir() {
 }
 .head-close:hover { background: var(--card-2); color: var(--ink); }
 
+/* ---- 标签栏（下划线式）----
+   与面板内 `.seg-btn`（胶囊＝选一个值）**故意不同形**：这里是翻页，不是选值。
+   下划线用 `--blueberry`，未选中项压在 `--ink-dim`，整条底边就是分页与内容的自然分界。 */
+.settings-tabs {
+  display: flex;
+  gap: 2px;
+  padding: 0 12px;
+  border-bottom: 1.5px solid var(--line-soft);
+  flex: 0 0 auto;
+}
+.tab-btn {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 9px 12px 8px;
+  border: none;
+  background: transparent;
+  color: var(--ink-dim);
+  font-size: 12.5px;
+  font-weight: 600;
+  font-family: inherit;
+  cursor: pointer;
+  border-bottom: 2px solid transparent;
+  margin-bottom: -1.5px;   /* 压住容器底边，选中时下划线才是"连着的" */
+  transition: color 0.13s, border-color 0.13s;
+}
+.tab-btn:hover { color: var(--ink); }
+.tab-btn.on { color: var(--blueberry); border-bottom-color: var(--blueberry); }
+.tab-btn:focus-visible { outline: 2px solid var(--blueberry); outline-offset: -2px; border-radius: 4px 4px 0 0; }
+/* "有存了但不生效的设置"的提示点（琥珀）：标签栏是唯一能跨页传达这件事的地方 */
+.tab-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--mango);
+  flex: 0 0 auto;
+}
+
 .panel-body { flex: 1 1 auto; overflow: auto; padding: 4px 18px 12px; }
 .sec { padding: 12px 0 4px; }
+/* 分页后同一页里只可能有一条 .sec，所以 `.sec + .sec` 那条分隔线改为**同页内的子标题**分界 */
 .sec + .sec { border-top: 1px solid var(--line-soft); margin-top: 8px; padding-top: 14px; }
 .sec-title {
   margin: 0 0 12px;
@@ -539,6 +652,13 @@ async function applyCacheDir() {
   letter-spacing: 1px;
   text-transform: uppercase;
   color: var(--ink-dim);
+}
+/* 同页第二段（引擎页的 Tectonic 形态与资源）：与上面的"引擎"拉开层次 */
+.sec-title.sub {
+  margin-top: 22px;
+  padding-top: 14px;
+  border-top: 1px solid var(--line-soft);
+  letter-spacing: 0.6px;
 }
 
 .field { margin-bottom: 14px; }
