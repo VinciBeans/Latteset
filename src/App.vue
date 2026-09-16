@@ -22,6 +22,7 @@ import { subscribeEvents } from "./services/events";
 import { useTheme } from "./composables/useTheme";
 import SettingsPanel from "./components/SettingsPanel.vue";
 import RootFilePicker from "./components/RootFilePicker.vue";
+import SnippetPreview from "./components/SnippetPreview.vue";
 import type { ProjectInfo } from "./bindings";
 
 const project = useProjectStore();
@@ -274,6 +275,10 @@ const settingsOpen = ref(false);
     </div>
 
     <StatusBar :cursor-line="cursorLine" :cursor-col="cursorCol" @pick-root="openRootPicker" />
+
+    <!-- 片段预览（草稿层真实排版实验 (A)）：悬浮卡，自守"编译中不调"与"只用来看一眼"两条约定。
+         可回滚：删掉这一行 + 组件即回退，不触碰预览面板的渲染契约。 -->
+    <SnippetPreview />
 
     <SettingsPanel v-if="settingsOpen" @close="settingsOpen = false" />
 

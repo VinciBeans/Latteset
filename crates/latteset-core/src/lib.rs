@@ -9,6 +9,7 @@ pub mod outline;
 pub mod project;
 pub mod scheduler;
 pub mod settings;
+pub mod snippet;
 pub mod synctex;
 pub mod types;
 pub mod xdv;

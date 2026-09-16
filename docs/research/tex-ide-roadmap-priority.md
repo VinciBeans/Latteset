@@ -384,7 +384,8 @@
 | ㉖ latexmkrc 交互 | 本文件 §6.1 + troubleshooting.md「`\include{子目录/文件}` + `-output-directory`」 |
 | ⑪ 预览状态保持 | design.md §预览 + 本文件 §5.7（页哈希差分候选）+ [incremental-edit-x-dvi.md](./incremental-edit-x-dvi.md)（判定输入已就位：差分 ⟷ SyncTeX 对拍 + "0 页变化"实测） |
 | DVI/XDV 预览（**否决**） | [dvi-preview-feasibility.md](./dvi-preview-feasibility.md) |
-| ㉞ 流式出图（**已立项**） | 本文件 §6.6 + [dvi-preview-feasibility.md](./dvi-preview-feasibility.md) §10（重评与实测）+ `scripts/xdv-partial.mjs`（合成器，本轮入库）+ modules.md §2.7 / 已知债 #21 |
+| ㉞ 流式出图（**已落地**） | 本文件 §6.6 + [dvi-preview-feasibility.md](./dvi-preview-feasibility.md) §10（重评与实测）+ `scripts/xdv-partial.mjs`（合成器，本轮入库）+ modules.md §2.7 / 已知债 #21 |
+| **片段预览（草稿层的真实排版，(A) 实验，可回滚）** | [snippet-preview.md](./snippet-preview.md)（成本实测：片段 ~0.2 s vs 全篇 1.7 s；真机抓到的三个 bug；边界与回滚清单）+ modules.md §8 `compile_snippet` / §9.4 `SnippetPreview.vue` |
 | G2 字节偏移重同步（**索引吸收**） | [g2-byte-offset-resync.md](./g2-byte-offset-resync.md) + `scripts/xdv-report.mjs` |
 | G1 拦截每一次读（**降级为依赖记录**） | [g1-read-interception-feasibility.md](./g1-read-interception-feasibility.md) + `scripts/fls-report.mjs`（`.fls` / `.fdb_latexmk` 依赖报告） |
 | 上游阶段 2（子进程/流式/时间片） | [stage2-streaming-feasibility.md](./stage2-streaming-feasibility.md)（进度三通道 + 部分 PDF 实测 + UI 不卡对照） |

@@ -174,6 +174,8 @@ fn build_specta_builder() -> tauri_specta::Builder<tauri::Wry> {
             commands::lib_form_available,
             commands::engine_form,
             commands::set_window_theme,
+            // 片段预览（草稿层真实排版实验 (A)）：独立项目根编译，不经调度器
+            commands::compile_snippet,
         ])
         .events(tauri_specta::collect_events![
             CompileStatusEvent,

@@ -24,6 +24,13 @@ export const ipc = {
     unwrap(commands.getOutline(buffers, files, openPaths)),
   compileNow: () => unwrap(commands.compileNow()),
   abortCompile: () => unwrap(commands.abortCompile()),
+  /**
+   * **片段预览**（草稿层真实排版实验 (A)）：把当前改动所在的段落单独编译成一份小 PDF。
+   *
+   * 契约：调用方必须自己守两条（见 `SnippetPreview.vue`）——① 编译中不调（引擎是**进程内**
+   * 全局锁，会把主编译顶住）；② 结果只用于"看一眼"，不得写进当前文档/页哈希/权威产物。
+   */
+  compileSnippet: (snippet: string) => unwrap(commands.compileSnippet(snippet)),
   synctexForward: (file: string, line: number, column: number) =>
     unwrap(commands.synctexForward(file, line, column)),
   synctexInverse: (page: number, x: number, y: number) =>

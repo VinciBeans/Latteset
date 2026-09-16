@@ -9,7 +9,7 @@ use latteset_infra::storage::SettingsStorage;
 use serde::Serialize;
 use specta::Type;
 use std::path::{Path, PathBuf};
-use tauri::State;
+use tauri::{Manager, State};
 use latteset_core::compose::compile_request_manual;
 use latteset_core::project::{
     is_tex_file, resolve_creatable_in_project, resolve_in_project, resolve_project_root, PathError,
@@ -359,6 +359,101 @@ pub async fn abort_compile(state: State<'_, AppState>) -> Result<(), CmdError> {
     state.scheduler.abort();
     Ok(())
 }
+
+/// 片段预览的结果（草稿层真实排版实验 (A)，`docs/research/snippet-preview.md`）。
+#[derive(Debug, Clone, Serialize, Type)]
+pub struct SnippetPreviewDto {
+    /// 片段 PDF 的绝对路径（`<项目>/tmp/snippet/main.pdf`）。
+    pub path: String,
+    /// 这次片段编译的墙钟（含装配与落盘）。
+    ///
+    /// `u32`：specta 禁止把 `u64`/`usize` 导出成 TS（BigInt 精度），而毫秒数用 `u32` 足够。
+    pub elapsed_ms: u32,
+}
+
+/// **片段预览**：把「项目导言区 + 片段」装成一份独立小文档，编译成一份小 PDF 交给前端。
+///
+/// 为什么走**独立项目根**（`<项目>/tmp/snippet/`）而不是给 runner 加输出覆盖：这样它自然就是
+/// "另一个项目"——产物落 `tmp/snippet/main.pdf`、中间产物落 `tmp/snippet/tmp/`，既不碰权威
+/// `<stem>.pdf`，也不碰主编译的 `tmp/`（那是上一轮实测出的坑：草稿编译会把权威 PDF 覆盖掉）。
+/// `tmp/` 在监视器与文件树的忽略清单里 ⇒ 不会反过来触发编译。
+///
+/// **不经过调度器**：调度器会在完成时发 `compile-status` / `pdf-updated`，那份中间产物一旦冒充
+/// 权威产物，页哈希基线、A 闸门与「引用待更新」语义都会被污染。所以这里直接调 runner，
+/// 并把进度出口换成 no-op（片段的页数与错误不该出现在状态栏与错误列表里）。
+///
+/// 调用方的两条约定（前端已守）：① **编译中不调**（引擎是进程内全局锁，会把主编译顶住）；
+/// ② 结果只用于"看一眼"，**不得**写进当前文档/页哈希/权威产物。
+#[tauri::command]
+#[specta::specta]
+pub async fn compile_snippet(
+    snippet: String,
+    state: State<'_, AppState>,
+) -> Result<SnippetPreviewDto, CmdError> {
+    use latteset_core::scheduler::{CompileRunner, NoProgress};
+    use latteset_core::types::{CompileKind, CompileOutcome};
+
+    let project = state
+        .project
+        .read()
+        .await
+        .clone()
+        .ok_or_else(|| CmdError::Invalid("尚未打开项目".into()))?;
+    let root_file = project
+        .root_file
+        .clone()
+        .ok_or_else(|| CmdError::Invalid("未确定根文件，无法做片段预览".into()))?;
+    let source = state.fs.read_to_string(&root_file).await?;
+    let doc = latteset_core::snippet::build_snippet_document(&source, &project.root, &snippet)
+        .map_err(|e| CmdError::Invalid(e.to_string()))?;
+
+    // 独立项目根：每次**清空重建**（片段之间不该共享 aux —— 上一段的 `\label` 会串到这一段）。
+    let dir = project.root.join("tmp").join("snippet");
+    if dir.exists() {
+        std::fs::remove_dir_all(&dir).map_err(CmdError::from)?;
+    }
+    std::fs::create_dir_all(&dir).map_err(CmdError::from)?;
+    let entry = dir.join("main.tex");
+    std::fs::write(&entry, doc).map_err(CmdError::from)?;
+
+    let settings = state.settings.read().await.clone();
+    let runner = crate::runner_switch::SwitchableRunner::new(
+        state.fs.clone(),
+        Arc::new(NoProgress),
+        state.settings.clone(),
+        state.app.path().app_cache_dir().ok(),
+    );
+    let req = latteset_core::types::CompileRequest {
+        root_file: entry,
+        project_root: dir,
+        engine: settings.compile.engine,
+        // 片段应当秒级完成；给一个短上限，卡住就放弃而不是拖住编辑器。
+        timeout: std::time::Duration::from_secs(30),
+        kind: CompileKind::Quick,
+    };
+    let t0 = std::time::Instant::now();
+    let outcome = runner.compile(req, tokio_util::sync::CancellationToken::new()).await;
+    let elapsed_ms = t0.elapsed().as_millis().min(u32::MAX as u128) as u32;
+    match outcome {
+        CompileOutcome::Success { pdf_path, .. } => Ok(SnippetPreviewDto {
+            path: pdf_path.to_string_lossy().into_owned(),
+            elapsed_ms,
+        }),
+        // 片段单独编译失败是**常见**情形（宏定义在正文里、缺 `\cite` 的 aux、`\input` 了正文
+        // 才定义的东西）——如实报第一条错误，前端显示成一句小提示，不要装作有预览。
+        CompileOutcome::ContentError { errors, .. } => Err(CmdError::Invalid(format!(
+            "片段无法单独编译：{}",
+            errors
+                .first()
+                .map(|e| e.message.clone())
+                .unwrap_or_else(|| "未知错误".into())
+        ))),
+        other => Err(CmdError::Invalid(format!(
+            "片段预览未产出 PDF（{other:?}）"
+        ))),
+    }
+}
+
 
 /// 本次构建是否编入了 Tectonic **库形态**（`tectonic-lib` 特性）。
 ///
