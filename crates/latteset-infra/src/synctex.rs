@@ -76,7 +76,7 @@ where
 impl SyncTexProvider for SyncTexCli {
     async fn forward(&self, src: &SourcePosition, pdf: &Path) -> Result<SyncTexPosition, SyncTexError> {
         with_retry(&RETRY_BACKOFF, || async {
-            let out = tokio::process::Command::new("synctex")
+            let out = crate::proc::command("synctex")
                 .arg("view")
                 .arg("-i")
                 .arg(format!("{}:{}:{}", src.line, src.column, src.file.display()))
@@ -102,7 +102,7 @@ impl SyncTexProvider for SyncTexCli {
 
     async fn inverse(&self, pos: &SyncTexPosition, pdf: &Path) -> Result<SourcePosition, SyncTexError> {
         with_retry(&RETRY_BACKOFF, || async {
-            let out = tokio::process::Command::new("synctex")
+            let out = crate::proc::command("synctex")
                 .arg("edit")
                 .arg("-o")
                 .arg(format!("{}:{}:{}:{}", pos.page, pos.x, pos.y, pdf.display()))

@@ -267,7 +267,7 @@ fn compile_command(req: &CompileRequest, kind: CompileKind, bundle: BundlePolicy
             if req.engine == latteset_core::types::Engine::Tectonic {
                 tectonic_command(req, true, bundle)
             } else {
-                let mut c = tokio::process::Command::new(req.engine.binary_name());
+                let mut c = crate::proc::command(req.engine.binary_name());
                 // `-no-pdf`（2026-09，功能点 A）**只对 XeTeX 成立**：直调引擎只产 XDV，PDF 改由收尾时
                 // 按需调 `xdvipdfmx` 转换（"页哈希逐页相同"就整个跳过转换，省 0.65–1.4s/次，见 §已知债 #25）。
                 // 换别的引擎加这个参数只会坏事——实测（2026-09）：pdflatex 报 `unrecognized option
@@ -287,7 +287,7 @@ fn compile_command(req: &CompileRequest, kind: CompileKind, bundle: BundlePolicy
             if req.engine == latteset_core::types::Engine::Tectonic {
                 tectonic_command(req, false, bundle)
             } else {
-                let mut c = tokio::process::Command::new("latexmk");
+                let mut c = crate::proc::command("latexmk");
                 c.arg(req.engine.latexmk_flag())
                     .arg(format!("-outdir={OUT_DIR}"))
                     .arg("-synctex=1")
@@ -336,7 +336,7 @@ fn compile_command(req: &CompileRequest, kind: CompileKind, bundle: BundlePolicy
 ///   两趟 1057 ms（单趟 657、收敛 1495），Quick 仍明显快于 Full；
 /// - `-o tmp`：产物目录与其它引擎一致（`tmp/<stem>.pdf`）。
 fn tectonic_command(req: &CompileRequest, quick: bool, bundle: BundlePolicy) -> tokio::process::Command {
-    let mut c = tokio::process::Command::new(req.engine.binary_name());
+    let mut c = crate::proc::command(req.engine.binary_name());
     if bundle == BundlePolicy::CachedOnly {
         c.arg("-C");
     }
@@ -647,7 +647,7 @@ impl LatexmkRunner {
     async fn convert_xdv(&self, tmp_dir: &Path, stem: &str, project_root: &Path) -> Result<(), String> {
         let xdv = tmp_dir.join(format!("{stem}.xdv"));
         let pdf = tmp_dir.join(format!("{stem}.pdf"));
-        let out = tokio::process::Command::new("xdvipdfmx")
+        let out = crate::proc::command("xdvipdfmx")
             .arg("-q")
             .arg("-o")
             .arg(&pdf)
@@ -811,7 +811,7 @@ fn kill_tree(pid: u32) {
     tokio::task::spawn_blocking(move || {
         #[cfg(target_os = "windows")]
         {
-            let _ = std::process::Command::new("taskkill")
+            let _ = crate::proc::command_std("taskkill")
                 .args(["/T", "/F", "/PID", &pid.to_string()])
                 .status();
         }

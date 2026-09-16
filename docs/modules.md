@@ -212,13 +212,20 @@ pub enum FailureKind { Timeout, ContentError, Aborted }
 
 ### 2.6 LatexmkRunner 实现（latteset-infra）
 
+> **起进程一律走 `latteset_infra::proc::command` / `command_std`**（2026-09-16）：它们在 Windows 上给
+> 子进程加 `CREATE_NO_WINDOW`。原因：GUI 是 `windows_subsystem = "windows"`（**没有控制台**），而
+> Windows 默认会给控制台子程序**新建一个**控制台窗口 —— 表现就是 **release 档每次编译弹一个黑框**
+> （debug 档父进程自带控制台、子进程继承它，所以看不见）。它只影响"要不要分配控制台"，不影响 I/O：
+> stdout/stderr 仍走管道 ⇒ 日志解析、退出码、页哈希、树杀都不变。**别在别处直接 `Command::new`**
+> （漏一处就漏一个黑框）；复现/验证用 `examples/console-window-probe.rs`（见 troubleshooting.md）。
+
 ```rust
 pub struct LatexmkRunner { fs: Arc<dyn FileSystem>, progress: Arc<dyn CompileProgress> }
 
 impl CompileRunner for LatexmkRunner {
     async fn compile(&self, req: CompileRequest, cancel: CancellationToken) -> CompileOutcome {
         // 1. 构造命令（算法见下）
-        // 2. tokio::process::Command::new("latexmk").current_dir(&req.project_root)
+        // 2. latteset_infra::proc::command("latexmk").current_dir(&req.project_root)
         //    .args([...]).stdout(Stdio::piped()).stderr(Stdio::piped()).kill_on_drop(true).spawn()
         // 2b. 三条读任务喂同一个 LiveFeedback：子进程 stdout、stderr、tmp/<stem>.log 尾随（见 §2.6.1）
         // 3. tokio::select! {

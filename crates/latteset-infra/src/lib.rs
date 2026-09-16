@@ -17,6 +17,7 @@
 //! tectonic（Tectonic 的 bundle 获取策略与缓存判定）。
 
 pub mod fs;
+pub mod proc;
 pub mod runner;
 pub mod storage;
 pub mod synctex;

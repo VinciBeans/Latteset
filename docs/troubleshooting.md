@@ -376,6 +376,76 @@ DEBUG 编译失败：已从 .log 解析出错误条目 count=9 log=…\tmp\主�
 - **已知未修**：**编辑** GBK 源文件（`read_file` 严格 UTF-8）会失败并返回英文 IO 错误。若要支持"打开并转码显示 GBK 源文件"，需单独设计（含保存时的编码回写策略）。
 - 本机 `cargo test -p latteset`（src-tauri）无法运行（见上一节），故 src-tauri 侧的中文用例只能以 `cargo check -p latteset --tests` 编译校验；随 ADR-0010 迁移后，`fs` / `runner` / `storage` 的中文用例已在 `latteset-infra` 下实际运行通过（含 2 个需 latexmk 的 `#[ignore]` 集成用例）。
 
+## release 档「点编译弹出一个终端黑框」（2026-09-16 修）
+
+**症状**：装出来的包（release）里点「编译」会弹一个控制台黑框；`npm run tauri dev` 下**完全看不到**。
+
+**原因**：`src-tauri/src/main.rs` 带 `#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]`
+—— release 档是 **GUI 子系统、没有控制台**，而 Windows 默认会给"控制台子程序"**新建一个**控制台窗口
+（`latexmk` / `xelatex` / `tectonic.exe` / `xdvipdfmx` / `taskkill` / `synctex` 全是控制台程序）。
+debug 档父进程本身就是控制台程序（从终端起），子进程直接**继承**它的控制台 ⇒ 同一个 bug 被藏住，
+这也是它只在 release 暴露的原因。
+
+**修法**：`latteset_infra::proc::command` / `command_std`（Windows 上加 `CREATE_NO_WINDOW`），
+**所有生产路径**改走它们（引擎 / latexmk / xdvipdfmx / taskkill / synctex）。它只影响"要不要分配
+控制台"，stdout/stderr 仍是管道 ⇒ 日志解析、退出码、页哈希、树杀都不变。**别在别处直接
+`Command::new`** —— 漏一处就漏一个黑框。
+
+**复现/验证**（不必先打 release 包，用探针模拟"没有控制台的父进程"）：
+
+```powershell
+cargo build --release -p latteset-infra --example console-window-probe
+$probe = "src-tauri\target\release\examples\console_window_probe.exe"
+
+# ⚠ 量具必须是**可见窗口数**，不是 conhost 进程数（见下）
+Add-Type @"
+using System;using System.Text;using System.Collections.Generic;using System.Runtime.InteropServices;
+public class WinProbe {
+  delegate bool EnumProc(IntPtr h, IntPtr l);
+  [DllImport("user32.dll")] static extern bool EnumWindows(EnumProc cb, IntPtr l);
+  [DllImport("user32.dll")] static extern int GetClassName(IntPtr h, StringBuilder sb, int n);
+  [DllImport("user32.dll")] static extern bool IsWindowVisible(IntPtr h);
+  public static List<string> VisibleConsoles() {
+    var res = new List<string>();
+    EnumWindows((h, l) => {
+      if (!IsWindowVisible(h)) return true;
+      var sb = new StringBuilder(256); GetClassName(h, sb, 256);
+      var c = sb.ToString();
+      if (c == "ConsoleWindowClass" || c == "CASCADIA_HOSTING_WINDOW_CLASS") res.Add(c);
+      return true;
+    }, IntPtr.Zero);
+    return res;
+  }
+}
+"@
+
+foreach ($mode in 'plain','quiet-std','quiet-tokio') {   # 建议再加一个 'none' 当噪声对照
+  Start-Sleep -Seconds 4
+  $before = [WinProbe]::VisibleConsoles().Count; $max = $before
+  $p = Start-Process $probe -ArgumentList $mode -PassThru     # ⚠ 不能加 -NoNewWindow
+  for ($i = 0; $i -lt 14; $i++) { Start-Sleep -Milliseconds 250; $c = [WinProbe]::VisibleConsoles().Count; if ($c -gt $max) { $max = $c } }
+  $p.WaitForExit(); "$mode 可见控制台窗口增量 = $($max - $before)"
+}
+```
+
+实测（本机，release 版探针，每档 4 轮）：`none`（对照）= **0**；`plain` = **+1 可见窗口**；
+`quiet-std` / `quiet-tokio`（产品路径）= **0** ✓。
+
+⚠ 两个量具坑（第一版就量错过，别重蹈）：
+1. **别拿 `conhost` 进程数当判据**：`CREATE_NO_WINDOW` 的语义是"**分配控制台但不给窗口**"，所以进程数
+   仍会 **+1**，但那是个不可见宿主、用户什么也看不到 —— 判据只能是**可见窗口**（上面那段 EnumWindows）。
+2. **别把正在退出的进程算进基线**：`ping` 子进程活 3 秒，两档之间不睡够就会把上一档的残余算进 `before`，
+   `max` 因此偏低（第一版 debug 探针就这样得出过假的"quiet=0"）。每档之间 `Start-Sleep 4`，
+   并且**加一个 `none` 对照档**量背景噪声。
+
+⚠ **探针必须以 `Start-Process`（不加 `-NoNewWindow`）启动**：那样它自己没有控制台、才等价于 GUI 父进程；
+用 `-NoNewWindow` 会继承当前终端的控制台，把问题又藏起来（探针是 `windows_subsystem = "windows"`，
+所以它的输出要用外部计数看，别指望 stdout）。
+
+⚠ **别拿裸 `cargo build --release` 出的 exe 当"release 版"验证**：那样打出来的应用**没有内嵌前端资源**
+（正规路径是 `npx tauri build`，它先跑 `beforeBuildCommand` 再嵌 `dist/`），启动后是个空白窗口、
+不打开项目、也不编译 —— 用它会得出"编译没触发"的假结论（本次就绕了这一圈）。
+
 ## `\include{子目录/文件}` + `-output-directory`：中间目录里必须先有同名子目录
 
 **现象**：真实学位论文模板 `thesis-real-hithesis`（TeX Live 自带样例，已复制进 bench fixture）用产品完全相同的命令冷编译，跑约 **4 分钟**后在主文件第 106 行报错：
