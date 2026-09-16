@@ -141,7 +141,7 @@ pub struct NoProgress;                          // 全空实现（headless / 测
 契约两条，改坏即出错：
 
 - **非权威**：终态一律以 `CompileOutcome` 为准，UI 只在运行中采纳中间态；
-- **中间态可能晚于终态抵达**：runner 收尾时仍要置 stop 并 join 尾随任务（有 600ms 上限），那次补发照样回调。故中间态**必须走独立事件**（`compile-progress` / `compile-errors`），前端配 `phase === "running"` 守卫——复用终态事件名会让晚到的中间态顶掉权威列表（真机实测：超时诊断 1 条被 30 条中间态覆盖后才发现的）。
+- **中间态可能晚于终态抵达**：runner 收尾时仍要置 stop 并 join 尾随任务（有 600ms 上限），那次补发照样回调。故中间态**必须走独立事件**（`compile-progress` / `compile-errors` / `compile-preview`），前端配 `phase === "running"` 守卫——复用终态事件名会让晚到的中间态顶掉权威列表（真机实测：超时诊断 1 条被 30 条中间态覆盖后才发现的）。
 
 ### 2.5 scheduler.rs — actor 主循环（core）
 
@@ -317,7 +317,7 @@ LiveFeedback::feed(text, force_parse)：
 | `tmp/` 是合法输入（上一趟的中间产物） | `disk_path` 的顺序是 **项目源文件 → 上一趟的 `tmp/` 副本 → bundle**，但第二档**只放行 `RERUN_EXTENSIONS` 那几类**（`.pdf`/`.xdv` 明确排除，否则 `\includegraphics{main.pdf}` 会读到我们自己的产物）。依据：latexmk 正是靠它让 Quick 档的目录/引用**不倒退**——少了这一条实测两个症状：Full 出来的参考文献表在下一次 Quick 里消失；每次编译中间产物都从零开始 ⇒ 永远要 2 趟。编译开始时还会把这些副本**预热进内存层**（`seed_previous_intermediates`），重跑判据才有"上一趟"可比较。⚠ 预热**必须递归**且键用**正斜杠**：`\include` 分章时 `chapters/chNN.aux` 在子目录里，只扫 `tmp/` 顶层会让它们每趟都算"新出现" ⇒ 多文件档永远收敛不了（实测 28 页 8 章档：不递归每轮必跑 2 趟 `engine_total_ms≈1104`；递归后 1 趟 `≈646`） |
 | 失败面 | 先 `parse_log` + `diagnose` 出结构化 `ContentError`；`.log` 为空时给 `IoError`，附「I/O 层输入请求摘要（缺哪些文件）+ 引擎状态尾部」；Cancel/超时走**协作式**：置位后每个 I/O 入口立刻报错，引擎在下一个回调处中止（库形态没有进程可树杀） |
 | 分阶段计时 | 每次成功编译 `info!` 一行「库形态分阶段耗时」：`format_ms` / `typeset_ms` / `convert_ms` + 输入请求分类计数（`req_ram/mem/disk/bundle/miss`）——这是 P2/P4 的一手证据，也是"慢在哪一趟"的定位入口。⚠ 口径：`typeset_ms` **只含第 1 趟**（`phase_ms.1` 在第 1 趟末打点），`convert_ms` = 第 2 趟起 + 中间产物收尾 + 最终转换 ⇒ 别把它当"一次转换的耗时"读 |
-| **流式出图**（roadmap ㉞，切片 2） | 编译期把**已完成页**缝成部分 PDF（`tmp/<stem>.preview.pdf`，原子替换）交预览。**只能在趟边界出图**：`tectonic_bridge_core::CoreBridgeLauncher::with_global_lock` 用 `static ENGINE_LOCK` 把**整个 C 引擎调用**串起来（上游理由：C 侧 `setjmp/longjmp` 跨 FFI 是 UB）⇒ 同进程内排版趟与转换**不可能并行**（探测：`crates/latteset-tectonic/examples/engine-lock-probe.rs`，4 线程并发墙钟 533 ms == 单线程跑 4 次 541 ms）。实现：重跑循环**末尾**（两个 `break` 之后 = 确定还会再跑一趟）同步调 `PartialPainter::paint`，闸门 = 第 1 趟 ≥500 ms ∧ 页数有涨 ∧ 总次数 ≤8 ∧ 未取消。`bench/large` 冷编实测：1.72 s 出 121 页（转换 130 ms）、4.2 s 出 125 页（175 ms）、权威 PDF 7.4 s ⇒ 提前 ≈5.5 s 可见，代价 +326 ms（+4.4%）。⚠ 中间态**不得**喂页哈希缓存 / A 闸门 / `pdf-updated`（事件与前端表现属切片 3，尚未接线）；Tectonic **子进程档不落 XDV ⇒ 该档没有这条能力**（须如实显示"不可用"，不得静默不生效） |
+| **流式出图**（roadmap ㉞，切片 2） | 编译期把**已完成页**缝成部分 PDF（`tmp/<stem>.preview.pdf`，原子替换）交预览。**只能在趟边界出图**：`tectonic_bridge_core::CoreBridgeLauncher::with_global_lock` 用 `static ENGINE_LOCK` 把**整个 C 引擎调用**串起来（上游理由：C 侧 `setjmp/longjmp` 跨 FFI 是 UB）⇒ 同进程内排版趟与转换**不可能并行**（探测：`crates/latteset-tectonic/examples/engine-lock-probe.rs`，4 线程并发墙钟 533 ms == 单线程跑 4 次 541 ms）。实现：重跑循环**末尾**（两个 `break` 之后 = 确定还会再跑一趟）同步调 `PartialPainter::paint`，闸门 = 第 1 趟 ≥500 ms ∧ 页数有涨 ∧ 总次数 ≤8 ∧ 未取消。`bench/large` 冷编实测：1.72 s 出 121 页（转换 130 ms）、4.2 s 出 125 页（175 ms）、权威 PDF 7.4 s ⇒ 提前 ≈5.5 s 可见，代价 +326 ms（+4.4%）。⚠ 中间态**不得**喂页哈希缓存 / A 闸门 / `pdf-updated`；Tectonic **子进程档不落 XDV ⇒ 该档没有这条能力**（须如实显示"不可用"，不得静默不生效）。**事件已接线**（`compile-preview`，切片 3 已真机验证：中间态严格早于权威 `pdf-updated`、`pages` 单调、权威事件未被污染）；前端「编译中预览」的表现属切片 4 |
 | ADR-0010 例外 | `IoProvider` 是**同步** trait（`io_base/src/lib.rs:433-533`）而 core 的 `FileSystem` 是 async（`project/fs.rs:15-16`）⇒ 本层的磁盘读写只能在 `spawn_blocking` 里用 `std::fs`（只碰 `project_root` 与 `tmp/`）。这是 X-5 登记的"第二落点"，**与方案 §4.1 写的"代理到 core FileSystem"有出入**（技术上前者不可达），已记入 t21 的交付说明 |
 | 复核入口 | **P2/P3 主入口**：建 CLI（见方案 §6.1 的完整环境前置）→ `latteset-cli --project <dir> compile` → `node scripts/validate-pdf.mjs --pdf <out.pdf> --expect-pages N --expect-text <子串>`；另有 `cargo check -p latteset-tectonic`、`node scripts/tectonic-lib-xdvscan.mjs --pages-xdv <main.xdv> --chunk 16384`、`node scripts/bench-tectonic-lib.mjs --runs 3 --mode fresh\|resident` |
 | 当前状态（2026-09-15，t10/t11 收口 + bib/收敛补齐） | **已能真编出 PDF 并解析引用**：中文夹具 1 页 7590 B；带 `\cite` 的夹具（`ctexart` + `refs.bib`）→ 引用渲染成 `[1]`、参考文献表印出（PDF 文本层含 `Knuth`/`The TeXbook`），`node scripts/validate-pdf.mjs` 全过。release 实测（同目录 bundle、热 format）：`zh-min` 冷 2 趟 **616 ms** / 已收敛 1 趟 **358 ms**；`cite` 冷 3 趟 **954 ms** / 热 2 趟 **679 ms** / Quick 1 趟 **405 ms** —— 对照子进程 `tectonic.exe`（收敛档）同夹具 **571 / 869 ms**，**同速**；已收敛文档因为跳过无用趟而更快。仍未支持：biber/makeindex/glossaries（外部工具）、常驻（P4 闸门已判不成立） |
@@ -870,6 +870,11 @@ errors-updated: ErrorEntry[]                       // 失败时携带；编译�
 compile-progress: { pages: number }                // **中间态**（阶段 2）：编译中已排版页数，只升不降；仅 running 时采纳
 compile-errors:  ErrorEntry[]                      // **中间态**（阶段 2）：编译中解析到的致命错误（不含 Overfull 等警告）；仅 running 时采纳
                                                    // 中间态与终态**刻意分开**：收尾补发可能晚于终态抵达，共用事件名会顶掉权威列表（§2.6.1）
+compile-preview: { path: string, pages: number }   // **中间态**（roadmap ㉞ 流式出图，切片 3，2026-09-16）：编译中把**已完成页**缝成的部分 PDF
+                                                   // path 恒为 tmp/<stem>.preview.pdf（同一路径被**原子替换**成新内容）；pages 只增不减 ⇒ 拿它丢弃晚到的旧帧
+                                                   // 只有**库形态**会发（子进程档没有 XDV 可合成 ⇒ 能力位如实显示"不可用"）；真机时间线：
+                                                   //   status(running) → preview 121 页 → preview 125 页 → pdf-updated(125 页) → status(success)
+                                                   // ⚠ 它不是权威产物，也**不是**"当前文档"：路径与权威 PDF 不同，按"换文档"处理会重建 DOM、丢滚动位置
 pdf-updated:    { path: string, changed_pages: number[], pages: number }
                                                    // 页级差异（2026-09，incremental-edit-x-dvi.md 的 B/C）：
                                                    //   pages>0 且 changed_pages 空 → 逐页未变 → 前端**跳过重载**；

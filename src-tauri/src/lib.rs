@@ -6,9 +6,9 @@ mod runner_switch;
 
 use commands::AppState;
 use events::{
-    build_emitter, CompileErrorsEvent, CompileProgressEvent, CompileStatusEvent,
-    ErrorsUpdatedEvent, FilesChangedEvent, PdfUpdatedEvent, SettingsChangedEvent, TauriProgress,
-    TauriSink,
+    build_emitter, CompileErrorsEvent, CompilePreviewEvent, CompileProgressEvent,
+    CompileStatusEvent, ErrorsUpdatedEvent, FilesChangedEvent, PdfUpdatedEvent,
+    SettingsChangedEvent, TauriProgress, TauriSink,
 };
 use std::sync::Arc;
 use tauri::Manager;
@@ -179,6 +179,8 @@ fn build_specta_builder() -> tauri_specta::Builder<tauri::Wry> {
             CompileStatusEvent,
             CompileProgressEvent,
             CompileErrorsEvent,
+            // 编译中的部分 PDF（roadmap ㉞）：与 pdf-updated 分开，中间态不顶权威终态
+            CompilePreviewEvent,
             ErrorsUpdatedEvent,
             PdfUpdatedEvent,
             FilesChangedEvent,

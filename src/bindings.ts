@@ -76,6 +76,7 @@ export const commands = {
 /** Events */
 export const events = {
 	compileErrors: makeEvent<CompileErrorsEvent>("compile-errors"),
+	compilePreview: makeEvent<CompilePreviewEvent>("compile-preview"),
 	compileProgress: makeEvent<CompileProgressEvent>("compile-progress"),
 	compileStatus: makeEvent<CompileStatusEvent>("compile-status"),
 	errorsUpdated: makeEvent<ErrorsUpdatedEvent>("errors-updated"),
@@ -105,6 +106,33 @@ export type CompileMode = "continuous" | "on_save";
 
 /**  编译阶段（modules.md §2.5 事件契约）。 */
 export type CompilePhase = "queued" | "running" | "success" | "failed";
+
+/**  部分 PDF 载荷（**非权威**中间态）。 */
+export type CompilePreviewDto = {
+	/**  部分 PDF 的绝对路径：`tmp/<stem>.preview.pdf`（同一路径会被**原子替换**成更新的内容）。 */
+	path: string,
+	/**  该文件包含的页数（= 已完成页数；只增不减）。 */
+	pages: number,
+};
+
+/**
+ *  编译**进行中**的「部分 PDF」（roadmap ㉞ 流式出图）：把已完成页缝成一份可预览的 PDF。
+ * 
+ *  与 [`PdfUpdatedEvent`] **刻意分成两个事件**（理由与 [`CompileErrorsEvent`] 同款）：后者是
+ *  **权威终态**（`CompileOutcome::Success` 那一份），前者是中间态；中间态一旦晚于终态抵达，
+ *  共用事件名就会把权威结果顶掉。
+ * 
+ *  消费方（前端）三条约束：
+ *  - 只在"编译中"接受它（`compile-status` 的终态一到就不再理会——正确性只由终态 PDF 表达）；
+ *  - `path` 与权威 PDF **不是同一个文件**（`tmp/` 下的部分产物，页数与内容随后续趟增长）
+ *    ⇒ 不得把它写进"当前文档"的权威槽位，也不该让它按"换文档"处理（同一次编译里它会被
+ *    原子替换成新内容，路径不变）；
+ *  - `pages` **只增不减**（出图闸门要求页数有涨才发）⇒ 用它丢弃晚到的旧帧。
+ * 
+ *  只有**库形态**会发这个事件：子进程档不落 XDV、无从合成（能力位如实显示"不可用"，
+ *  不静默不生效）。
+ */
+export type CompilePreviewEvent = CompilePreviewDto;
 
 /**  进度载荷（**非权威**中间态；前端只在"排版中"时展示）。 */
 export type CompileProgressDto = {
