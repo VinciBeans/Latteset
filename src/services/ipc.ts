@@ -12,8 +12,28 @@ async function unwrap<T>(r: Result<T>): Promise<T> {
   return res.data;
 }
 
+/**
+ * UTF-16 码元偏移 → UTF-8 字节偏移（公式预览用；见 `compileMath` 的口径说明）。
+ *
+ * 用 `TextEncoder` 把光标之前的那一段按 UTF-8 编一遍取长度 —— 452 KB 的文档约几毫秒，
+ * 相对一次片段编译（170 ms 起）可以忽略。
+ */
+function utf16ToByteOffset(text: string, utf16Offset: number): number {
+  const clamped = Math.max(0, Math.min(utf16Offset, text.length));
+  return new TextEncoder().encode(text.slice(0, clamped)).length;
+}
+
 export const ipc = {
   openProject: (folder: string) => unwrap(commands.openProject(folder)),
+  /**
+   * 公式预览（roadmap ㊸ 切片 3）：把光标所在的公式单独编译成单页 PDF。
+   *
+   * ⚠ **偏移口径**：Monaco 给的是 **UTF-16 码元**偏移，而后端 `math_at` 按 **UTF-8 字节**偏移解释；
+   * 一个汉字是 1 个码元 / 3 个字节 ⇒ 公式**前面**有中文时两者不等（中文文档里必然发生）。
+   * 所以在这里统一换算，调用方只管把 `model.getOffsetAt(position)` 原样传进来。
+   */
+  compileMath: (text: string, utf16Offset: number) =>
+    unwrap(commands.compileMath(text, utf16ToByteOffset(text, utf16Offset))),
   getProject: () => unwrap(commands.getProject()),
   listDir: (path: string) => unwrap(commands.listDir(path)),
   readFile: (path: string) => unwrap(commands.readFile(path)),

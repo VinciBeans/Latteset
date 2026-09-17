@@ -174,6 +174,7 @@ fn build_specta_builder() -> tauri_specta::Builder<tauri::Wry> {
             commands::lib_form_available,
             commands::engine_form,
             commands::set_window_theme,
+            commands::compile_math,
         ])
         .events(tauri_specta::collect_events![
             CompileStatusEvent,

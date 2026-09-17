@@ -71,6 +71,14 @@ export const commands = {
 	 *  只靠这条命令会先闪一条白标题栏。
 	 */
 	setWindowTheme: (theme: UiTheme) => typedError<null, CmdError>(__TAURI_INVOKE("set_window_theme", { theme })),
+	/**
+	 *  公式预览（roadmap ㊸ 切片 3）：把**光标所在的那一个公式**连项目导言区单独编译成单页 PDF。
+	 * 
+	 *  隔离（硬要求）：落点 `<项目>/tmp/snippet/<键>/`，**独立 project_root**、**不经调度器**
+	 *  （不产出 `compile-status`/`pdf-updated`，也不碰权威 `<stem>.pdf` 与主编译的 `tmp/main.*`）。
+	 *  形态：**Tectonic 专属**（ADR-0014）；非 Tectonic 形态下这条命令仍可用，但按 ADR 不做优化适配。
+	 */
+	compileMath: (text: string, offset: number) => typedError<MathPreviewDto, CmdError>(__TAURI_INVOKE("compile_math", { text, offset })),
 };
 
 /** Events */
@@ -323,6 +331,29 @@ export type InverseResultDto = {
 	source: SourcePositionDto | null,
 	/**  给用户看的一句话（失败原因 / 回落说明）；`None` = 正常直连，无需提示。 */
 	note: string | null,
+};
+
+/**
+ *  公式预览的结果（roadmap ㊸ 切片 3）。`hit=false` = 光标不在公式里 ⇒ 前端**不显示**浮层
+ *  （这是最常见的情况，不该当成错误）。
+ */
+export type MathPreviewDto = {
+	/**  光标是否落在数学公式里（扫描器口径见 `core::math`）。 */
+	hit: boolean,
+	/**  片段是否编译成功（`hit=true` 才有意义）。 */
+	ok: boolean,
+	/**  本次墙钟（毫秒）—— 首次与"同一公式二次"（走 A 闸门）差别很大。 */
+	elapsedMs: number,
+	/**  缓存键 = `<项目>/tmp/snippet/<键>/` 的目录名。 */
+	key: string,
+	/**  片段产物路径（成功时）。 */
+	pdfPath: string | null,
+	/**  `auto` / `button`：首次片段编译 > 3 s ⇒ 该项目退回"悬停出按钮"。 */
+	mode: string,
+	/**  失败原因（**不留白**：排不出来时给一句话）。 */
+	message: string | null,
+	/**  命中的公式正文（含定界符；调试与日志用）。 */
+	formula: string | null,
 };
 
 /**

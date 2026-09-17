@@ -9,7 +9,7 @@ use latteset_infra::storage::SettingsStorage;
 use serde::Serialize;
 use specta::Type;
 use std::path::{Path, PathBuf};
-use tauri::State;
+use tauri::{Manager, State};
 use latteset_core::compose::compile_request_manual;
 use latteset_core::project::{
     is_tex_file, resolve_creatable_in_project, resolve_in_project, resolve_project_root, PathError,
@@ -73,6 +73,133 @@ fn path_error(e: PathError, path: &Path, what: &str) -> CmdError {
         PathError::Outside => CmdError::Invalid(format!("{what}在项目外：{}", path.display())),
         PathError::NotADirectory => CmdError::Invalid(format!("不是目录：{}", path.display())),
     }
+}
+
+/// 公式预览的结果（roadmap ㊸ 切片 3）。`hit=false` = 光标不在公式里 ⇒ 前端**不显示**浮层
+/// （这是最常见的情况，不该当成错误）。
+#[derive(Debug, Clone, Serialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub struct MathPreviewDto {
+    /// 光标是否落在数学公式里（扫描器口径见 `core::math`）。
+    pub hit: bool,
+    /// 片段是否编译成功（`hit=true` 才有意义）。
+    pub ok: bool,
+    /// 本次墙钟（毫秒）—— 首次与"同一公式二次"（走 A 闸门）差别很大。
+    pub elapsed_ms: u32,
+    /// 缓存键 = `<项目>/tmp/snippet/<键>/` 的目录名。
+    pub key: String,
+    /// 片段产物路径（成功时）。
+    pub pdf_path: Option<String>,
+    /// `auto` / `button`：首次片段编译 > 3 s ⇒ 该项目退回"悬停出按钮"。
+    pub mode: String,
+    /// 失败原因（**不留白**：排不出来时给一句话）。
+    pub message: Option<String>,
+    /// 命中的公式正文（含定界符；调试与日志用）。
+    pub formula: Option<String>,
+}
+
+/// 公式预览（roadmap ㊸ 切片 3）：把**光标所在的那一个公式**连项目导言区单独编译成单页 PDF。
+///
+/// 隔离（硬要求）：落点 `<项目>/tmp/snippet/<键>/`，**独立 project_root**、**不经调度器**
+/// （不产出 `compile-status`/`pdf-updated`，也不碰权威 `<stem>.pdf` 与主编译的 `tmp/main.*`）。
+/// 形态：**Tectonic 专属**（ADR-0014）；非 Tectonic 形态下这条命令仍可用，但按 ADR 不做优化适配。
+#[tauri::command]
+#[specta::specta]
+pub async fn compile_math(
+    text: String,
+    offset: u32,
+    state: State<'_, AppState>,
+) -> Result<MathPreviewDto, CmdError> {
+    use latteset_core::scheduler::{CompileRunner, NoProgress};
+    use latteset_core::types::{CompileKind, CompileOutcome};
+
+    let project = state
+        .project
+        .read()
+        .await
+        .clone()
+        .ok_or_else(|| CmdError::Invalid("尚未打开项目，无法做公式预览".into()))?;
+    let root_file = project
+        .root_file
+        .clone()
+        .ok_or_else(|| CmdError::Invalid("未确定根文件，无法做公式预览".into()))?;
+
+    // 光标在哪个公式里：扫描器在 core（与 headless 同一份口径）。
+    let Some(expr) = latteset_core::math::math_at(&text, offset as usize) else {
+        return Ok(MathPreviewDto {
+            hit: false,
+            ok: false,
+            elapsed_ms: 0,
+            key: String::new(),
+            pdf_path: None,
+            mode: "auto".into(),
+            message: None,
+            formula: None,
+        });
+    };
+
+    // 片段文档要项目自己的导言区 ⇒ 以**项目根文件**为准（编辑器缓冲可能未存盘，但导言区口径不受影响）。
+    let source = state.fs.read_to_string(&root_file).await?;
+    let key = latteset_core::snippet::snippet_key(
+        source.split("\\begin{document}").next().unwrap_or(&source),
+        &expr.text,
+    );
+    let document = latteset_core::snippet::build_snippet_document(&source, &project.root, &expr.text)
+        .map_err(|e| CmdError::Invalid(e.to_string()))?;
+    // 建目录/写文档是文件系统操作 ⇒ 落在 infra（ADR-0010）。
+    let snippet_root = latteset_infra::snippet::prepare_snippet_dir(&project.root, &key, &document)?;
+    let entry = snippet_root.join("main.tex");
+
+    let settings = state.settings.read().await.clone();
+    let runner = crate::runner_switch::SwitchableRunner::new(
+        state.fs.clone(),
+        Arc::new(NoProgress),
+        state.settings.clone(),
+        state.app.path().app_cache_dir().ok(),
+    );
+    let request = latteset_core::types::CompileRequest {
+        root_file: entry,
+        project_root: snippet_root,
+        engine: settings.compile.engine,
+        // 片段应当秒级完成；给一个短上限，卡住就放弃而不是拖住编辑器（与 A 同口径）。
+        timeout: std::time::Duration::from_secs(30),
+        kind: CompileKind::Quick,
+    };
+    let started = std::time::Instant::now();
+    let outcome = runner
+        .compile(request, tokio_util::sync::CancellationToken::new())
+        .await;
+    let elapsed_ms = started.elapsed().as_millis().min(u32::MAX as u128) as u32;
+    let mode = if elapsed_ms > 3_000 { "button" } else { "auto" };
+
+    let (ok, pdf_path, message) = match outcome {
+        CompileOutcome::Success { pdf_path, .. } => {
+            (true, Some(pdf_path.to_string_lossy().into_owned()), None)
+        }
+        // 片段单独编译失败是**常见**情形（宏定义在正文里、`\cite` 没有 aux）——如实给第一条错误。
+        CompileOutcome::ContentError { errors } => (
+            false,
+            None,
+            Some(format!(
+                "片段无法单独编译：{}",
+                errors.first().map(|e| e.message.as_str()).unwrap_or("（无细节）")
+            )),
+        ),
+        CompileOutcome::Timeout { .. } => (false, None, Some("片段编译超时（30 s）".into())),
+        CompileOutcome::Aborted => (false, None, Some("片段编译已中止".into())),
+        CompileOutcome::IoError { message } => (false, None, Some(message)),
+    };
+    debug!(key = %key, elapsed_ms, ok, "公式预览完成");
+    Ok(MathPreviewDto {
+        hit: true,
+        ok,
+        elapsed_ms,
+        key,
+        pdf_path,
+        mode: mode.into(),
+        message,
+        formula: Some(expr.text),
+    })
 }
 
 /// 路径校验（D8）：canonicalize 后必须落在项目根内（IO 走 FileSystem trait，不碰 OS API）。

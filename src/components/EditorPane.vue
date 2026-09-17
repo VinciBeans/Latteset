@@ -5,6 +5,8 @@ import { onBeforeUnmount, onMounted, ref, watch } from "vue";
 import * as monaco from "monaco-editor";
 import { useEditorStore } from "../stores/editor";
 import { useSyncTex } from "../composables/useSyncTex";
+import { ipc } from "../services/ipc";
+import MathPreviewCard from "./MathPreviewCard.vue";
 
 const emit = defineEmits<{
   change: [path: string];
@@ -18,6 +20,60 @@ const host = ref<HTMLElement | null>(null);
 let monacoEditor: monaco.editor.IStandaloneCodeEditor | null = null;
 /** Monaco 事件订阅，逐条显式释放（不依赖 editor.dispose 级联，防残留监听）。 */
 const monacoSubscriptions: monaco.IDisposable[] = [];
+
+// ---- 公式预览（roadmap ㊸ 切片 3）：悬停一个公式 → 单独编译它 → 浮层里给真实排版结果 ----
+// 触发是**我们自己**的 `onMouseMove` + 去抖（不走 Monaco 的 hover provider：浮层要放一张画布，
+// Monaco 的 hover 内容只能放 markdown）。
+const MATH_HOVER_DELAY_MS = 160;
+const mathCard = ref({ visible: false, x: 0, y: 0, pdfPath: "", message: "", formula: "", mode: "auto" });
+let mathTimer: number | undefined;
+/** 序号：迟到的响应必须丢掉（鼠标扫过一行会连续触发多次） */
+let mathSeq = 0;
+
+function hideMathCard() {
+  mathCard.value.visible = false;
+}
+
+async function requestMathPreview(text: string, utf16Offset: number, x: number, y: number) {
+  const seq = ++mathSeq;
+  try {
+    const p = await ipc.compileMath(text, utf16Offset);
+    if (seq !== mathSeq) return; // 过期结果
+    // 真机验收的可观测钩子（与 window.__previewLastReload 同款约定：只读、不驱动 UI）
+    (window as unknown as Record<string, unknown>).__mathPreview = p;
+    if (!p.hit) {
+      hideMathCard();
+      return;
+    }
+    mathCard.value = {
+      visible: true,
+      x,
+      y,
+      pdfPath: p.pdfPath ?? "",
+      message: p.message ?? "",
+      formula: p.formula ?? "",
+      mode: p.mode,
+    };
+  } catch (err) {
+    if (seq !== mathSeq) return;
+    (window as unknown as Record<string, unknown>).__mathPreview = { hit: true, ok: false, message: String(err) };
+    hideMathCard();
+  }
+}
+
+function onEditorMouseMove(e: monaco.editor.IEditorMouseEvent) {
+  const position = e.target.position;
+  const model = monacoEditor?.getModel();
+  if (!position || !model) {
+    window.clearTimeout(mathTimer);
+    hideMathCard();
+    return;
+  }
+  const offset = model.getOffsetAt(position);
+  const { posx: x, posy: y } = e.event;
+  window.clearTimeout(mathTimer);
+  mathTimer = window.setTimeout(() => void requestMathPreview(model.getValue(), offset, x, y), MATH_HOVER_DELAY_MS);
+}
 
 /**
  * model uri.toString() → 存储路径（反查表）。
@@ -89,6 +145,7 @@ onMounted(() => {
   );
 
   monacoSubscriptions.push(monacoEditor.onDidChangeCursorPosition(reportCursor));
+  monacoSubscriptions.push(monacoEditor.onMouseMove(onEditorMouseMove));
 
   // Ctrl+点击 → SyncTeX 正向（modules.md §5.3）
   monacoSubscriptions.push(
@@ -180,6 +237,7 @@ watch(
 );
 
 onBeforeUnmount(() => {
+  window.clearTimeout(mathTimer);
   for (const sub of monacoSubscriptions) sub.dispose();
   monacoSubscriptions.length = 0;
   monacoEditor?.dispose();
@@ -196,6 +254,16 @@ onBeforeUnmount(() => {
       <span class="empty-title">还没有打开文件</span>
       <span class="empty-hint">在左侧文件树点开一个 .tex 文件开始编辑</span>
     </div>
+    <MathPreviewCard
+      v-if="mathCard.visible"
+      :x="mathCard.x"
+      :y="mathCard.y"
+      :pdf-path="mathCard.pdfPath"
+      :message="mathCard.message"
+      :formula="mathCard.formula"
+      :mode="mathCard.mode"
+      @close="hideMathCard"
+    />
   </div>
 </template>
 
