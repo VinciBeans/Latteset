@@ -58,7 +58,7 @@
 
 **优先级分**：`P = (W + D) / (C + V)`；**分档**：P0 = `P ≥ 1.3 且 W ≥ 4`；P1 = `P ≥ 0.9`；P2 = `P ≥ 0.6`；`P < 0.6` 或定位冲突/已证伪 = 不做。
 
-**引擎口径（ADR-0014，2026-09-17）**：新功能的设计与验收基准 = **Tectonic**（优先库内嵌形态）；其它引擎（XeLaTeX/LuaLaTeX/pdfLaTeX + latexmk）**不承担优化适配** —— 不兼容或行为不同就**默认退回默认行为**，并在界面/文档上**如实显示不可用**。⚠ 边界：**兼容/正确性不受影响**（默认档仍是 `engine=XeLaTeX` + `lib_form=false`，报错语义与模板兼容照旧要做）；**默认引擎是否切到 Tectonic 是另一个独立决策**。⇒ 评分时「仅 Tectonic 可用」不再是扣分项，但行内必须标注适用范围。
+**引擎口径（ADR-0014，2026-09-17；同日修订 1）**：新功能的设计与验收基准 = **Tectonic**（优先库内嵌形态）；其它引擎（XeLaTeX/LuaLaTeX/pdfLaTeX + latexmk）**不承担优化适配** —— 不兼容或行为不同就**默认退回默认行为**，并在界面/文档上**如实显示不可用**。⚠ 边界：**兼容/正确性不受影响**（报错语义与模板兼容照旧要做）。**默认引擎已于同日改为 Tectonic**（ADR-0014 修订 1，只影响没有 `settings.json` 的新装；见 §6.14）。⇒ 评分时「仅 Tectonic 可用」不再是扣分项，但行内必须标注适用范围。
 
 **快速通道规则**：**成本 ≤2 且独立可交付**的小项随时可插队（不占批次位次）。当前通道：**（空）**——㊱（SyncTeX 失败重试）✅ 已收口、㊲（首屏让位）✅ **已定量否决**（索引只占 278 ms 且不挡首屏，见 §1）、㊳（保存→开编往返）✅ 已定量否决（≈7 ms）；㉜ 已收口（§1）；㉝（P2，未指定）仍可随时插队。
 
@@ -104,6 +104,7 @@
 | **㊸ 悬停公式即时预览（候选，未排期）** | 光标停在公式上 → 浮层给出**这一个公式**的真实排版预览（TeXStudio 式），不重排全篇、不碰权威产物 | ① ~~**先量**：三个夹具（轻/中/重导言区）的片段编译耗时分布 + 缓存命中后的响应，出数再决定是否投入（先量后做，同 ㊲㊳ 的处置）~~ ✅ **已量（2026-09-17，§6.11.8）**：库形态 240/545/760 ms、整篇 1.87–2.20 s（片段 = 1/3–1/8）、重复悬停 77/332 ms（A 闸门）、子进程形态热态地板 ≈420 ms 且与导言区无关、冷启动被 biber 拖到 8.6 s；**结论 = 继续做，形态不改判，目标分级（轻/中 ≤400、重 ≤900、重复 ≤400），超 3 s 的项目退回按钮式**；② 出数后若做：公式扫描器逐例单测通过（行内/行间/环境/多行/转义 `\$`/注释/`\verb`）、首次出图 p50 ≤ 400 ms（目标，待校准）、缓存命中 ≤ 50 ms、**主编译墙钟增量 ≤5%**、权威 `main.pdf`/`tmp/main.*` 与关闭该功能时**逐字节相同**、坏公式**给原因不留白**；③ 真机用可观测钩子断言（同 `window.__previewLastReload` 约定） | ✅ **已完成**（2026-09-17：点名入表 → 同日 P0 定量 → 两处决策 → 切片 1/2/3 落地；真机四项验收齐备，见 §1 与 §6.11） |
 | **㊹ 导言区固化为 format（候选，未排期）** | 让每次编译（主编译与公式预览都算）**不再重复加载项目导言区**，同时保持输出与"逐字读导言区"**逐字节一致** | ① 先侦察：能否用现有 format 缓存机制装一个"项目导言区 format"（键 = 导言区哈希 + bundle digest）、`mylatexformat` 的限制清单（哪些宏包不能进）、失败时如何无痛回落；② 判据：同一文档用/不用 format 的 **PDF 与页哈希逐字节相同**，重导言区（`ctexbook`+`tikz`）的 `typeset_ms` 至少降一半、冷编（3 趟）总墙钟降幅 ≥20%；③ 失效路径必须有测试（改导言区 ⇒ 自动重建、不得复用旧 format） | ⬜ **待测一条变体（技术主写法已被引擎拒绝）**（2026-09-17 两轮侦察：xelatex 路线全崩、Tectonic 路线主写法被引擎拒绝；复活前先测"导言区插在内核 `\dump` 之前、不越界"这条，见 §6.12.1） |
 | **㊺ 软件内新建文件/目录（新建文件 + 向导已完成；新建目录/右键待做）** | 打开空目录或需要加文件时**不必跳出软件** | ① 空目录：新建 `main.tex` ⇒ 树出现 + 编辑器打开 + **能直接编译**（根探测重跑）；② 新建目录后可在其中新建文件；③ 重名 / 非法字符 / 项目外路径都有明确提示（不静默失败）；④ 真机验收：文件树右键与 `+` 入口都能用、`Esc` 取消不产生空文件 | ✅ **新建文件 + 新手向导已完成并真机验收（2026-09-17）**：`FileTree` 标题栏 `＋` 就地输入 → `saveAll`（D8）→ 刷新树 + 打开；空目录那条路的"建完就能编"由**骨架 + `rescanRoot`（重探测 + 补首编）**闭合。其余：新建**目录**、右键在选中目录里建 **仍未做**（见 §6.13 待办）。判据与证据见 §6.13/§6.13.1 |
+| **㊻ 引擎清单动态化 + 默认引擎切 Tectonic（已完成）** | 设置面板的引擎选项**不再写死在前端**：顺序（Tectonic 优先）、名字、说明与**本机可用性**都由后端给；`LATTESET_TEX_ENGINES` 可覆盖；默认引擎改 Tectonic | ① 弹层不冲出面板（选项只留名字，说明在下方）；② 清单来自后端（前端无引擎数组，状态栏也走同一份）；③ 不可用的引擎禁用 + 给原因；④ `LATTESET_TEX_ENGINES` 能筛选与重排、**不能伪造可用性**；⑤ 新装（无 settings.json）默认 Tectonic，老配置不变 | ✅ **已完成并真机验收（2026-09-17）**：core 6 例 + infra 4 例单测；真机验到"清单来自后端 / 覆盖成 `pdf, xelatex` 恰为两项且顺序照写 / 当前引擎被收窄掉时补只读项不空白 / 状态栏同源"；`不可用⇒禁用` 的真机渲染需在没装引擎的机器上验（本机四个全可用）。见 §6.14 + [ADR-0014 修订 1](../adr/0014-tectonic-first.md) |
 
 ## 5. 外部方案与产物格式评估（否决与吸收都在这里）
 
@@ -897,6 +898,43 @@ XDV 逐字节对比显示原因：重导言区里有 `pdf:pagesize width 614.295
 
 **为什么要进表（而不是"随手改一下"）**：① 它牵着**根探测**这条跨模块口径（0 候选的行为）；② 需要前端交互与 D8 校验两处配合；③ 空目录是"新用户第一条路"，属**首次体验**而不是小众便利。
 
+### 6.14 ㊻ 引擎清单动态化 + 默认引擎切 Tectonic（2026-09-17 产品负责人点名）
+
+**需求原文（三条，同一轮提出）**：① 设置面板的引擎下拉**弹层冲出面板**；② "引擎既然以 Tectonic 为优先，Tectonic 就应该在第一个"；③ "我不想写死这个选项栏，而是通过**环境变量或者其他方式**来动态加载 TeX 引擎"。经确认：③ 取 **A 口径**（后端探测可用性 + 环境变量覆盖，**不做**用户自定义引擎命令行）；② 连带把**默认引擎也改成 Tectonic**。
+
+**① 溢出（已修，`f99ac11`）**：根因不是宽度写错 —— 原生 `<select>` 的弹层按**最长选项**撑宽，而选项文本原本是 `引擎名 — 整句说明`（Tectonic 那条约 100 字），CSS 管不到弹层。修法：说明移出 `<option>`，改在 select 下方用 `.field-hint`（与「主题」「编译模式」同一范式）。真机：选项最长 **8 字符**、select 自身 424 px。⚠ 验证口径：**截图拍不到原生弹层**（WebView2 的下拉是独立窗口），要用几何证明（见 troubleshooting）。
+
+**② 顺序**：清单顺序 = **Tectonic 第一**（`core::engine::ENGINE_ORDER`）。
+
+**③ 动态化（本次落地）**：
+
+| 层 | 落点 | 契约 |
+|---|---|---|
+| core | `crates/latteset-core/src/engine.rs` | `ENGINE_ORDER` / `label` / `hint` / `required_binaries`（判据的唯一副本）/ `EngineInfo{id,label,hint,available,reason}` / `engine_list(has_binary, lib_form, env)` —— **纯函数**，可用性由闭包注入 ⇒ 6 例单测（含"env 覆盖不能伪造可用性"） |
+| infra | `crates/latteset-infra/src/probe.rs` | `find_in_path`（**只查文件、不启动进程**：便宜、无副作用、不会在坏安装上卡住）+ `env_tex_engines()`（读 `LATTESET_TEX_ENGINES`，ADR-0010 的"外部依赖唯一落点"） |
+| 命令面 | `commands::list_engines` | 把三者拼起来；不缓存（一次面板打开只是几趟目录查询） |
+| 前端 | `src/services/engines.ts`（会话内缓存一次）+ `SettingsPanel` / `StatusBar` | **前端不再有引擎数组**；不可用的引擎**留着并禁用** + 显示原因（"本机没装 XeLaTeX"本身就是要讲给用户听的信息）；状态栏的显示名走同一份 |
+
+**关键边界（写进 modules §12.2）**：
+- **支持的引擎集合仍是 `Engine` 枚举** —— 编译命令按引擎分支（`-xelatex` / `-C` 分档 / 是否经 latexmk），环境变量只能**筛选与重排**，不能凭空造一个新引擎（那要扩 runner 的命令模板与产物契约，是另一个功能点）；
+- 覆盖**不能把不可用的引擎变成可用**（可用性是探测出来的事实）；
+- **清单里必须始终含有当前设置的那个引擎**：真机实测过反面 —— `LATTESET_TEX_ENGINES='pdf, xelatex'` 时若设置里是 `tectonic`，`<select>` 因为没有匹配项而**显示空白**、说明行也空。修法：前端补一条不可选的只读项并给出原因（"当前设置指定的引擎不在本次构建开放的清单里…"）。
+
+**默认引擎切 Tectonic（ADR-0014 修订 1）**：`Settings::default().compile.engine` 改为 `Tectonic`，**形态位仍是 `lib_form=false`**（子进程档）。**只影响没有 `settings.json` 的新装** —— 老配置写着 `xelatex` 的升级后一字节不变（不静默换引擎）。随之更新的口径：`design.md` 的默认引擎、`modules.md` §12.2、`README.md`；`docs/research/` 下的带日期报告**保留当时的"默认 XeLaTeX"表述**（它们是证据不是现状）。已知代价：本机既没有 `tectonic.exe`、构建又没编入库形态时**首编会失败**（错误文案已可行动；面板上该引擎显示为不可用并给原因）。
+
+**真机验收（2026-09-17，`bench/tiny` 夹具，引擎 Tectonic 库内嵌）**：
+
+| 项 | 结果 |
+|---|---|
+| 清单来自后端 | ✅ 选项恰为 `Tectonic / XeLaTeX / LuaLaTeX / pdfLaTeX`（Tectonic 第一），`disabled=false`（本机五个可执行文件都在 PATH 上），说明行随选中项切换 |
+| `LATTESET_TEX_ENGINES='pdf, xelatex'` | ✅ 选项恰为 `pdfLaTeX / XeLaTeX`（**顺序照写**，小写别名 `pdf` 也认）；设置里是 `tectonic` ⇒ 补出 `tectonic（不可用）` 只读项 + 原因，下拉**不再空白** |
+| 状态栏显示名 | ✅ 走同一份清单（`Tectonic`），清单缺该引擎时退化成 id |
+| 默认引擎 | ✅ 单测 + headless 用例（隔离配置目录 ⇒ 真走"没有 settings.json"这条路）断言 `Tectonic`；恢复默认按钮也已跟着改 |
+
+**未在本机验的**：`不可用 ⇒ 禁用 + 原因` 的**真机**渲染 —— 本机 `latexmk/xelatex/lualatex/pdflatex/tectonic` 全在 PATH 上，且库形态也编了进来，四个引擎都可用；这条分支由 core 单测（假闭包）覆盖，真机只验到"后端给的可用性被如实渲染"。要在真机上看它，得在一台没装 TeX Live（或没装 tectonic）的机器上打开设置面板。
+
+**为什么进表**：它同时是**默认值变更的必要条件**（默认改成一个"本机可能没有"的引擎，就必须让用户看得见哪个可用），也是"不把产品事实写死在前端"的第一处。
+
 ## 7. 明确不做（否决项）
 
 | 项 | 理由 |
@@ -935,6 +973,7 @@ XDV 逐字节对比显示原因：重导言区里有 `pdf:pagesize width 614.295
 | ㊸ 悬停公式即时预览 | 本文件 §6.11（竞品口径 + 需求读数 + 三条路线 + 判据/风险）与 **§6.11.8（P0 定量数据）** + `src/latexSyntax.ts` 的 `math` 状态（定界规则来源）+ `src/latexSuggest.ts`（Monaco provider 注册范式）+ `git show 0ac930c`（片段编译的实测成本与三个真机坑）+ `test_file/e2e/math-preview-lab.ps1` / `math-preview-lab.json`（工作区产物） |
 | ㊹ 导言区固化为 format | 本文件 §6.11.10（由来：㊸ 的最小包定量）+ `mylatexformat` 上游文档（`kpsewhich mylatexformat.ltx` 命中 TeX Live 2026）+ 现有 format 缓存机制（modules.md §2.7 的 `format_cache_path` / bundle digest 键） |
 | ㊺ 软件内新建文件 + 新手向导 | 本文件 §6.13/§6.13.1（设计、细化、五条判据与真机证据）；`crates/latteset-core/src/newfile.rs`（骨架表 + 6 例单测）、`src-tauri/src/commands.rs` 的 `new_file_skeleton`、`src/components/{FileTree,NewFileWizard,SettingsPanel}.vue`、`src/stores/project.ts` 的 `rescanRoot`、`src/composables/useAutoSave.ts`；契约见 modules.md §6/§8/§9.2/§9.3/§9.4/§12.2 |
+| ㊻ 引擎清单动态化 + 默认引擎 | 本文件 §6.14；`crates/latteset-core/src/engine.rs`（清单 + 6 例单测）、`crates/latteset-infra/src/probe.rs`（PATH 探测 + 4 例单测）、`src-tauri/src/commands.rs` 的 `list_engines`、`src/services/engines.ts`、`SettingsPanel` / `StatusBar`；决策见 [ADR-0014 修订 1](../adr/0014-tectonic-first.md)；契约见 modules.md §6/§8/§12.2 |
 | ⑥ CLI + MCP（**已完成**） | [cli-mcp-plan.md](../cli-mcp-plan.md) + modules.md §8.1 + `crates/latteset-server` |
 | ⑦a 大纲增量（**已完成**） | modules.md §3.5（缓存三不变量）/ §12.2 + `core::outline::{load_cached, OutlineCache}` + `src/stores/outline.ts` |
 | ⑦c / ⑦b（**已完成 / 缓做**） | [p1-large-doc-editor-analysis.md](./p1-large-doc-editor-analysis.md)（拆分依据）+ [p1c-multifile-large-project.md](./p1c-multifile-large-project.md)（夹具/口径/数据）+ `scripts/{gen-large-project,editor-report}.mjs` |

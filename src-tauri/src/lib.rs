@@ -173,6 +173,7 @@ fn build_specta_builder() -> tauri_specta::Builder<tauri::Wry> {
             commands::get_settings,
             commands::update_settings,
             commands::lib_form_available,
+            commands::list_engines,
             commands::engine_form,
             commands::set_window_theme,
             commands::compile_math,

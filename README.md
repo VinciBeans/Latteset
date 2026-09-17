@@ -20,7 +20,7 @@ Latteset 主界面：左侧文件树、中间编辑区、右侧 PDF 预览。
 
 依赖 **Windows 10/11**、Node.js ≥ 18、Rust（stable-x86_64-pc-windows-msvc，含 VS Build Tools C++ 工具链）。
 
-**TeX 环境**：默认引擎 XeLaTeX 需要 **TeX Live 或 MiKTeX**（提供 `latexmk`/`xelatex`，缺失时应用会提示安装）；**改用 Tectonic 引擎则不需要 TeX Live** —— 它自带宏包集（首次编译联网下载，之后离线复用缓存），有「子进程」与「库内嵌」两种形态，在设置里选。
+**TeX 环境**：默认引擎是 **Tectonic**，**不需要预装 TeX Live** —— 它自带宏包集（首次编译联网下载约 60 MB，之后离线复用缓存），有「子进程」与「库内嵌」两种形态，在设置里选。想用 TeX Live 的话切到 **XeLaTeX / LuaLaTeX / pdfLaTeX**（需要 **TeX Live 或 MiKTeX** 提供 `latexmk` 与对应引擎）。设置面板会把每个引擎在**本机是否可用**标出来（缺什么就写缺什么），环境变量 `LATTESET_TEX_ENGINES` 可以收窄可选项（CI / 裁剪发布用）。
 
 ```bash
 npm install && npm run tauri dev
@@ -65,7 +65,7 @@ npm run lib:test      # 库形态自身的单测
 - **文件夹即项目**：打开文件夹 → 文件树 → 多标签页；自动保存（防抖）+ 外部修改检测与冲突提示。
 - **在软件内新建文档**：文件树 `＋` 直接建文件（**空目录也能开工**）。空项目里建第一份 `.tex` 时会问一次「文档语言 / 类型 / 标题」（中文 ctex 类或标准类，短文/报告/书/幻灯片），直接生成一份**能编译的最小骨架**；不想要这一步可在「设置 → 编译」里关掉。
 - **根文件**：正则启发式自动探测（含 `\documentclass` 的顶层 .tex），可手动覆盖；**还没有根文档**时状态栏给出可点提示，并且每次保存都会静默重探一次——补上 `\documentclass` 保存即成主文件并自动出图。
-- **设置**：引擎（XeLaTeX 默认，可切 LuaLaTeX / pdfLaTeX / **Tectonic**）、编译模式、防抖、超时、根文件覆盖；全局 + 项目（`.latteset/settings.json`）两层，改即生效。选 Tectonic 后可再选**子进程**或**库内嵌**形态、宏包集来源与缓存目录。
+- **设置**：引擎（**Tectonic 默认**，可切 XeLaTeX / LuaLaTeX / pdfLaTeX；选项由后端给，本机不可用的会禁用并说明缺什么）、编译模式、防抖、超时、根文件覆盖；全局 + 项目（`.latteset/settings.json`）两层，改即生效。选 Tectonic 后可再选**子进程**或**库内嵌**形态、宏包集来源与缓存目录。
 
 ## 命令行与 MCP（无 GUI，面向自动化）
 

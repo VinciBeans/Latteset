@@ -726,6 +726,8 @@ pub fn compile_request_manual(ctx: ComposeContext<'_>) -> Option<CompileRequest>
 | abort_compile | scheduler.send(Abort) |
 | synctex_forward / inverse | 调 provider（失败按 100/200/300ms 退避重试）；`inverse` 输出 `InverseResultDto{source,note}`：命中生成产物/项目外文件时就近回落，落空则只给提示（㉒） |
 | get_settings / update_settings | 读快照 / apply_patch → 校验 → 写盘（记录 hash，供 watch 自写盘过滤）→ 广播 settings-changed。**root_file 分支**：`Some(rel)` 先按 D8 解析为项目内绝对路径（失败即拒绝、**不落盘**）；`null` → 回到自动探测（复用 `detect_root`）；随后**同步内存 `ProjectState.root_file`**——漏掉这一步的症状是「选了根文件仍报未确定根文件，必须重开项目」 |
+| lib_form_available | 本次构建是否编入 Tectonic **库形态**（编译期 `LIB_FORM_COMPILED_IN`）：设置面据此禁用该选项并说明原因 |
+| list_engines | **引擎清单**（roadmap ㊻）：`core::engine::engine_list`（顺序 = Tectonic 优先；名字/说明的唯一副本；所需可执行文件来自 `Engine`）+ infra `probe::find_in_path`（**只查文件、不起进程**）+ `LIB_FORM_COMPILED_IN`（库形态让 Tectonic 不需要外部 exe）。`LATTESET_TEX_ENGINES`（infra `probe::env_tex_engines`）可覆盖清单与顺序，**但不能把不可用的引擎变成可用**。不缓存：一次面板打开只是几趟目录查询 |
 
 ### 8.1 无 GUI 交互层（crates/latteset-server，roadmap ⑥）
 
@@ -989,7 +991,7 @@ settings-changed: Settings
 
 ### 12.2 跨模块不变量（改回去即复发）
 
-- **引擎口径（ADR-0014）**：新功能的设计与验收基准是 **Tectonic**（优先库内嵌形态）；任何优化若与其它引擎（XeLaTeX/LuaLaTeX/pdfLaTeX + latexmk）不兼容或行为不同，**默认退回默认行为**且**显式显示不可用**（不得静默失效）。⚠ 免除的只是"优化适配"，**兼容/正确性照旧**（默认档仍是 `engine = XeLaTeX` + `lib_form = false`）。
+- **引擎口径（ADR-0014，2026-09-17；同日修订 1 把默认引擎改成 Tectonic）**：新功能的设计与验收基准是 **Tectonic**（优先库内嵌形态）；任何优化若与其它引擎（XeLaTeX/LuaLaTeX/pdfLaTeX + latexmk）不兼容或行为不同，**默认退回默认行为**且**显式显示不可用**（不得静默失效）。⚠ 免除的只是"优化适配"，**兼容/正确性照旧**。默认档 = `engine = Tectonic` + `lib_form = false`（**只影响没有 settings.json 的新装**；老配置一字节不变）；引擎清单由后端给（`list_engines`：顺序 = Tectonic 优先、每条带可用性与原因，`LATTESET_TEX_ENGINES` 可覆盖），前端不写死。
 - **Quick 的前置条件**：无 `tmp/<stem>.aux` 时 runner 必须把 Quick 升级为 Full，且 `Success{kind}` 报**实际**强度——否则引用全成 `??`，或前端多提示一次「引用待更新」并多跑一次空收敛。
 - **设置的读入口**：`open_project`、`update_settings`、**以及 watch 的设置热更新**都必须先读**纯全局**设置（`load_global`）再合并项目覆盖；后两者还必须同步内存 `ProjectState.root_file`——否则出现跨项目设置污染、「选了根文件仍报未确定根文件，必须重开项目」，以及**外部清掉覆盖永远不生效**（拿有效值当基数会粘住旧值）。
 - **覆盖清洗逐字段**：`sanitize_overrides` 不能退回「整包丢弃」（会连带丢掉同一文件里合法的 compile 覆盖）。
@@ -1009,6 +1011,7 @@ settings-changed: Settings
 - **大纲刷新要合并**：`refresh()` 进行中只记一个"待补一次"意图（结构事件风暴实测一次连发 11 次）——并发刷新会让差分失效（每次都赶在上一次写回 `lastSent` 之前发出），且后端缓冲缓存的写入顺序不再确定。
 - **新建 `.tex` 必须让根探测认得出来**（㊺）：向导骨架**一定**含 `\documentclass`（单测钉住）——根探测要求文件里有它，所以"空文件 + 建完就编"这条路本身不成立；落盘后必须重跑一次探测（`projectStore.rescanRoot`，与 `open_project` 同一口径），探到即补一次 `compile_now`——漏掉补编译的症状是「状态栏已显示就绪，预览却一直停在『PDF 在这里等你』」（watch 那条链在探到根文件**之前**就丢掉了这次变化）。
 - **新加的设置键必须可缺省**（㊺ `compile.new_file_wizard`）：`#[serde(default = ...)]` —— 旧 `settings.json` 没有这个键也要能读，否则升级那一刻整个配置文件解析失败、用户设置全丢（与 `ui` / `tectonic` 同一条理由）。
+- **引擎清单只有一个来源**（㊻）：顺序/名字/说明/可用性都由后端 `list_engines` 给，**前端不得再写一份引擎数组**（状态栏的显示名也走它，`src/services/engines.ts` 是唯一入口）。可用性只能来自探测（`probe::find_in_path` + `LIB_FORM_COMPILED_IN`），`LATTESET_TEX_ENGINES` **只能筛选与重排、不能伪造可用性**；清单里必须**始终含有当前设置的那个引擎**（被收窄掉时前端补一条不可选的只读项并说明原因，否则下拉会显示空白）。
 - **页哈希口径只有一个（V1）且缓存自带标记**（已知债 #26，2026-09 修）：`hash_page` 必须丢掉 `bop` 尾部的 4 B `prev`（保留 opcode + 10×i32 计数器）——改回"整页哈希"即复发"前面某页变长 ⇒ 第 3 页起全部判变化"（实测 25/26 页、Σ375 页假阳性）；`tmp/<stem>.<engine>.pages` 首行必须写 `PAGES_CACHE_VERSION`，读侧不匹配一律当 `None`。**且 A/B 的判据必须建在页级哈希（含页数）上，不得建在整篇 XDV 字节指纹上**——`pre` 注释在 TeX Live 的 `xelatex` 下是本地墙钟（跨分钟必失效，Tectonic 是固定串）。
 
 前端的三处异步守卫与 PreviewPane 渲染契约见 §9.2 / §9.4，SyncTeX 相关约束见 §5。
@@ -1024,6 +1027,7 @@ settings-changed: Settings
 | **公式预览命令面**（㊸ 切片 2：`latteset-cli math <公式>` / `math -`） | `cargo build --release -p latteset-server --features tectonic-lib --bin latteset-cli` → `latteset-cli --project <夹具> math '$\int_0^1 x^2\,\mathrm{d}x$'`（同一公式两次 = 89 ms 档、换公式 = 新目录冷档、坏公式给原因）；落点 `<项目>/tmp/snippet/<键>/`，**权威 `main.pdf` 与 `tmp/main.*` 逐字节不变**（2026-09-17 实测）；实现契约见 [roadmap §6.11.5](./research/tex-ide-roadmap-priority.md) |
 | **公式扫描**（㊸ 切片 1：`core::math::math_at` 的边界口径） | `cargo test -p latteset-core --lib math`（16 例：行内/行间/环境/多行/`\$`/注释/`\verb`/嵌套/空公式/未闭合/中文**字节**偏移） |
 | **新建骨架**（㊺：`core::newfile::document_skeleton`） | `cargo test -p latteset-core --lib newfile`（6 例：4 类型 × 2 语言都含根探测三标记 / 语言选类 / 标题可选且 beamer 不给 `\maketitle` / 只预置 `amsmath` / **占位文字随语言**（英文骨架无汉字）/ 前后端交换的字面量） |
+| **引擎清单**（㊻：`core::engine::engine_list` + infra `probe::find_in_path`） | `cargo test -p latteset-core --lib engine`（6 例：Tectonic 排第一 / 名字短且不含句子 / 缺可执行文件即不可用且给原因 / 库形态让 Tectonic 免 exe / env 覆盖可筛可排且全不认识时忽略 / **覆盖不能伪造可用性**）+ `cargo test -p latteset-infra --lib probe`（4 例，含真机 PATH 探针）。真机：设置面板选项来自后端、`LATTESET_TEX_ENGINES='pdf, xelatex'` ⇒ 选项恰为 `pdfLaTeX, XeLaTeX`（顺序照写，且别名/大小写容错） |
 | **片段文档装配**（㊸ 切片 1：`core::snippet::build_snippet_document`） | `cargo test -p latteset-core --lib snippet`（5 例：导言区逐字照搬/两处路径注入与守卫/缺 `\begin{document}` 如实报错/空片段拒绝/末尾缺换行） |
 | 真实 latexmk / synctex 集成 | `cargo test -p latteset-infra -- --ignored`（含两条流式用例：`-- --ignored streaming` / `-- --ignored live_errors`，断言"进度/错误在编译结束前 ≥100ms 就到了"） |
 | 流式反馈真机时间线（页进度 / 实时错误 / 终态不被覆盖） | `node scripts/gen-stream-fixture.mjs test_file/projects/_stream-lab [--error]` 生成 400KB / 162 页夹具 → `VITE_LATTESET_PROJECT=<夹具> npm run tauri dev` → 用 tauri server 注入 `window.__TAURI__.event.listen` 记录四个编译事件的时间线（脚本见提交说明；夹具目录已被 .gitignore 覆盖） |

@@ -7,7 +7,8 @@ import { useEditorStore } from "../stores/editor";
 import { useSettingsStore } from "../stores/settings";
 import { useProjectStore } from "../stores/project";
 import { ipc } from "../services/ipc";
-import type { CompilePhase, EngineFormDto } from "../bindings";
+import { labelOf, loadEngines } from "../services/engines";
+import type { CompilePhase, EngineFormDto, EngineInfo } from "../bindings";
 
 defineProps<{ cursorLine: number; cursorCol: number }>();
 defineEmits<{ (e: "pick-root"): void }>();
@@ -44,16 +45,22 @@ const isContinuous = computed(() => settings.settings?.compile.mode === "continu
 /**
  * 当前引擎（D3 裁决，2026-09-14）：**不打开设置面板也要能看见用的哪个引擎**。
  * 同时把编译强度体现在同一个位置——`compile.draft` 为真即本次是 Quick 草稿编译。
+ *
+ * 名字来自**后端清单**（roadmap ㊻，与设置面板同一个来源）；清单还没到手时退化成 id 本身
+ * （一次 IPC 失败不该让状态栏空着）。
  */
+const engines = ref<EngineInfo[]>([]);
+void loadEngines()
+  .then((list) => {
+    engines.value = list;
+  })
+  .catch(() => {
+    engines.value = [];
+  });
+
 const engineText = computed(() => {
   const e = settings.settings?.compile.engine;
-  switch (e) {
-    case "xelatex": return "XeLaTeX";
-    case "lualatex": return "LuaLaTeX";
-    case "pdflatex": return "pdfLaTeX";
-    case "tectonic": return "Tectonic";
-    default: return e ?? "";
-  }
+  return e ? labelOf(engines.value, e) : "";
 });
 
 /**

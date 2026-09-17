@@ -61,6 +61,17 @@ export const commands = {
 	 */
 	libFormAvailable: () => __TAURI_INVOKE<boolean>("lib_form_available"),
 	/**
+	 *  引擎清单（roadmap ㊻）：**顺序、名字、说明与本机可用性都由后端给** —— 前端不再各写一份。
+	 * 
+	 *  - 可用性 = PATH 上找得到该引擎需要的可执行文件（`latteset_infra::probe`，只查文件、不起进程）；
+	 *  - Tectonic 额外认一条"库形态已编入"（库内嵌不调外部 `tectonic.exe`，见 ADR-0012）；
+	 *  - `LATTESET_TEX_ENGINES=xelatex,tectonic` 可**覆盖清单与顺序**（CI / 裁剪发布用），
+	 *    但它不能让不可用的引擎变可用（可用性是探测出来的事实）。
+	 * 
+	 *  不缓存：一次面板打开几趟目录查询，比缓存失效的复杂度便宜得多。
+	 */
+	listEngines: () => __TAURI_INVOKE<EngineInfo[]>("list_engines"),
+	/**
 	 *  当前**实际**会用的引擎形态。
 	 * 
 	 *  **判定只做一次、就在后端**：这里直接调用 runner 用的那个纯函数
@@ -318,6 +329,20 @@ export type EngineFormDto = {
 	env_forced: boolean,
 	/**  本次构建是否编入库形态。 */
 	lib_compiled_in: boolean,
+};
+
+/**  清单里的一项（命令面 DTO，前端只渲染）。 */
+export type EngineInfo = {
+	/**  引擎 id（与设置里存的值同一个字面量）。 */
+	id: Engine,
+	/**  选项栏里显示的名字。 */
+	label: string,
+	/**  一句话说明。 */
+	hint: string,
+	/**  本机/本次构建能不能用它编译。 */
+	available: boolean,
+	/**  **不可用时**给一句可行动的原因（可用时为 `None`）。 */
+	reason: string | null,
 };
 
 /**  错误列表条目（modules.md §4 契约）。 */

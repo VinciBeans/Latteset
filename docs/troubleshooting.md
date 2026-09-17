@@ -517,7 +517,7 @@ xelatex -interaction=nonstopmode -synctex=1 -output-directory=tmp main.tex   # m
 **修法**：跑一次 `fc-cache -f`（TeX Live 自带 `fc-cache.exe`）。修好后本机实测：极简文档 **4799 → 790 ms**、`min-zh` 夹具 **5380–5765 → 1371 ms**，`fc-list` **4.2 s → 0.7 s**。
 
 **缓存为什么会坏**：断电/强杀把缓存文件写了一半（本次就是断电后出现的）、磁盘满、杀软隔离、或手工清了 temp。**只有 XeLaTeX 慢、LuaLaTeX 正常**是本问题的特征（LuaLaTeX 不走 fontconfig）。
-> 对产品的影响：用户的 TeX Live 若处于这种状态，编辑期每次编译白等 4 s，而我们的默认引擎正是 XeLaTeX。诊断入口就上面两条命令。
+> 对产品的影响：用户的 TeX Live 若处于这种状态，**切到 XeLaTeX 的**用户编辑期每次编译白等 4 s（默认引擎自 2026-09-17 起是 Tectonic，不走 fontconfig，见 [ADR-0014 修订 1](./adr/0014-tectonic-first.md)）。诊断入口就上面两条命令。
 
 **DSH 沙箱注意**：缓存写在 `C:/texlive/<年>/texmf-var/fonts/cache`，**在工作区之外** ⇒ 沙箱模式下 `fc-cache` 会 `Permission denied`，缓存永远建不起来、**每次编译都慢**（本次排查期间就被这条卡住过）。需要在提权（`danger-full-access`）下跑一次 `fc-cache -f`，或让应用在正常权限下自建。
 

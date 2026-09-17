@@ -58,7 +58,8 @@ async fn open_project_detects_unique_root_and_reports_settings() {
     assert_eq!(report.root_candidates.len(), 1, "唯一候选也回报（与 GUI 语义一致）");
     // 默认设置来自隔离的配置目录（不存在 → 默认值）
     assert_eq!(report.settings.compile.timeout_secs, 120);
-    assert_eq!(report.settings.compile.engine, latteset_core::types::Engine::XeLaTeX);
+    // 默认引擎 = Tectonic（roadmap ㊻，2026-09-17 裁决）
+    assert_eq!(report.settings.compile.engine, latteset_core::types::Engine::Tectonic);
 }
 
 #[tokio::test]

@@ -11,6 +11,7 @@ use specta::Type;
 use std::path::{Path, PathBuf};
 use tauri::{Manager, State};
 use latteset_core::compose::compile_request_manual;
+use latteset_core::engine::EngineInfo;
 use latteset_core::newfile::{DocKind, DocLanguage};
 use latteset_core::project::{
     is_tex_file, resolve_creatable_in_project, resolve_in_project, resolve_project_root, PathError,
@@ -467,6 +468,26 @@ pub async fn get_outline(
 #[specta::specta]
 pub fn new_file_skeleton(lang: DocLanguage, kind: DocKind, title: Option<String>) -> String {
     latteset_core::newfile::document_skeleton(lang, kind, title.as_deref().unwrap_or_default())
+}
+
+// ---------------------------------------------------------------- 引擎清单
+
+/// 引擎清单（roadmap ㊻）：**顺序、名字、说明与本机可用性都由后端给** —— 前端不再各写一份。
+///
+/// - 可用性 = PATH 上找得到该引擎需要的可执行文件（`latteset_infra::probe`，只查文件、不起进程）；
+/// - Tectonic 额外认一条"库形态已编入"（库内嵌不调外部 `tectonic.exe`，见 ADR-0012）；
+/// - `LATTESET_TEX_ENGINES=xelatex,tectonic` 可**覆盖清单与顺序**（CI / 裁剪发布用），
+///   但它不能让不可用的引擎变可用（可用性是探测出来的事实）。
+///
+/// 不缓存：一次面板打开几趟目录查询，比缓存失效的复杂度便宜得多。
+#[tauri::command]
+#[specta::specta]
+pub fn list_engines() -> Vec<EngineInfo> {
+    latteset_core::engine::engine_list(
+        &|name| latteset_infra::probe::find_in_path(name).is_some(),
+        crate::runner_switch::LIB_FORM_COMPILED_IN,
+        latteset_infra::probe::env_tex_engines().as_deref(),
+    )
 }
 
 // ---------------------------------------------------------------- 编译

@@ -5,7 +5,8 @@
 import { computed, onMounted, ref } from "vue";
 import { useSettingsStore } from "../stores/settings";
 import { ipc } from "../services/ipc";
-import type { CompileMode, Engine, UiTheme } from "../bindings";
+import { loadEngines } from "../services/engines";
+import type { CompileMode, Engine, EngineInfo, UiTheme } from "../bindings";
 
 const emit = defineEmits<{ close: [] }>();
 
@@ -78,28 +79,59 @@ const THEMES: { value: UiTheme; label: string; hint: string }[] = [
   { value: "system", label: "跟随系统", hint: "按操作系统的深浅色偏好切换" },
 ];
 /**
- * 引擎清单。**顺序 = 推荐顺序**：Tectonic 排第一 —— ADR-0014 把 Tectonic 定为新功能的基准形态，
- * 选项栏里它就该是第一眼看到的那个（注意这与"默认值"是两件事：`Settings::default` 仍是 XeLaTeX
- * + 子进程，改这里是改推荐顺序，不是改默认档）。
+ * 引擎清单（roadmap ㊻）：**来自后端** `list_engines`（顺序 / 名字 / 说明 / 本机可用性），
+ * 前端不再写死一份 —— 顺序（Tectonic 第一，ADR-0014）、名字与"这台机器上能不能用"是同一件事的
+ * 四个面，抄一份就会飘。
  *
  * ⚠ **`hint` 不进 `<option>` 的文本**：原生下拉的弹层按最长选项撑宽，把整句说明塞进选项会让弹层
- * 冲出面板（真机反馈）。选项只留名字，说明显示在 select 下方 —— 与「主题」「编译模式」两组同一范式。
+ * 冲出面板（真机反馈）。选项只留名字，说明显示在 select 下方 —— 与「主题」「编译模式」同一范式。
  */
-const ENGINES: { value: Engine; label: string; hint: string }[] = [
-  {
-    value: "tectonic",
-    label: "Tectonic",
-    // 文案必须与实现一致（runner.rs 的 `-C` 分档）：首次编译（本地缓存没有可用 bundle）**会联网**
-    // 下载宏包集；之后缓存就绪即离线复用。写成"总是联网"或"总是离线"都会与实际行为相反。
-    hint: "免装 TeX Live（自带宏包）；首次编译需联网下载宏包集（约 60 MB，可能数十秒到数分钟），之后离线复用缓存；该引擎下不启用页级增量复用",
-  },
-  { value: "xelatex", label: "XeLaTeX", hint: "默认档：中文支持最佳，需要本机装好 TeX Live" },
-  { value: "lualatex", label: "LuaLaTeX", hint: "Lua 脚本、最新特性；比 XeLaTeX 慢，首次编译要建字体缓存" },
-  { value: "pdflatex", label: "pdfLaTeX", hint: "传统引擎，中文需额外配置" },
-];
+const engines = ref<EngineInfo[]>([]);
+const enginesError = ref("");
 
-/** 当前选中引擎的那句说明（不在 `<option>` 里，见 `ENGINES` 的注释）。 */
-const engineHint = computed(() => ENGINES.find((e) => e.value === settings.value?.compile.engine)?.hint ?? "");
+async function loadEngineList() {
+  try {
+    engines.value = await loadEngines();
+    enginesError.value = "";
+  } catch (e) {
+    enginesError.value = `读取引擎清单失败：${String((e as { message?: string })?.message ?? e)}`;
+    engines.value = []; // 退化成"只有当前值"（见 engineOptions）
+  }
+}
+
+/**
+ * 选项 = 后端清单 **并上"当前设置的那个引擎"**。
+ *
+ * 为什么必须并：`LATTESET_TEX_ENGINES` 可以把某个引擎从清单里收窄掉，而设置里可能正用着它
+ * （真机实测：覆盖成 `pdf,xelatex` 时，`<select>` 因为没有匹配项而**显示空白**、说明行也空
+ * ——用户看不到"现在到底用的是什么"）。补一条**不可选**的只读项把这个事实讲出来。
+ */
+const engineOptions = computed<EngineInfo[]>(() => {
+  const cur = settings.value?.compile.engine;
+  const list = engines.value;
+  if (!cur || list.some((e) => e.id === cur)) return list;
+  return [
+    {
+      id: cur,
+      label: cur,
+      hint: "",
+      available: false,
+      reason: enginesError.value
+        ? `读取引擎清单失败，只显示当前设置里的引擎：${cur}`
+        : `当前设置指定的引擎（${cur}）不在本次构建开放的清单里（可能被 ${"LATTESET_TEX_ENGINES"} 收窄）—— 请改选下面任意一个引擎`,
+    },
+    ...list,
+  ];
+});
+
+/** 当前选中项（说明 / 不可用原因都从它取）。 */
+const currentEngine = computed(() =>
+  engineOptions.value.find((e) => e.id === settings.value?.compile.engine)
+);
+
+/** 说明行：可用 ⇒ 说明；不可用 ⇒ **原因**（带 err 样式，不留白）。 */
+const engineHint = computed(() => currentEngine.value?.reason || currentEngine.value?.hint || "");
+const engineUnavailable = computed(() => currentEngine.value?.available === false);
 
 const DEBOUNCE_MIN = 100;
 const DEBOUNCE_MAX = 5000;
@@ -226,7 +258,7 @@ async function resetDefaults() {
     mode: "continuous",
     debounce_ms: 500,
     timeout_secs: 120,
-    engine: "xelatex",
+    engine: "tectonic",
     // 向导也是"编译"页的项 ⇒ 一并回默认开（按钮的字面意思就是"恢复默认"）
     new_file_wizard: true,
   });
@@ -260,6 +292,8 @@ onMounted(async () => {
   } catch {
     libAvailable.value = false;
   }
+  // 引擎清单（㊻）：与形态探测并行发（互不依赖），前端只渲染后端给的结果
+  void loadEngineList();
   const t = tectonic.value;
   if (t) {
     bundleLocal.value = !!t.bundle;
@@ -489,10 +523,15 @@ async function applyCacheDir() {
           <div class="field">
             <label class="field-label" for="set-engine">TeX 引擎</label>
             <select id="set-engine" class="input select" :value="settings.compile.engine" @change="setEngine(($event.target as HTMLSelectElement).value as Engine)">
-              <option v-for="e in ENGINES" :key="e.value" :value="e.value">{{ e.label }}</option>
+              <!-- 清单来自后端（顺序 / 名字 / 可用性）：不可用的**留着一并禁用**并给原因，
+                   而不是悄悄藏掉——"本机没装 XeLaTeX"这件事本身就是要讲给用户听的信息 -->
+              <option v-for="e in engineOptions" :key="e.id" :value="e.id" :disabled="!e.available">
+                {{ e.label }}{{ e.available ? "" : "（不可用）" }}
+              </option>
             </select>
-            <!-- 说明放在 select **下方**（不进 option 文本）：原生弹层按最长选项撑宽，塞进去会冲出面板 -->
-            <p class="field-hint">{{ engineHint }}</p>
+            <!-- 说明/原因放在 select **下方**（不进 option 文本）：原生弹层按最长选项撑宽，塞进去会冲出面板 -->
+            <p class="field-hint" :class="{ err: engineUnavailable }">{{ engineHint }}</p>
+            <p class="field-hint err" v-if="enginesError">{{ enginesError }}</p>
             <!-- Tectonic 段只在选中 Tectonic 时显示（下面那条 template 的 v-if），所以这里必须
                  把"已经存了 Tectonic 设置、但当前不生效"讲出来——否则用户切到 XeLaTeX 后
                  那几项连看都看不到，成了隐形开关。 -->

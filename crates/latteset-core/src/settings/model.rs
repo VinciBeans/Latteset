@@ -156,7 +156,12 @@ impl Default for Settings {
                 mode: CompileMode::Continuous,
                 debounce_ms: 500,
                 timeout_secs: 120,
-                engine: Engine::XeLaTeX,
+                // 默认引擎 = **Tectonic**（roadmap ㊻，2026-09-17 产品负责人裁决：引擎以 Tectonic
+                // 为优先，新装就该走它）。**只影响"没有 settings.json"的新装/新用户**：老配置里
+                // 写着 `"engine":"xelatex"` 的人升级后一字节都不变（不静默换引擎）。
+                // 形态位 `lib_form` 仍是 false ⇒ 默认走**子进程**形态（需要 PATH 上有 tectonic.exe；
+                // 库形态要 `--features tectonic-lib` 构建，见 ADR-0012）。
+                engine: Engine::Tectonic,
                 // 默认开：新建第一个 .tex 时给新手一份能直接编译的骨架（roadmap ㊺ §6.13.1-A）
                 new_file_wizard: true,
             },
@@ -253,7 +258,9 @@ mod tests {
         assert_eq!(s.compile.mode, CompileMode::Continuous);
         assert_eq!(s.compile.debounce_ms, 500);
         assert_eq!(s.compile.timeout_secs, 120);
-        assert_eq!(s.compile.engine, Engine::XeLaTeX);
+        // 默认引擎 = Tectonic（roadmap ㊻）。形态位仍是子进程档：库形态要构建时打开特性。
+        assert_eq!(s.compile.engine, Engine::Tectonic);
+        assert!(!s.tectonic.lib_form);
         assert_eq!(s.root_file, None);
     }
 
