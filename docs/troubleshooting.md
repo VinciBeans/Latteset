@@ -751,3 +751,21 @@ netstat -ano | Select-String ":1420"     # 期望一行 [::1]:1420 LISTENING；�
 ```
 
 `Get-NetTCPConnection` 同样不可靠（会给出假阴性）。`[::1]:1420` 的 `TIME_WAIT` 行是正常的客户端残留，不代表有人在监听。
+
+## PowerShell 驱动命令行工具：变量名撞自动变量 + TeX Live 造 format 的三个口令（2026-09-17）
+
+**① 变量名撞自动变量**（PowerShell 变量名**大小写不敏感**；同一天实测踩了三次，报错都不指向真因）：
+
+| 写法 | 症状 |
+|---|---|
+| 函数参数 `$Args`（撞 `$args`） | `& xelatex @Args` 变成"**一个参数都不传**地跑 xelatex" ⇒ 工具报用法错、产物为空 |
+| param `$Samples = 3` + 局部 `$samples = @()` | `无法将类型"System.Object[]"的值转换为类型"System.Int32"` |
+| param `$Out = "..."` + 局部 `$out = [ordered]@{}` | `无法对类型为"System.String"的对象进行索引` |
+
+**处置**：脚本里避开 `args / out / samples / input / error / matches / pid / host / home` 这类名字；函数内局部变量加前缀（`$LatexArgs` / `$report` / `$runs`）。
+
+**② 在 TeX Live 2026 上造自定义 format（`mylatexformat`）的正确口令**：
+- `xetex -initialize …` 是 **MiKTeX** 写法；TeX Live 用 **`xetex -ini`**，并且**必须带 `-etex`**（否则 `! LaTeX requires e-TeX`）；
+- `mylatexformat.ltx` 要传**裸文件名**（让 kpathsea 找）；给绝对路径会 `Please type another input file name` 然后什么都 dump 不出来；
+- PowerShell 里带 `&` 的参数（`"&xelatex"`）走 `cmd /c "…"` 最稳（`&` 是 PS 的调用运算符）；
+- ⚠ **但即便口令全对，本机造出来的 format 加载即崩**（`xelatex -fmt=<name>` 退出码 `-1073741819` = `0xC0000005` 访问违例，日志 0 字节；**最小 `article` 同样崩**）⇒ 别在这条路上投入。完整侦察（两条路线、四个导言区、字节对拍）见 [roadmap §6.12](./research/tex-ide-roadmap-priority.md)。

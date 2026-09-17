@@ -1,0 +1,140 @@
+{
+  "L 轻（article+amsmath）": {
+    "fmt_built": true,
+    "fmt_ms": 705,
+    "fmt_kb": 5849,
+    "base_xdv_ms": [
+      477,
+      480,
+      491
+    ],
+    "fmt_xdv_ms": [
+      381,
+      385,
+      389
+    ],
+    "base_pdf_ms": [
+      997,
+      983,
+      972
+    ],
+    "fmt_pdf_ms": [
+      379,
+      378,
+      385
+    ],
+    "base_xdv_sha": "8DEE1206D0A8EE91C209CA9D407B8D71E2EFC1DE92D19133D7BFA8AB10C173B9",
+    "fmt_xdv_sha": null,
+    "base_pdf_sha": "FFE21D3883A8EDF0AE97A37E01EB5A259D0FD0FDBF31A384CA29D4BE8C805017",
+    "fmt_pdf_sha": null,
+    "same_xdv": false,
+    "same_pdf": false,
+    "undefined": 0,
+    "class_lines": 0,
+    "speedup": 1.25
+  },
+  "H 重（ctexbook+tikz）": {
+    "fmt_built": true,
+    "fmt_ms": 1054,
+    "fmt_kb": 7639,
+    "base_xdv_ms": [
+      896,
+      752,
+      764
+    ],
+    "fmt_xdv_ms": [
+      490,
+      471,
+      485
+    ],
+    "base_pdf_ms": [
+      1251,
+      1256,
+      1264
+    ],
+    "fmt_pdf_ms": [
+      485,
+      478,
+      474
+    ],
+    "base_xdv_sha": "3895E803158EDD660D43CCFDD380E6611BF68172B953ABB9392669EEF6D8B308",
+    "fmt_xdv_sha": null,
+    "base_pdf_sha": "51564A91F14D47176C386A09CC1E32BDE47B33D57FBECB1FDA290B402BD0B875",
+    "fmt_pdf_sha": null,
+    "same_xdv": false,
+    "same_pdf": false,
+    "undefined": 0,
+    "class_lines": 0,
+    "speedup": 1.67
+  },
+  "X 含 hyperref": {
+    "fmt_built": true,
+    "fmt_ms": 790,
+    "fmt_kb": 6323,
+    "base_xdv_ms": [
+      537,
+      531,
+      532
+    ],
+    "fmt_xdv_ms": [
+      385,
+      395,
+      390
+    ],
+    "base_pdf_ms": [
+      1001,
+      1009,
+      1030
+    ],
+    "fmt_pdf_ms": [
+      385,
+      382,
+      390
+    ],
+    "base_xdv_sha": "8BAFED5CED2B51AA0C55646BF6EEE08946FDD68A33535B6214984A6F2A6E22F5",
+    "fmt_xdv_sha": null,
+    "base_pdf_sha": "323A2AFD8F89BDC1024F83D3E137C1021EF453E5CD7C571A3680A3C91055B962",
+    "fmt_pdf_sha": null,
+    "same_xdv": false,
+    "same_pdf": false,
+    "undefined": 0,
+    "class_lines": 0,
+    "speedup": 1.37
+  },
+  "B 含 biblatex": {
+    "fmt_built": true,
+    "fmt_ms": 1015,
+    "fmt_kb": 7197,
+    "base_xdv_ms": [
+      803,
+      772,
+      768
+    ],
+    "fmt_xdv_ms": [
+      419,
+      418,
+      418
+    ],
+    "base_pdf_ms": [
+      1271,
+      1273,
+      1281
+    ],
+    "fmt_pdf_ms": [
+      422,
+      417,
+      430
+    ],
+    "base_xdv_sha": "C76D2E7B49540E704504502924D2A6BCA954EB45C351E77ABF17361F96466EBE",
+    "fmt_xdv_sha": null,
+    "base_pdf_sha": "D6844812F9CAD2BACA2BC175A9F59C1D70DF06C927A5F0189930B38A79E0A6D5",
+    "fmt_pdf_sha": null,
+    "same_xdv": false,
+    "same_pdf": false,
+    "undefined": 0,
+    "class_lines": 0,
+    "speedup": 1.87
+  },
+  "when": "2026-09-17T19:09:31",
+  "note": "TeX Live 2026 xelatex + mylatexformat 3.4；SOURCE_DATE_EPOCH=1700000000；每轮清 aux"
+}
