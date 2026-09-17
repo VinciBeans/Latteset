@@ -67,6 +67,10 @@ function onEditorMouseMove(e: monaco.editor.IEditorMouseEvent) {
   // 主编译（queued/running）期间**不发起**悬停编译：库形态的引擎是**进程内全局锁**，此刻发起
   // 只会排队等锁（图出来时鼠标早走了），还会白占一次 30 s 上限的任务（roadmap §6.11.4 决定）。
   if (compileStore.phase === "running" || compileStore.phase === "queued") {
+    // 诊断计数：真机验收要能把"守卫生效"与"这次悬停位置上本来就没有公式"区分开
+    // （与 window.__mathPreview 同款只读可观测约定）。
+    const w = window as unknown as Record<string, number>;
+    w.__mathHoverSkipped = (w.__mathHoverSkipped ?? 0) + 1;
     window.clearTimeout(mathTimer);
     hideMathCard();
     return;
