@@ -221,7 +221,15 @@
 - **硬证据**：`thesis-real-hithesis`（TeX Live 自带样例）用产品完全相同的命令冷编译，~4 分钟后报 `! I can't write on file 'body/introduction.aux'` → `Emergency stop`，随后 `latexmk`/`perl` **挂住不退出**（实测 10 分钟零 CPU）——产品侧因此看到的是「超时」而不是「内容错误」。
 - **已知机制**：`\include{子目录/文件}` 要写 `tmp/子目录/文件.aux`，xelatex **不创建输出目录的子目录**；latexmk 一般会在第一趟失败后建目录并重跑（合成 `multifile` 档无事），hithesis 这一档没有恢复。
 - **嫌疑**：该模板自带 latexmkrc（覆写 `$pdflatex`、内建 `--shell-escape`、尾部 `;cp`）与 `-outdir=tmp` 的相互作用。
-- **尚未定位**：用精简 rc 复刻关键行跑最小工程仍能恢复 → **没有可复现的 rc 最小组合**；最小复现与绕过（`\include` → `\input`）见 [troubleshooting.md](../troubleshooting.md)。
+- **✅ 触发条件已定位（2026-09-17）**：模板 rc 里写着 **`$preview_continuous_mode = 1;`** —— 那是 latexmk 的 **`-pvc`（连续预览模式）**：编译完（或报错后）**都不退出**，停在那里等文件变化 ⇒ 我们的 runner 一直等 ⇒ 产品侧看到的是**超时**而不是内容错误 ✓ 与当年"10 分钟零 CPU"完全吻合。
+  **判决实验**（含同一份 rc 的临时目录 + 一个 3 行小文档，`latexmk -xelatex -outdir=tmp`）：文档**编译成功**（`main.pdf` 2723 B）却在 25 s 后**仍在运行**（CPU 累计 0.3 s），输出写着
+  `Latexmk: I have not found a previewer that is already running. So I will start it for 'tmp/main.pdf'` → `Running 'start start "tmp/main.pdf"'` → `=== Watching for updated files. Use ctrl/C to stop ...`
+  ⇒ ① 不退出 = pvc；② **还会顺手拉起外部 PDF 预览器**（`start` 一个 `tmp/main.pdf`）——这在用户机器上是可见的副作用。
+- **修法（已定，待实现 + 真夹具验证）**：
+  1. **命令行覆盖 rc 的 pvc**：`latexmk -e '$preview_continuous_mode = 0;'`（`-e` 在读完 rc **之后**执行 ⇒ 与我们已经用过的 `-e '$biber=0;…'` 同一机制；实测该机制在本机可用）；
+  2. **预建输出子目录**：`\include{body/…}` 要写 `tmp/body/*.aux`，而 xelatex 不建子目录 ⇒ 按项目 include 图预建 `tmp/<子目录>/`（我们本来就有 include 图/扫描器），让那句 `I can't write on file 'body/…aux'` 根本不发生；
+  3. 顺带：`;cp %D %R.pdf` 这类 rc 尾部命令在 Windows 上依赖 `cp`（Git 的 usr/bin 有才行）——**不改它**（属模板自由），但失败要能从日志里看出来。
+- **出口条件不变**：带 latexmkrc 的真实模板能编译成功，**或**产品给出明确可操作的诊断；③ 的 ">240s 未收敛" 记录在修好后用 `node scripts/bench.mjs --with-real --no-warmup` 重测。**待办**：实现上面两条 + 用 `test_file/research/tl-compile/hithesis_哈工大___xe` 真编一次（该夹具约 4 分钟）。
 - **出口条件**：带 latexmkrc 的真实模板能编译成功，**或**产品给出明确可操作的诊断；③ 的 ">240s 未收敛" 记录在修好后用 `node scripts/bench.mjs --with-real --no-warmup` 重测。
 
 ### 6.2 ⑦c 多文件大项目 —— ✅ 已完成（夹具 + 口径 + 数据，结论：**不需要优化**）
