@@ -65,7 +65,7 @@
 |---|---|---|---|---|---|---|---|---|
 | ⑧ | 跨文件 LaTeX 语义操作 | 4 | 5 | 4 | 3 | **1.29** | P1 | P10：VS Code 明确缺失（§6.3） |
 | ㊸ | **悬停/光标所在公式的即时预览**（TeXStudio 式内联浮层：把**这一个公式**单独编译成图给出来；**范围：仅 Tectonic 形态**，非 Tectonic 引擎不提供 —— ADR-0014） | 3 | 3 | 3 | 2 | **1.2** | P1 | **产品负责人点名入表（2026-09-17）**。竞品有但都停在"近似渲染"：TeXStudio 用真排版做内联浮层/`Alt+P`（其已知坑见 §6.11），**LaTeX Workshop 的 hover 是 MathJax 近似**（不认项目宏、字体与断行都不保真）⇒ 我们的差异化 = **项目导言区 + 真引擎**排这一个公式。需求侧有一手信号（SE `hover preview` 系 5 题合计 **≈2.5 万浏览** + Neovim 侧有 `latex-preview.nvim` 这类第三方实现，逐条见 §6.11）。成本锚点**已实测**（不是估的）：片段文档单独编译 **79 ms（最小）/ ≈200 ms（真实导言区）**，同机全篇 125 页第 1 趟 **1716 ms** ⇒ ≈1/8；后端与三个真机坑的修法都在 `git show 0ac930c`（已回退的片段预览 A）。C 记 3 是含"公式扫描器 + 悬停去抖/缓存 + 稿层隔离"；**若直接复用 A 的后端可压到 C=2 ⇒ P=1.5，且满足"成本 ≤2 且独立可交付"⇒ 可走快速通道插队**。关键约束：库形态引擎是**进程内全局锁** ⇒ 主编译期间不发起（㊴ 落地后可放开）。**P0 定量已完成（2026-09-17，数据见 §6.11.8）＋ 两处决策已定（悬停即编译、多行按整段环境）＋ 切片 1（core，21 例单测）与切片 2（headless 命令面 `latteset-cli math`，实测 171→79 / 439→333 ms、零污染）均已落地，剩切片 3（前端悬停浮层）**：库形态下三档导言区（24 B / 337 B / ctexbook+tikz）= **240 / 545 / 760 ms**（热 format，含 145–409 ms 的转换），同机全篇 1.87–2.20 s ⇒ **片段稳定在 1/3–1/8，没有"重导言区崩到全篇量级"这回事，形态不用改判**；关键副产品三条：**公式内容免费**（空跑≈行内≈行间，±15 ms）、**同一 snippet 目录重复悬停走 A 闸门只要 77/332 ms**（⇒ 目录要按公式保留、别照 A 每次清空）、**冷启动悬崖来自外部工具**（biblatex 模板 biber ⇒ 8.6 s，热态 440 ms）。 |
-| ㉖ | **模板自带 latexmkrc 与构建约定的交互**（**触发条件已定位、修法已实现+机制验证**，真夹具整编待跑） | 3 | 4 | 3 | 3 | **1.17** | P1 | hithesis：rc 覆写 `$pdflatex` + `--shell-escape` + 尾部 `;cp`，在 `-outdir=tmp` 下 `\include{body/...}` 写不出 aux、报错后 latexmk 挂住；真凶 = rc 的 `$preview_continuous_mode = 1`（= `-pvc` ⇒ latexmk 永不退出 ⇒ 产品只看到超时，且会拉起外部预览器）⇒ 已用 `-e` 中和 + 预建 `\include` 的输出子目录；探针 1453 ms 正常退出 ✓、子目录工程 success ✓（§6.1） |
+| ㉖ | **模板自带 latexmkrc 与构建约定的交互**（**触发条件已定位、修法已实现、真夹具已验证：挂住消除**） | 3 | 4 | 3 | 3 | **1.17** | P1 | hithesis：rc 覆写 `$pdflatex` + `--shell-escape` + 尾部 `;cp`，在 `-outdir=tmp` 下 `\include{body/...}` 写不出 aux、报错后 latexmk 挂住；真凶 = rc 的 `$preview_continuous_mode = 1`（= `-pvc` ⇒ latexmk 永不退出 ⇒ 产品只看到超时，且会拉起外部预览器）⇒ 已用 `-e` 中和 + 预建 `\include` 的输出子目录；探针 1453 ms 正常退出 ✓、子目录工程 success ✓（§6.1） |
 | ⑪ | 预览滚动/缩放保持、只重排变更页 | 4 | 3 | 4 | 2 | **1.17** | P1 | 官方承认"丢失滚动位置"；判定输入**已就位**（页哈希差分，见 §6.4 与 [增量编辑 × DVI 专项](./incremental-edit-x-dvi.md)）；建议先做零风险的"全同则不刷新"（C1） |
 | ㉞ | **流式出图**：编译期把"已完成页"变成**部分 PDF** 交给预览（长编译可见地逐页出现） | 3 | 4 | 3 | 3 | **1.17** | P1 | 可行性已重评（[DVI 报告](./dvi-preview-feasibility.md) §10）：合成 postamble **9–12 ms** + **进程内**转换 **92–131 ms/次**（旧评估的外部进程是 0.65–0.94 s）；价值窗口 = 冷 Full 125 页 **7601 ms** 里"排版结束→出 PDF"那 5736 ms；体感已测（5 次背靠背重载 **0 long task**、滚动位置 1797 帧零偏移）。**落地完成（§6.6）**：切片 1–4 全部完成并各自真机验证（趟边界出图，提前 ≈5.5 s、代价 +4.4%；`compile-preview` 事件；前端换字节不换身份）。**能力边界**：只能"趟间可见"（多趟文档，冷编通常 2–3 趟），单趟就收敛的编译拿不到中间帧 |
 | ⑨ | LSP（texlab）集成 | 4 | 3 | 4 | 3 | **1.00** | P1 | P8：补全/引用是长期痛点；建议与 ⑧ 合并（§6.3） |
@@ -233,7 +233,13 @@
   1. `latexmk -e '$preview_continuous_mode=0;$pdf_update_method=0;'`（常量 `LATEXMK_RC_NEUTRALIZE`；**刻意不留空格** —— 带空格的参数要靠调用方正确加引号，不留空格就与引号无关）；
   2. `ensure_include_subdirs()`：起 latexmk 前扫根文件的 `\include{…}`/`\input{…}` 字面量（含反斜杠的宏名跳过），预建 `tmp/<子目录>/`。
   **验证**：① 探针（`test_file/e2e/latexmkrc-fix/probe`，同一个 hithesis rc + 3 行小文档、argv 与产品一致）⇒ latexmk **1453 ms 正常退出**、产物齐（`main.pdf`/`main.xdv`/`main.synctex.gz`）、末尾 `All targets … are up-to-date`（**不再**出现 `Watching for updated files` / `start start "tmp/main.pdf"`）；对照：不带该参数的同一探针 25 s 仍在跑 ✓。② 合成工程 `\include{sub/x}` 走我们的 CLI `Full`（latexmk）⇒ `status=success`、`tmp/sub/x.aux` 与项目根 `main.pdf` 都落位 ✓。单测同步更新（`full_command_uses_latexmk_with_engine_flag` 现在钉住这两个参数；infra **39 例全绿**）。
-- **仍待跑**：`test_file/research/tl-compile/hithesis_哈工大___xe` 的**整篇**真编（约 4 分钟）—— 它超过 CLI/设置默认的 120 s 超时，跑之前要先把超时调大（设置 `timeout_secs` ≥ 300）；跑通后再按出口条件复测 ③ 的 ">240s 未收敛"（`node scripts/bench.mjs --with-real --no-warmup`）。
+- **真夹具实测（2026-09-17，`test_file/research/tl-compile/hithesis_哈工大___xe`）**：
+  - **挂住已消除（核心结论）**：同一个夹具、同一份文档，只差我们那两个参数 ——
+    **不带** `-e` 中和：20 s 后**仍在跑**，输出停在 `=== Watching for updated files. Use ctrl/C to stop ...`（= pvc 挂住）；
+    **带**产品 argv：**3 s 退出（exit 12）**并给出真实错误 ⇒ 产品从此看到的是**内容错误**而不是 120 s **超时** ✓
+    ⇒ 出口条件的第二条（"**或**产品给出明确可操作的诊断"）成立 ✓。
+  - **"模板能编译成功"在本机不成立，且与 ㉖ 无关**：该模板要 `ctexbook` 的 `windowsnew` 字体集（本机没有）、报 `Command \Bbbk already defined`、且 `hithesis.cls` 不在测试 bundle 里 ⇒ 属**环境/模板**问题（缺字体集、包冲突），不是构建约定问题。
+  - ⚠ 因此本轮**没有**在真夹具上走到 `\include{body/…}`（它在到达 include 之前就失败了）⇒ 预建子目录这条只在**合成工程** `\include{sub/x}` 上证过（见上）；③ 的 `>240s 未收敛` 复测对 hithesis **不适用**（它在本机根本编不过），要换一个能编过、且带 rc 的模板再测。
 - **出口条件**：带 latexmkrc 的真实模板能编译成功，**或**产品给出明确可操作的诊断；③ 的 ">240s 未收敛" 记录在修好后用 `node scripts/bench.mjs --with-real --no-warmup` 重测。
 
 ### 6.2 ⑦c 多文件大项目 —— ✅ 已完成（夹具 + 口径 + 数据，结论：**不需要优化**）
