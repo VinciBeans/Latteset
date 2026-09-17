@@ -789,6 +789,27 @@ netstat -ano | Select-String ":1420"     # 期望一行 [::1]:1420 LISTENING；�
 - PowerShell 里带 `&` 的参数（`"&xelatex"`）走 `cmd /c "…"` 最稳（`&` 是 PS 的调用运算符）；
 - ⚠ **但即便口令全对，本机造出来的 format 加载即崩**（`xelatex -fmt=<name>` 退出码 `-1073741819` = `0xC0000005` 访问违例，日志 0 字节；**最小 `article` 同样崩**）⇒ 别在这条路上投入。完整侦察（两条路线、四个导言区、字节对拍）见 [roadmap §6.12](./research/tex-ide-roadmap-priority.md)。
 
+## Vue SFC：写在 `</style>` 之后的规则是**死 CSS**，构建不会报错（2026-09-17 实测）
+
+**症状**：`FileTree.vue` 的新建入口 `＋` 紧贴标题文字，`margin-left: auto` 看着"没生效"；行内输入框呈浏览器默认样式。
+
+**根因**：`.new-file / .new-row / .new-input / .new-error` 这一整段被写在了 **`</style>` 之后**（文件顶层、任何 block 之外）。SFC 编译期**不报错**、`vue-tsc` 与 `vite build` 全过 —— 那 30 行只是被丢弃，元素自然一条规则都没吃到。`margin-left:auto` 本来是对的。
+
+**怎么自查**（一条命令，扫全仓）：
+
+```powershell
+Get-ChildItem src -Recurse -Filter *.vue | ForEach-Object {
+  $lines = Get-Content $_.FullName
+  $idx = ($lines | Select-String -Pattern '^</style>' | Select-Object -Last 1).LineNumber
+  if ($idx -and $idx -lt $lines.Count) {
+    $tail = ($lines[$idx..($lines.Count-1)] | Where-Object { $_.Trim() -ne '' })
+    if ($tail.Count -gt 0) { "⚠ $($_.Name)：</style> 之后还有 $($tail.Count) 行：$($tail[0])" }
+  }
+}
+```
+
+**处置**：把规则挪回 `<style scoped>` 内。判据不看截图看几何（`webview_execute_js` 读 `getBoundingClientRect` 与 `getComputedStyle(btn).marginLeft`）：按钮右缘应等于面板右缘减内边距、`marginLeft` 应是**算出来的 px 值**（`auto` 被解析掉）而不是 `auto`。
+
 ## 实验室的精简 bundle 不含 `beamer.cls`：选「幻灯片」会编不过（2026-09-17 实测，非缺陷）
 
 **症状**：向导里选「幻灯片」建出的骨架，在本机（引擎 = Tectonic 库内嵌 + `LATTESET_TECTONIC_BUNDLE=test_file/tectonic-bundle`）编译**失败得很快（0.35 s）**，错误列表一条：

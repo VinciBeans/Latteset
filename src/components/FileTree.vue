@@ -252,7 +252,9 @@ const tree = computed(buildTree);
 .empty-icon { font-size: 26px; }
 .empty-title { font-size: 12.5px; font-weight: 600; color: var(--ink-dim); }
 .empty-hint { font-size: 11.5px; }
-</style>
+
+/* 新建入口（㊺）：**贴资源管理器这一列的右缘**，不跟着标题文字走
+   —— `margin-left:auto` 把它推到面板右侧（`.panel-title` 是 flex 行）。 */
 .new-file {
   margin-left: auto;
   border: none;
@@ -283,3 +285,4 @@ const tree = computed(buildTree);
   color: var(--rose, #d1547e);
   white-space: pre-wrap;
 }
+</style>

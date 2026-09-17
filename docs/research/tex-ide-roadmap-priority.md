@@ -886,6 +886,8 @@ XDV 逐字节对比显示原因：重导言区里有 `pdf:pagesize width 614.295
 
 **一条环境事实（不是缺陷）**：本机实验室用的 **精简 bundle**（`test_file/tectonic-bundle`，424 个文件，离线复现用）**不含 `beamer.cls`** ⇒ 选「幻灯片」会得到 `! LaTeX Error: File 'beamer.cls' not found.`（错误列表照常给出、不是静默失败）。**同一份骨架用 TeX Live 2026 的 `xelatex` 编出 1 页（exit 0）** ⇒ 骨架本身是合法 beamer；上游标准 bundle 含 beamer。详见 [troubleshooting.md](../troubleshooting.md)。
 
+**一处真机反馈（2026-09-17 产品负责人）**：`＋` 原本**紧贴「资源管理器」文字**，应贴在这一列的**右缘**。根因不是 `margin-left:auto` 写错，而是 `FileTree.vue` 里 `.new-file/.new-row/.new-input/.new-error` **四条规则写在了 `</style>` 之后** ⇒ 整段是死 CSS（SFC 编译期不报错、`npm run build` 照过），输入框当时用的是浏览器默认样式。修法：把这段挪回 `<style scoped>` 内。真机几何判据：`.panel-title` 横跨 x 0→256、按钮右缘 **242**（= 右内边距 14 px），`margin-left` 计算值 119 px（auto 生效）；建文件行输入框宽 240 px、`padding 3px 6px`、圆角 4 px。同类坑见 [troubleshooting.md](../troubleshooting.md)。
+
 **英文骨架的占位文字**：首轮真机验收发现英文 book 的目录里冒出"第一节" ⇒ `document_skeleton` 的占位文字改为随语言（`第一节`/`Introduction`、`第一页`/`First frame`），单测钉住"英文骨架里不出现汉字"。
 
 **待真机验收**：无（~~判据 4~~ ✅ 已验）。**其余待办**：见 §6.13 的"新建目录 / 右键在选中目录里建"。
