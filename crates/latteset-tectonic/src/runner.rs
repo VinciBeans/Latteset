@@ -762,8 +762,12 @@ fn run_engines(
                 let what = if passes == 0 { "排版趟" } else { "排版趟（重跑）" };
                 run_tex_pass(&mut launcher, &name, what)?;
                 passes += 1;
+                // ⚠ **每趟都要更新**（原先只在 `passes == 1` 里赋值 ⇒ 第 2 趟及之后的时间被算进
+                //    `convert_ms`，2 趟时那个字段虚高约一倍，让人误判"转换是大头"；2026-09-17 实测
+                //    M0 夹具：2 趟报 convert=148–151、1 趟报 78–81，而两者的 XDV 完全同尺寸同内容）。
+                //    口径：`typeset_ms` = **全部**排版趟；`convert_ms` = 只有 XDV→PDF 那一次。
+                phase_ms.1 = t_start.elapsed().as_millis();
                 if passes == 1 {
-                    phase_ms.1 = t_start.elapsed().as_millis();
                     first_pass = loop_started.elapsed();
                     // 上游 `driver.rs:1900-1904`：TeX 没产出预期输出文件时要**明说**（多因文档为空），
                     // 否则错误会以"XDV→PDF 失败"的形式出现、指向错误的方向。
