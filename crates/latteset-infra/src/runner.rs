@@ -237,8 +237,52 @@ fn root_stem(root_file: &Path) -> String {
         .unwrap_or_else(|| "main".to_string())
 }
 
-/// latexmk 输入参数：相对项目根的完整路径（不能用 stem——嵌套根文件如 `css/thesis.tex`
-/// 只取 stem 会跑成 `latexmk thesis.tex`，在项目根下不存在）。统一用正斜杠，避免 Windows
+/// 中和模板自带 `latexmkrc` 的两条设置（roadmap ㉖，2026-09-17 定位 + 判决实验）。
+///
+/// 真凶不是 `\include` 的 aux 子目录，而是 rc 里的 **`$preview_continuous_mode = 1;`**（= latexmk 的
+/// `-pvc`）：latexmk 编译完（或报错后）**都不退出**，停在那里等文件变化、CPU 归零 ⇒ 我们的 runner
+/// 只能等到超时 ⇒ 用户看到的是「超时」而不是真正的内容错误；实测它还会顺手**拉起外部 PDF 预览器**
+/// （`Running 'start start "tmp/main.pdf"'`）。
+///
+/// 为什么用 `-e`：它在 latexmk **读完 rc 之后**才执行 ⇒ 能覆盖 rc 的赋值，而模板的其它设置
+/// （`$pdflatex` 覆写、`--shell-escape`、`splitindex`…）一概不动（与本项目已用过的
+/// `-e '$biber=0;…'` 同一机制）。
+pub const LATEXMK_RC_NEUTRALIZE: &str = "$preview_continuous_mode=0;$pdf_update_method=0;";
+
+/// 预建 `\include{子目录/…}` 需要的输出子目录（roadmap ㉖）。
+///
+/// 只扫根文件里的 `\include{…}` / `\input{…}` 字面量（宏拼接的动态名跳过），目录已存在就无事发生。
+/// 失败只记 `debug!`：这一步是**预防**，不该让编译本身失败。
+fn ensure_include_subdirs(root_file: &Path, project_root: &Path) {
+    let Ok(source) = std::fs::read_to_string(root_file) else {
+        return;
+    };
+    let out_dir = project_root.join(OUT_DIR);
+    let mut made = 0usize;
+    for needle in ["\\include{", "\\input{"] {
+        for (idx, _) in source.match_indices(needle) {
+            let after = &source[idx + needle.len()..];
+            let Some(end) = after.find('}') else { continue };
+            let target = after[..end].trim();
+            // 含 `\` 的目标多半是宏名（`\jobname` 之类）而不是字面路径 —— 跳过（保守，不猜）。
+            if target.is_empty() || target.contains('\\') {
+                continue;
+            }
+            let Some(dir) = Path::new(target).parent() else { continue };
+            if dir.as_os_str().is_empty() {
+                continue;
+            }
+            if std::fs::create_dir_all(out_dir.join(dir)).is_ok() {
+                made += 1;
+            }
+        }
+    }
+    if made > 0 {
+        debug!(dirs = made, "预建输出子目录（`\\include` 的 aux 落点）");
+    }
+}
+
+/// latexmk 输入参数：相对项目根的完整路径（不能用 stem——嵌套根文件如 `css/thesis.tex`/// 只取 stem 会跑成 `latexmk thesis.tex`，在项目根下不存在）。统一用正斜杠，避免 Windows
 /// 反斜杠在 latexmk 内被当作转义。latexmk jobname 取输入文件名 basename，故产物仍是
 /// `tmp/<stem>.pdf`，与 `pdf_dst`/`pdf_src` 的 stem 计算保持一致。
 fn latexmk_input(root_file: &Path, project_root: &Path) -> String {
@@ -287,9 +331,17 @@ fn compile_command(req: &CompileRequest, kind: CompileKind, bundle: BundlePolicy
             if req.engine == latteset_core::types::Engine::Tectonic {
                 tectonic_command(req, false, bundle)
             } else {
+                // ㉖：起 latexmk 之前按根文件的 `\include`/`\input` 列表预建输出子目录 ——
+                // `\include{body/intro}` 要写 `tmp/body/intro.aux`，而 xelatex **不建**输出目录的子目录
+                // （latexmk 一般会在第一趟失败后补建再重跑，但遇到 rc 的 pvc / 错误停止就不补）⇒
+                // 报 `! I can't write on file 'body/intro.aux'` 然后 Emergency stop。
+                ensure_include_subdirs(&req.root_file, &req.project_root);
                 let mut c = crate::proc::command("latexmk");
                 c.arg(req.engine.latexmk_flag())
                     .arg(format!("-outdir={OUT_DIR}"))
+                    // ㉖：中和模板 rc 里的 `$preview_continuous_mode = 1`（= `-pvc`，latexmk 永不退出）。
+                    .arg("-e")
+                    .arg(LATEXMK_RC_NEUTRALIZE)
                     .arg("-synctex=1")
                     .arg("-interaction=nonstopmode")
                     .arg(latexmk_input(&req.root_file, &req.project_root));
@@ -1175,6 +1227,9 @@ mod tests {
             vec![
                 "-lualatex",
                 "-outdir=tmp",
+                // ㉖：中和模板 rc 的 `$preview_continuous_mode = 1`（否则 latexmk 永不退出）
+                "-e",
+                LATEXMK_RC_NEUTRALIZE,
                 "-synctex=1",
                 "-interaction=nonstopmode",
                 "css/thesis.tex",
