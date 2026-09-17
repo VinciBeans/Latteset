@@ -58,28 +58,74 @@ async function draw() {
   doc = pdf;
   const page = await pdf.getPage(1);
   const base = page.getViewport({ scale: 1 });
-  // 片段卡按"够看清公式"定宽（不跟随主预览的缩放）
-  const scale = Math.min(2.5, Math.max(1, 320 / Math.max(base.width, 1)));
-  const viewport = page.getViewport({ scale });
+  // 片段文档是**一整页**（`article` 的 A4 版心），公式只占中间一小块 ⇒ 直接画整页会留下大片空白
+  // （用户实测反馈）。所以先离屏渲染一页，再按**内容包围盒**裁到公式本身。
+  const SCALE = 2; // 离屏渲染倍率：够清晰，又不至于让像素扫描太贵
+  const PAD = 10; // 裁剪留白（离屏像素）
+  const MAX_CSS_W = 340; // 卡片里公式的最大显示宽度（CSS px）
+
+  const off = document.createElement("canvas");
+  off.width = Math.max(1, Math.floor(base.width * SCALE));
+  off.height = Math.max(1, Math.floor(base.height * SCALE));
+  const octx = off.getContext("2d", { willReadFrequently: true });
+  if (!octx) {
+    renderError.value = "拿不到离屏 2D 上下文";
+    return;
+  }
+  octx.fillStyle = "#ffffff";
+  octx.fillRect(0, 0, off.width, off.height);
+  const offViewport = page.getViewport({ scale: SCALE });
+  renderTask = page.render({ canvas: off, canvasContext: octx, viewport: offViewport } as never);
+  try {
+    await renderTask.promise;
+  } catch (e) {
+    renderError.value = `预览渲染失败：${String(e)}`;
+    return;
+  }
+
+  // 找非白像素的包围盒（片段页只有公式，没有页眉页脚 —— 装配时已 `\pagestyle{empty}` + `\nofiles`）
+  const pixels = octx.getImageData(0, 0, off.width, off.height).data;
+  let minX = off.width;
+  let minY = off.height;
+  let maxX = -1;
+  let maxY = -1;
+  for (let y = 0; y < off.height; y++) {
+    const row = y * off.width * 4;
+    for (let x = 0; x < off.width; x++) {
+      const i = row + x * 4;
+      if (pixels[i] < 245 || pixels[i + 1] < 245 || pixels[i + 2] < 245) {
+        if (x < minX) minX = x;
+        if (x > maxX) maxX = x;
+        if (y < minY) minY = y;
+        if (y > maxY) maxY = y;
+      }
+    }
+  }
+  if (maxX < 0 || maxY < 0) {
+    renderError.value = "片段页是空白的（没有排出版式）";
+    return;
+  }
+  const cx = Math.max(0, minX - PAD);
+  const cy = Math.max(0, minY - PAD);
+  const cw = Math.min(off.width - cx, maxX - minX + 1 + PAD * 2);
+  const ch = Math.min(off.height - cy, maxY - minY + 1 + PAD * 2);
+
+  // 裁剪后按"最多 MAX_CSS_W"缩小显示（公式很长时也不撑爆卡片）
+  const cssW = Math.min(MAX_CSS_W, cw / SCALE);
+  const cssH = (ch / cw) * cssW;
   const dpr = window.devicePixelRatio || 1;
-  canvas.width = Math.floor(viewport.width * dpr);
-  canvas.height = Math.floor(viewport.height * dpr);
-  canvas.style.width = `${viewport.width}px`;
-  canvas.style.height = `${viewport.height}px`;
+  canvas.width = Math.floor(cssW * dpr);
+  canvas.height = Math.floor(cssH * dpr);
+  canvas.style.width = `${cssW}px`;
+  canvas.style.height = `${cssH}px`;
   const ctx = canvas.getContext("2d");
   if (!ctx) {
     renderError.value = "拿不到 2D 上下文";
     return;
   }
-  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   ctx.fillStyle = "#ffffff";
-  ctx.fillRect(0, 0, viewport.width, viewport.height);
-  renderTask = page.render({ canvas, canvasContext: ctx, viewport, transform: dpr === 1 ? undefined : [dpr, 0, 0, dpr, 0, 0] } as never);
-  try {
-    await renderTask.promise;
-  } catch (e) {
-    renderError.value = `预览渲染失败：${String(e)}`;
-  }
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+  ctx.drawImage(off, cx, cy, cw, ch, 0, 0, canvas.width, canvas.height);
 }
 
 watch(() => [props.pdfPath, props.formula], () => void draw(), { immediate: true });
