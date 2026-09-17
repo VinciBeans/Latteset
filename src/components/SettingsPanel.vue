@@ -77,10 +77,15 @@ const THEMES: { value: UiTheme; label: string; hint: string }[] = [
   { value: "dark", label: "深色", hint: "夜间态：墨紫罗兰纸面 + 提亮的糖果色" },
   { value: "system", label: "跟随系统", hint: "按操作系统的深浅色偏好切换" },
 ];
+/**
+ * 引擎清单。**顺序 = 推荐顺序**：Tectonic 排第一 —— ADR-0014 把 Tectonic 定为新功能的基准形态，
+ * 选项栏里它就该是第一眼看到的那个（注意这与"默认值"是两件事：`Settings::default` 仍是 XeLaTeX
+ * + 子进程，改这里是改推荐顺序，不是改默认档）。
+ *
+ * ⚠ **`hint` 不进 `<option>` 的文本**：原生下拉的弹层按最长选项撑宽，把整句说明塞进选项会让弹层
+ * 冲出面板（真机反馈）。选项只留名字，说明显示在 select 下方 —— 与「主题」「编译模式」两组同一范式。
+ */
 const ENGINES: { value: Engine; label: string; hint: string }[] = [
-  { value: "xelatex", label: "XeLaTeX", hint: "默认，中文支持最佳" },
-  { value: "lualatex", label: "LuaLaTeX", hint: "Lua 脚本、最新特性；比 XeLaTeX 慢，首次编译要建字体缓存" },
-  { value: "pdflatex", label: "pdfLaTeX", hint: "传统引擎，中文需额外配置" },
   {
     value: "tectonic",
     label: "Tectonic",
@@ -88,7 +93,13 @@ const ENGINES: { value: Engine; label: string; hint: string }[] = [
     // 下载宏包集；之后缓存就绪即离线复用。写成"总是联网"或"总是离线"都会与实际行为相反。
     hint: "免装 TeX Live（自带宏包）；首次编译需联网下载宏包集（约 60 MB，可能数十秒到数分钟），之后离线复用缓存；该引擎下不启用页级增量复用",
   },
+  { value: "xelatex", label: "XeLaTeX", hint: "默认档：中文支持最佳，需要本机装好 TeX Live" },
+  { value: "lualatex", label: "LuaLaTeX", hint: "Lua 脚本、最新特性；比 XeLaTeX 慢，首次编译要建字体缓存" },
+  { value: "pdflatex", label: "pdfLaTeX", hint: "传统引擎，中文需额外配置" },
 ];
+
+/** 当前选中引擎的那句说明（不在 `<option>` 里，见 `ENGINES` 的注释）。 */
+const engineHint = computed(() => ENGINES.find((e) => e.value === settings.value?.compile.engine)?.hint ?? "");
 
 const DEBOUNCE_MIN = 100;
 const DEBOUNCE_MAX = 5000;
@@ -478,8 +489,10 @@ async function applyCacheDir() {
           <div class="field">
             <label class="field-label" for="set-engine">TeX 引擎</label>
             <select id="set-engine" class="input select" :value="settings.compile.engine" @change="setEngine(($event.target as HTMLSelectElement).value as Engine)">
-              <option v-for="e in ENGINES" :key="e.value" :value="e.value">{{ e.label }} — {{ e.hint }}</option>
+              <option v-for="e in ENGINES" :key="e.value" :value="e.value">{{ e.label }}</option>
             </select>
+            <!-- 说明放在 select **下方**（不进 option 文本）：原生弹层按最长选项撑宽，塞进去会冲出面板 -->
+            <p class="field-hint">{{ engineHint }}</p>
             <!-- Tectonic 段只在选中 Tectonic 时显示（下面那条 template 的 v-if），所以这里必须
                  把"已经存了 Tectonic 设置、但当前不生效"讲出来——否则用户切到 XeLaTeX 后
                  那几项连看都看不到，成了隐形开关。 -->

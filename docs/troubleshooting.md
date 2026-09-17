@@ -789,6 +789,16 @@ netstat -ano | Select-String ":1420"     # 期望一行 [::1]:1420 LISTENING；�
 - PowerShell 里带 `&` 的参数（`"&xelatex"`）走 `cmd /c "…"` 最稳（`&` 是 PS 的调用运算符）；
 - ⚠ **但即便口令全对，本机造出来的 format 加载即崩**（`xelatex -fmt=<name>` 退出码 `-1073741819` = `0xC0000005` 访问违例，日志 0 字节；**最小 `article` 同样崩**）⇒ 别在这条路上投入。完整侦察（两条路线、四个导言区、字节对拍）见 [roadmap §6.12](./research/tex-ide-roadmap-priority.md)。
 
+## 原生 `<select>` 的弹层宽度 = 最长选项的宽度（2026-09-17 真机反馈）
+
+**症状**：设置 → 引擎页的「TeX 引擎」下拉，弹层**横向冲出设置面板**（选项文本写成 `引擎名 — 整句说明`，Tectonic 那条约 100 字，弹层就按它撑宽）。
+
+**根因**：`<select>` 自身的宽度由 CSS 定（这里是 424 px），但**弹层是原生渲染的**，宽度按最长 `<option>` 的文本算 —— CSS 管不到它。
+
+**处置**：**别把说明写进 `<option>` 文本**。选项只留名字（本项实测：最长 8 字符 ⇒ 弹层不可能超过 select 自身宽度），说明放到 select 下方的 `.field-hint`（与「主题」「编译模式」两组同一范式）。面板里的 `<select>` 都按这条写。
+
+**验证口径**：`webview_screenshot` **拍不到原生弹层**（WebView2 的 select popup 是独立窗口，截图与被点前逐像素相同 ⇒ 别拿截图当"弹层正常"的证据）。用几何证明：读 `Array.from(sel.options).map(o => o.textContent)` 取最长项字符数 + `sel.getBoundingClientRect().width`。
+
 ## Vue SFC：写在 `</style>` 之后的规则是**死 CSS**，构建不会报错（2026-09-17 实测）
 
 **症状**：`FileTree.vue` 的新建入口 `＋` 紧贴标题文字，`margin-left: auto` 看着"没生效"；行内输入框呈浏览器默认样式。
