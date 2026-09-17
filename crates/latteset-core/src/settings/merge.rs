@@ -45,6 +45,9 @@ pub fn apply_patch(settings: &mut Settings, patch: &SettingsPatch) -> Result<(),
     if let Some(v) = patch.engine {
         next.compile.engine = v;
     }
+    if let Some(v) = patch.new_file_wizard {
+        next.compile.new_file_wizard = v;
+    }
     if let Some(v) = &patch.root_file {
         next.root_file = v.clone();
     }
@@ -85,6 +88,7 @@ mod tests {
                 debounce_ms: 500,
                 timeout_secs: 120,
                 engine: Engine::XeLaTeX,
+                new_file_wizard: true,
             },
             tectonic: Default::default(),
             ui: Default::default(),
@@ -120,6 +124,46 @@ mod tests {
             "timeout_secs":120,"engine":"xelatex"},"root_file":null}"#;
         let s: Settings = serde_json::from_str(json).expect("缺 ui 键必须能读");
         assert_eq!(s.ui.theme, crate::settings::model::UiTheme::Light);
+    }
+
+    /// `compile.new_file_wizard` 是后加的键：旧文件里没有它也要能读，且按**默认开**补齐
+    /// ——否则升级那一刻整个 settings.json 解析失败（roadmap ㊺ §6.13.1-A）。
+    #[test]
+    fn settings_without_wizard_key_defaults_to_on() {
+        let json = r#"{"schema_version":1,"compile":{"mode":"continuous","debounce_ms":500,
+            "timeout_secs":120,"engine":"xelatex"},"root_file":null}"#;
+        let s: Settings = serde_json::from_str(json).expect("缺 new_file_wizard 键必须能读");
+        assert!(s.compile.new_file_wizard, "缺键 = 默认开（新手第一条路要有人领）");
+        assert!(Settings::default().compile.new_file_wizard);
+    }
+
+    /// 向导开关走 patch：只改它一个（关掉后建文件回到"空文件"行为）。
+    #[test]
+    fn apply_patch_toggles_wizard_only() {
+        let mut s = global();
+        apply_patch(
+            &mut s,
+            &SettingsPatch {
+                new_file_wizard: Some(false),
+                ..SettingsPatch::default()
+            },
+        )
+        .unwrap();
+        assert!(!s.compile.new_file_wizard);
+        assert_eq!(s.compile.engine, Engine::XeLaTeX, "其余字段不动");
+        assert_eq!(s.compile.mode, CompileMode::Continuous);
+        // 不带这个键的 patch 不改它
+        apply_patch(&mut s, &SettingsPatch { timeout_secs: Some(60), ..Default::default() }).unwrap();
+        assert!(!s.compile.new_file_wizard, "未被 patch 提及就不该被重置");
+    }
+
+    /// 它是**全局**设置（无项目覆盖）：项目文件里写了也影响不到它。
+    #[test]
+    fn wizard_is_not_project_overridable() {
+        let mut g = global();
+        g.compile.new_file_wizard = false;
+        let merged = merge(&g, &ProjectOverrides::default());
+        assert!(!merged.compile.new_file_wizard, "项目覆盖不该有它的位置");
     }
 
     #[test]

@@ -103,7 +103,7 @@
 | **㊷ 库形态 SyncTeX 修复** | 让**库内嵌档**的同步数据里**主输入带上真实文件名**（修法已预验证，见 §6.10） | 库形态编译后 `.synctex.gz` 的 `Input:1` 是真实路径（不是 `texput`）；**单文件（`large`）与分章（`multifile`）两个夹具**上，两形态的 `forward`/`inverse` **逐字段一致**；`scripts/synctex-report.mjs` 三组样本的往返跳到位率不降；排版结果/日志/错误行归属零变化（纯数据补丁，不动文档结构） | ✅ **已完成**（2026-09-17，落地与实测见 §6.10）。四问全过：① 两夹具的库形态产物 `Input:1` = 真实绝对路径；② `forward` **7/7 逐字段相同**、`inverse` **9/11 相同**（余 2 项是**与本补丁无关**的「目录区域归属」差异 —— 用"把主输入名改回 `texput` 结果一字不变"反证）；③ 精度不降：`synctex-report.mjs` 的 CLI 侧复现文档基线（`bench/large` 12/12、beamer 7/10），我们的自解析在补丁后数据上往返行差 ≤6 且**两形态逐点相同**；④ 零变化 A/B（HEAD 二进制 vs 补丁版、三夹具）**PDF/`.log`/错误归属/同步数据（除 Input 行）逐字节相同** |
 | **㊸ 悬停公式即时预览（候选，未排期）** | 光标停在公式上 → 浮层给出**这一个公式**的真实排版预览（TeXStudio 式），不重排全篇、不碰权威产物 | ① ~~**先量**：三个夹具（轻/中/重导言区）的片段编译耗时分布 + 缓存命中后的响应，出数再决定是否投入（先量后做，同 ㊲㊳ 的处置）~~ ✅ **已量（2026-09-17，§6.11.8）**：库形态 240/545/760 ms、整篇 1.87–2.20 s（片段 = 1/3–1/8）、重复悬停 77/332 ms（A 闸门）、子进程形态热态地板 ≈420 ms 且与导言区无关、冷启动被 biber 拖到 8.6 s；**结论 = 继续做，形态不改判，目标分级（轻/中 ≤400、重 ≤900、重复 ≤400），超 3 s 的项目退回按钮式**；② 出数后若做：公式扫描器逐例单测通过（行内/行间/环境/多行/转义 `\$`/注释/`\verb`）、首次出图 p50 ≤ 400 ms（目标，待校准）、缓存命中 ≤ 50 ms、**主编译墙钟增量 ≤5%**、权威 `main.pdf`/`tmp/main.*` 与关闭该功能时**逐字节相同**、坏公式**给原因不留白**；③ 真机用可观测钩子断言（同 `window.__previewLastReload` 约定） | ✅ **已完成**（2026-09-17：点名入表 → 同日 P0 定量 → 两处决策 → 切片 1/2/3 落地；真机四项验收齐备，见 §1 与 §6.11） |
 | **㊹ 导言区固化为 format（候选，未排期）** | 让每次编译（主编译与公式预览都算）**不再重复加载项目导言区**，同时保持输出与"逐字读导言区"**逐字节一致** | ① 先侦察：能否用现有 format 缓存机制装一个"项目导言区 format"（键 = 导言区哈希 + bundle digest）、`mylatexformat` 的限制清单（哪些宏包不能进）、失败时如何无痛回落；② 判据：同一文档用/不用 format 的 **PDF 与页哈希逐字节相同**，重导言区（`ctexbook`+`tikz`）的 `typeset_ms` 至少降一半、冷编（3 趟）总墙钟降幅 ≥20%；③ 失效路径必须有测试（改导言区 ⇒ 自动重建、不得复用旧 format） | ⬜ **待测一条变体（技术主写法已被引擎拒绝）**（2026-09-17 两轮侦察：xelatex 路线全崩、Tectonic 路线主写法被引擎拒绝；复活前先测"导言区插在内核 `\dump` 之前、不越界"这条，见 §6.12.1） |
-| **㊺ 软件内新建文件/目录（候选，下一步做）** | 打开空目录或需要加文件时**不必跳出软件** | ① 空目录：新建 `main.tex` ⇒ 树出现 + 编辑器打开 + **能直接编译**（根探测重跑）；② 新建目录后可在其中新建文件；③ 重名 / 非法字符 / 项目外路径都有明确提示（不静默失败）；④ 真机验收：文件树右键与 `+` 入口都能用、`Esc` 取消不产生空文件 | 🟡 **第一片（新建文件）已落地并真机部分通过；第二片（新手向导 + 状态栏引导）已立项（2026-09-17）**：`FileTree` 标题栏 `＋` 就地输入名称 → `saveAll`（D8 校验）→ 刷新树 + 编辑器打开；**空目录特例**已处理（建完第一个 `.tex` 且项目还没有根文件时重跑 `openProject` 做根探测）；`npm run build` 通过 ✓。**真机**：空目录里建 `main.tex` ⇒ 落盘/树/编辑器打开都 ✓，但**根探测认不出空文件**（候选 0）⇒ "建完就能编"待修（最小骨架 / 保存后重探测） |
+| **㊺ 软件内新建文件/目录（新建文件 + 向导已完成；新建目录/右键待做）** | 打开空目录或需要加文件时**不必跳出软件** | ① 空目录：新建 `main.tex` ⇒ 树出现 + 编辑器打开 + **能直接编译**（根探测重跑）；② 新建目录后可在其中新建文件；③ 重名 / 非法字符 / 项目外路径都有明确提示（不静默失败）；④ 真机验收：文件树右键与 `+` 入口都能用、`Esc` 取消不产生空文件 | ✅ **新建文件 + 新手向导已完成并真机验收（2026-09-17）**：`FileTree` 标题栏 `＋` 就地输入 → `saveAll`（D8）→ 刷新树 + 打开；空目录那条路的"建完就能编"由**骨架 + `rescanRoot`（重探测 + 补首编）**闭合。其余：新建**目录**、右键在选中目录里建 **仍未做**（见 §6.13 待办）。判据与证据见 §6.13/§6.13.1 |
 
 ## 5. 外部方案与产物格式评估（否决与吸收都在这里）
 
@@ -832,7 +832,7 @@ XDV 逐字节对比显示原因：重导言区里有 `pdf:pagesize width 614.295
 - `Esc` 取消 ⇒ 不产生任何文件；
 - 真机验收走文件树交互（MCP：`webview_find_element` + `webview_interact` + 截图），并核对树与编辑器状态。
 
-**落地状态（2026-09-17）**：**新建文件**已实现 —— `src/components/FileTree.vue`（标题栏 `＋` + 行内输入 + Enter 落盘 / Esc 取消 + 错误提示留白不静默）、复用 `ipc.saveAll`（目标可不存在 ⇒ 后端无需改动）、成功后 `refreshTree()` + `editor.openFile()`，并在"项目还没有根文件"时重跑 `openProject`（空目录那条路）；`npm run build`（vue-tsc + vite build）通过 ✓。**真机验收（2026-09-17，空目录 `test_file/e2e/empty-project`）**：点 `＋` → 输入 `main.tex` → 回车 ⇒ **文件落盘 ✓、树里出现 ✓、编辑器把 `main.tex` 打开（标签已开）✓、无错误提示 ✓**。⚠ **但"建完就能编"这条没达成**：`get_project` 仍是 `rootFile=null / 候选 0` —— 因为**根探测要求文件里有 `\documentclass`**，而 `＋` 建的是**空文件**；此时用户必须①手打内容再去"指定根文件"（`RootFilePicker` 那条路），体验断层在这里。**下一步修法（二选一或都做）**：① 新建 `.tex` 时给一个**最小骨架**（`\documentclass{article}` + `\begin{document}`…）⇒ 建完立刻被探测认成根；② 在**首次保存后**重跑一次根探测（现在只在 `open_project` 时跑）。两条都小，但本条不修就不算"空目录能日用"。
+**落地状态（2026-09-17）**：**新建文件**已实现 —— `src/components/FileTree.vue`（标题栏 `＋` + 行内输入 + Enter 落盘 / Esc 取消 + 错误提示留白不静默）、复用 `ipc.saveAll`（目标可不存在 ⇒ 后端无需改动）、成功后 `refreshTree()` + `editor.openFile()`，并在"项目还没有根文件"时重跑 `openProject`（空目录那条路）；`npm run build`（vue-tsc + vite build）通过 ✓。**真机验收（2026-09-17，空目录 `test_file/e2e/empty-project`）**：点 `＋` → 输入 `main.tex` → 回车 ⇒ **文件落盘 ✓、树里出现 ✓、编辑器把 `main.tex` 打开（标签已开）✓、无错误提示 ✓**。⚠ **但"建完就能编"这条当时没达成**：`get_project` 仍是 `rootFile=null / 候选 0` —— 因为**根探测要求文件里有 `\documentclass`**，而 `＋` 建的是**空文件**。**已修（2026-09-17，两条都做了）**：① 新建 `.tex` 时给**最小骨架**（新手向导，见 §6.13.1）；② 落盘后重跑根探测 + 补一次首编（`projectStore.rescanRoot`）。真机复验：空目录建 `main.tex` ⇒ 立刻认到根、PDF 自动出图 ✓。
 **其余待办**：② 新建**目录**（`FileSystem` trait 目前没有建目录入口，要在 infra 加一个，再照同样范式接命令面与前端）；③ 右键在选中目录里建（v1 走"名称里带 `chapters/` 落到已有子目录"）。
 
 #### 6.13.1 新手向导 + 无根文档时的状态栏引导（2026-09-17 产品负责人追加要求）
@@ -861,9 +861,35 @@ XDV 逐字节对比显示原因：重导言区里有 `pdf:pagesize width 614.295
 4. 打开一个"有 .tex 但没有 `\documentclass`"的目录 ⇒ 状态栏**出现标签**；在编辑器里补上 `\documentclass` 并保存 ⇒ **标签消失**且能编译（每次保存都重探测，直到成功）；
 5. 全程**无弹窗打扰**（除第一次向导）—— 这是本项与"处处弹提示"的分界。
 
-**落地状态（2026-09-17）**：**骨架生成已落地**（`core::newfile::document_skeleton`，`DocLanguage` × `DocKind` = 8 种组合，4 例单测全绿 —— 含"任何组合都含 `\documentclass`/`\begin{document}`/`\end{document}`"这条**根探测不变量**；只预置 `amsmath`，因为 `amssymb` 的符号字体在缺字体的 bundle 下会让预览转换失败；中文一律走 `ctex*` 类；beamer 不给 `\maketitle`，直接给一页 frame）。**B 已落地（2026-09-17）**：状态栏那条「未确定根文件 · 点击选择」**本来就有**（可点 → `RootFilePicker`，`App.vue` 已接），本次补上缺的那半 —— **保存后静默重探测**：`useAutoSave` 在保存成功后，若 `project.root_file` 仍为空就 `openProject(root)` 重跑一次根探测（复用打开项目那条路 ⇒ 与初次口径完全一致），**探测到即停止触发、标签自动消失**；**静默**（不弹提示，失败只记 `console.debug`）。为什么挂"保存后"：探测读磁盘（ADR-0007），保存才是磁盘真相变化的时刻。`npm run build` 通过 ✓。**待真机验收**（判据 4：补上 `\documentclass` 保存 ⇒ 标签消失且能编）。
+**落地状态（2026-09-17）**：**骨架生成已落地**（`core::newfile::document_skeleton`，`DocLanguage` × `DocKind` = 8 种组合，6 例单测全绿 —— 含"任何组合都含 `\documentclass`/`\begin{document}`/`\end{document}`"这条**根探测不变量**；只预置 `amsmath`，因为 `amssymb` 的符号字体在缺字体的 bundle 下会让预览转换失败；中文一律走 `ctex*` 类；beamer 不给 `\maketitle`，直接给一页 frame）。**A + B 全部落地（2026-09-17）**，三件都在：
 
-**其余待实现**：① `NewFileWizard.vue`（弹窗：语言/类型/标题）+ 接进 `FileTree` 的新建流程（**仅在"空项目 + 第一个 .tex + 开关为开"时弹**）；② 设置面 `compile.newFileWizard`（默认 true，走 schema/merge/validate + 面板开关）；~~③ 状态栏标签 + 保存后静默重探测~~ ✅ 已落地（见上）。判据 4 待真机验收。
+1. **骨架命令面**：`new_file_skeleton(lang, kind, title)`（`src-tauri/src/commands.rs`）—— 纯转发 core、无副作用、不读项目状态（前端因此能在向导里逐次改选项做**实时预览**）。"语言 × 类型"这张表**只此一份**（core），前端只传选择值。
+2. **`NewFileWizard.vue`**（新组件）：文档语言（中文/English）、文档类型（短文/报告/书/幻灯片）、标题（可不填，预填文件名），外加一块**骨架预览**（调同一个命令现算 ⇒ 预览与落盘产物不可能不一致）。`Esc` / 点蒙层 / 取消 = **不产生任何文件**。
+3. **接进 FileTree 新建流程**：触发条件是「**无根文件** ∧ **无候选** ∧ 扩展名 `.tex` ∧ 设置开关为开」（`needsWizard`）。设置项 `compile.new_file_wizard`（默认 `true`，`#[serde(default = ...)]` ⇒ 旧 `settings.json` 能读）+ 设置面板「编译」页一个 开/关 段 + 「恢复默认」一并回默认。
+4. **状态栏标签 + 保存即静默重探测**（B）：标签本来就有（可点 → `RootFilePicker`）；本次补上缺的那半 —— 探测与"探到之后怎么办"收进 `projectStore.rescanRoot()`（**复用 `open_project` 那条路 ⇒ 与初次口径一致**），`useAutoSave`（保存后）与 `FileTree`（新建落盘后）共用同一份。
+
+**两处对原设计的细化（都写进代码注释了）**：
+
+- **"有候选"也不弹向导**：原文只说"还没有根文档（`root_file == null`）"。但模板项目常是"有好几个 `\documentclass` 而没定下用哪个"——那不是新手的空项目，弹"文档语言/类型"只会挡路（他们会走根文件选择器）。故触发条件收紧为**无候选**。
+- **探到根文件后补一次首编**（原文 §6.13.1-B 写的是"探测到就撤标签**并正常编译**"）：watch 那条触发链在这个变化**之前**只能看到 `root_file=None` ⇒ 它已经把这个变化丢掉了；不补的话状态栏已显示"就绪"、预览却一直停在「PDF 在这里等你」，用户得再敲一个字或手动点「编译」。真机日志即为证据：`不触发编译：尚未确定根文件` → `打开项目…（根文件 Some(...)，候选 1 个）` → `手动编译` → `编译成功 pages=1`。
+- **顺手修掉的一个首屏打扰**（服务判据 5）：打开**一个 `.tex` 都没有**的目录时不再弹根文件选择器（那个弹窗没有可选项，而"空目录"恰是新用户第一条路）；改由状态栏那条常驻标签兜底（点了仍能打开选择器），用户也可以直接用 `＋` 建第一份文档。有 `.tex` 但零/多候选时**照旧弹**（那时弹窗真有东西可挑）。
+
+**真机验收（2026-09-17，五个空目录 `test_file/e2e/wizard-lab{,2,3,4,5}` 轮换，跑完即删；引擎 Tectonic 库内嵌）**：
+
+| 判据 | 结果 | 证据 |
+|---|---|---|
+| 1 空项目 → 向导 → 骨架 → 认到根 → 能编 | ✅ | 中文+短文 → `\documentclass[UTF8]{ctexart}` 骨架 129 B，树/编辑器都到位，状态栏「未确定根文件」**消失**，PDF 自动出图（标题 + 日期 + 第一节）；另一轮 **English+书** → `\documentclass{book}` 122 B + `thesis.pdf` 7883 B |
+| 2 关掉向导 → 不弹、得到空文件 | ✅ | 面板关掉（`settings.json` 写 `"new_file_wizard": false`）后建 `main.tex` ⇒ **无弹窗**、磁盘 0 B、编辑器打开 |
+| 3 已有根文档时新建 `.tex` → 不弹 | ✅ | 有根文件时建 `second.tex` ⇒ 无弹窗、0 B，主文档 PDF 不受影响 |
+| 4 有 `.tex` 无 `\documentclass` → 标签出现 → 补上并保存 → 标签消失且能编 | ✅ | 建空 `main.tex` ⇒ 标签出现；在编辑器里输入 `\documentclass{article}…` 并保存 ⇒ 磁盘 75 B、`main.pdf` 3011 B **自动产出**、标签消失、预览渲染出 "Hello Latteset" |
+| 5 全程无弹窗打扰 | ✅ | 空目录不再弹根文件选择器；判据 2/3 无任何弹窗；只有"空项目里第一个 .tex"弹一次向导（可关） |
+
+**一条环境事实（不是缺陷）**：本机实验室用的 **精简 bundle**（`test_file/tectonic-bundle`，424 个文件，离线复现用）**不含 `beamer.cls`** ⇒ 选「幻灯片」会得到 `! LaTeX Error: File 'beamer.cls' not found.`（错误列表照常给出、不是静默失败）。**同一份骨架用 TeX Live 2026 的 `xelatex` 编出 1 页（exit 0）** ⇒ 骨架本身是合法 beamer；上游标准 bundle 含 beamer。详见 [troubleshooting.md](../troubleshooting.md)。
+
+**英文骨架的占位文字**：首轮真机验收发现英文 book 的目录里冒出"第一节" ⇒ `document_skeleton` 的占位文字改为随语言（`第一节`/`Introduction`、`第一页`/`First frame`），单测钉住"英文骨架里不出现汉字"。
+
+**待真机验收**：无（~~判据 4~~ ✅ 已验）。**其余待办**：见 §6.13 的"新建目录 / 右键在选中目录里建"。
+
 
 **与 6.13 的关系**：6.13 的"新建文件"是入口，本条是它的**新手引导与无根兜底**；A 同时把 6.13 遗留的"空文件探测不出根"一并解决（骨架里有 `\documentclass`），B 则是"用户手打内容"那条路的兜底。
 
@@ -906,6 +932,7 @@ XDV 逐字节对比显示原因：重导言区里有 `pdf:pagesize width 614.295
 | ㊷ 库形态同步数据补丁 | modules.md §5（契约）与 §12.2 #26（已修）+ troubleshooting.md「库内嵌档下 SyncTeX 定位不可用」+ 本文件 §6.10.1（实测与 A/B）+ `test_file/e2e/synctex-42-{verify,artifacts-ab,selfcheck}.ps1`（工作区产物） |
 | ㊸ 悬停公式即时预览 | 本文件 §6.11（竞品口径 + 需求读数 + 三条路线 + 判据/风险）与 **§6.11.8（P0 定量数据）** + `src/latexSyntax.ts` 的 `math` 状态（定界规则来源）+ `src/latexSuggest.ts`（Monaco provider 注册范式）+ `git show 0ac930c`（片段编译的实测成本与三个真机坑）+ `test_file/e2e/math-preview-lab.ps1` / `math-preview-lab.json`（工作区产物） |
 | ㊹ 导言区固化为 format | 本文件 §6.11.10（由来：㊸ 的最小包定量）+ `mylatexformat` 上游文档（`kpsewhich mylatexformat.ltx` 命中 TeX Live 2026）+ 现有 format 缓存机制（modules.md §2.7 的 `format_cache_path` / bundle digest 键） |
+| ㊺ 软件内新建文件 + 新手向导 | 本文件 §6.13/§6.13.1（设计、细化、五条判据与真机证据）；`crates/latteset-core/src/newfile.rs`（骨架表 + 6 例单测）、`src-tauri/src/commands.rs` 的 `new_file_skeleton`、`src/components/{FileTree,NewFileWizard,SettingsPanel}.vue`、`src/stores/project.ts` 的 `rescanRoot`、`src/composables/useAutoSave.ts`；契约见 modules.md §6/§8/§9.2/§9.3/§9.4/§12.2 |
 | ⑥ CLI + MCP（**已完成**） | [cli-mcp-plan.md](../cli-mcp-plan.md) + modules.md §8.1 + `crates/latteset-server` |
 | ⑦a 大纲增量（**已完成**） | modules.md §3.5（缓存三不变量）/ §12.2 + `core::outline::{load_cached, OutlineCache}` + `src/stores/outline.ts` |
 | ⑦c / ⑦b（**已完成 / 缓做**） | [p1-large-doc-editor-analysis.md](./p1-large-doc-editor-analysis.md)（拆分依据）+ [p1c-multifile-large-project.md](./p1c-multifile-large-project.md)（夹具/口径/数据）+ `scripts/{gen-large-project,editor-report}.mjs` |

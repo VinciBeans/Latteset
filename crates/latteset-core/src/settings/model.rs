@@ -118,6 +118,19 @@ pub struct CompileSettings {
     pub debounce_ms: u32,
     pub timeout_secs: u32,
     pub engine: Engine,
+    /// 新建**第一个** `.tex` 时弹「新手向导」（roadmap ㊺ §6.13.1-A）：选文档语言/类型/标题，
+    /// 直接生成一份能编译的最小骨架。
+    ///
+    /// **默认开**（新手第一条路要有人领），可在设置里关掉 ⇒ 关掉后回到"建空文件"。
+    /// `#[serde(default = ...)]`：旧 `settings.json` 没有这个键也要能读，
+    /// 否则升级即报错、用户配置整个丢失（同 `ui` / `tectonic` 的理由）。
+    #[serde(default = "default_true")]
+    pub new_file_wizard: bool,
+}
+
+/// `bool` 字段的缺省值（serde 的 `default` 只认函数路径，不能写 `true` 字面量）。
+fn default_true() -> bool {
+    true
 }
 
 /// 合并后的有效设置（全局 + 项目覆盖）。
@@ -144,6 +157,8 @@ impl Default for Settings {
                 debounce_ms: 500,
                 timeout_secs: 120,
                 engine: Engine::XeLaTeX,
+                // 默认开：新建第一个 .tex 时给新手一份能直接编译的骨架（roadmap ㊺ §6.13.1-A）
+                new_file_wizard: true,
             },
             tectonic: TectonicSettings::default(),
             ui: UiSettings::default(),
@@ -189,6 +204,10 @@ pub struct SettingsPatch {
     pub timeout_secs: Option<u32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub engine: Option<Engine>,
+    /// 新建向导开关（roadmap ㊺ §6.13.1-A）：`None` = 不动。**全局**设置，无项目覆盖
+    /// （它是"界面要不要拦一下"，与具体项目无关）。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub new_file_wizard: Option<bool>,
     #[serde(
         default,
         skip_serializing_if = "Option::is_none",

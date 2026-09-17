@@ -3,12 +3,15 @@
 import { computed, nextTick, ref } from "vue";
 import { useProjectStore } from "../stores/project";
 import { useEditorStore } from "../stores/editor";
+import { useSettingsStore } from "../stores/settings";
 import { ipc } from "../services/ipc";
-import type { DirEntryInfo } from "../bindings";
+import type { DirEntryInfo, DocKind, DocLanguage } from "../bindings";
 import FileTreeItem from "./FileTreeItem.vue";
+import NewFileWizard from "./NewFileWizard.vue";
 
 const project = useProjectStore();
 const editor = useEditorStore();
+const settings = useSettingsStore();
 
 // ---- ㊺ 新建文件：软件内建文件，避免"打开空目录必须跳出去建" ----
 // 口径：在**项目根**建，名称里带 `/` 时可落到**已存在**的子目录（不代建目录 —— 与 write 契约一致）；
@@ -20,6 +23,14 @@ const newName = ref("");
 const createError = ref("");
 const createInput = ref<HTMLInputElement | null>(null);
 
+/**
+ * 待创建的目标；非空 = **新建向导**开着（roadmap ㊺ §6.13.1-A）。
+ * 向导只负责问（语言/类型/标题），落盘仍走下面那条共用的路。
+ */
+const wizard = ref<{ target: string; name: string; title: string } | null>(null);
+const wizardBusy = ref(false);
+const wizardError = ref("");
+
 async function startCreate() {
   if (!project.project) return;
   creating.value = true;
@@ -30,41 +41,98 @@ async function startCreate() {
 }
 
 function cancelCreate() {
+  // 向导开着时不要收掉这一行：焦点被向导抢走会让输入框 blur，而此刻用户还没做完决定
+  if (wizard.value) return;
   creating.value = false;
   newName.value = "";
   createError.value = "";
 }
 
+/**
+ * 要不要弹向导：**空项目里的第一个 `.tex`** 才弹（roadmap ㊺ §6.13.1-A）。
+ *
+ * - 设置里关掉开关 ⇒ 不弹（回到"建空文件"，判据 2）；
+ * - 已有根文档 ⇒ 不弹（判据 3，日常使用不该被打断）；
+ * - **已有候选**（项目里本来就有 `\documentclass`，只是没定下来是哪一个）⇒ 也不弹：
+ *   那不是"新手的空项目"，给模板用户弹"文档语言/类型"只会挡路（他们会走根文件选择器那条路）。
+ */
+function needsWizard(rel: string): boolean {
+  if (!settings.settings?.compile.new_file_wizard) return false;
+  if (!/\.tex$/i.test(rel)) return false;
+  const p = project.project;
+  return !!p && !p.root_file && p.root_candidates.length === 0;
+}
+
+/** 文件名（去目录、去 `.tex`）—— 预填成标题。 */
+function stemOf(rel: string): string {
+  const base = rel.slice(rel.lastIndexOf("/") + 1);
+  return base.replace(/\.tex$/i, "");
+}
+
 async function submitCreate() {
+  if (wizard.value || wizardBusy.value) return;
   const name = newName.value.trim();
   if (!name) {
     cancelCreate();
     return;
   }
-  const root = (project.project as unknown as { root?: string })?.root;
+  const root = project.project?.root;
   if (!root) return;
   const rel = name.replace(/\\/g, "/");
   if (rel.startsWith("/") || rel.includes("..")) {
     createError.value = "只能建在项目内（不要以 / 开头、不要出现 ..）";
     return;
   }
-  try {
-    const target = `${root.replace(/[\\/]+$/, "")}/${rel}`;
-    await ipc.saveAll([{ path: target, content: "" }]);
-    creating.value = false;
-    newName.value = "";
+  const target = `${root.replace(/[\\/]+$/, "")}/${rel}`;
+  if (needsWizard(rel)) {
     createError.value = "";
-    await project.refreshTree();
-    await editor.openFile(target);
-    // 空目录：还没有根文件 ⇒ 重跑根探测，让"建完就能编"
-    const p = project.project as unknown as { rootFile?: string | null; root_file?: string | null } | null;
-    if (p && !(p.rootFile ?? p.root_file)) {
-      await project.openProject(root);
-    }
+    wizardError.value = "";
+    wizard.value = { target, name: rel, title: stemOf(rel) };
+    return;
+  }
+  try {
+    await createFile(target, "");
   } catch (e) {
     // 不静默失败：把后端那句人话留在输入框位置上
-    createError.value = typeof e === "string" ? e : ((e as { message?: string })?.message ?? String(e));
+    createError.value = errorText(e);
   }
+}
+
+/** 向导确认：内容由后端现算（core 那张表的唯一副本），再走同一条落盘路径。 */
+async function onWizardConfirm(payload: { lang: DocLanguage; kind: DocKind; title: string }) {
+  const w = wizard.value;
+  if (!w) return;
+  wizardBusy.value = true;
+  wizardError.value = "";
+  try {
+    const content = await ipc.newFileSkeleton(payload.lang, payload.kind, payload.title.trim() || null);
+    await createFile(w.target, content);
+  } catch (e) {
+    // 留着向导与用户的选择，只把失败原因摆进面板（重试不用重新选一遍）
+    wizardError.value = errorText(e);
+  } finally {
+    wizardBusy.value = false;
+  }
+}
+
+/** 落盘 + 刷新树 + 打开 + 空项目重探测（向导与"建空文件"两条路共用）。 */
+async function createFile(target: string, content: string) {
+  if (!project.project) return;
+  await ipc.saveAll([{ path: target, content }]);
+  creating.value = false;
+  newName.value = "";
+  createError.value = "";
+  wizard.value = null;
+  await project.refreshTree();
+  await editor.openFile(target);
+  // 空目录：还没有根文件 ⇒ 重跑根探测（探到即补一次首编），让"建完就能编"
+  if (project.project && !project.project.root_file) {
+    await project.rescanRoot();
+  }
+}
+
+function errorText(e: unknown): string {
+  return typeof e === "string" ? e : ((e as { message?: string })?.message ?? String(e));
 }
 
 interface Node {
@@ -140,6 +208,16 @@ const tree = computed(buildTree);
         <FileTreeItem v-for="n in tree" :key="n.entry.path" :node="n" />
       </div>
     </div>
+    <!-- 新建向导（roadmap ㊺ §6.13.1-A）：只在"空项目里的第一个 .tex + 开关为开"时出现 -->
+    <NewFileWizard
+      v-if="wizard"
+      :file-name="wizard.name"
+      :initial-title="wizard.title"
+      :busy="wizardBusy"
+      :error="wizardError"
+      @confirm="onWizardConfirm"
+      @cancel="wizard = null"
+    />
   </div>
 </template>
 

@@ -153,6 +153,18 @@ async function setTheme(theme: UiTheme) {
   await store.update({ theme });
 }
 
+/**
+ * 新建向导开关（roadmap ㊺ §6.13.1-A）：**默认开**（新手第一条路要有人领），
+ * 关掉后新建 `.tex` 回到"建空文件"。`compile.new_file_wizard` 在绑定里是必填 `boolean`，
+ * 但旧 settings.json 可能没有这个键 ⇒ 后端已按默认开补齐，这里再兜一次底。
+ */
+const wizardOn = computed(() => settings.value?.compile.new_file_wizard ?? true);
+
+async function setWizard(on: boolean) {
+  if (wizardOn.value === on) return;
+  await store.update({ new_file_wizard: on });
+}
+
 /** 主题的当前值（`ui` 在绑定里可选 ⇒ 缺省按浅色，与后端 `Default for UiSettings` 同口径）。 */
 function themeOf(s: { ui?: { theme: UiTheme } | null } | null | undefined): UiTheme {
   return s?.ui?.theme ?? "light";
@@ -197,9 +209,16 @@ async function applyRootFile() {
   lastAppliedRoot.value = target;
 }
 
-/** 恢复默认（编译四项 → 默认值；root_file 不动）。 */
+/** 恢复默认（编译各项 → 默认值；root_file 不动）。 */
 async function resetDefaults() {
-  await store.update({ mode: "continuous", debounce_ms: 500, timeout_secs: 120, engine: "xelatex" });
+  await store.update({
+    mode: "continuous",
+    debounce_ms: 500,
+    timeout_secs: 120,
+    engine: "xelatex",
+    // 向导也是"编译"页的项 ⇒ 一并回默认开（按钮的字面意思就是"恢复默认"）
+    new_file_wizard: true,
+  });
   snapshotInputs();
 }
 
@@ -364,6 +383,30 @@ async function applyCacheDir() {
               >{{ m.label }}</button>
             </div>
             <p class="field-hint">{{ MODES.find(m => m.value === settings?.compile.mode)?.hint }}</p>
+          </div>
+
+          <!-- 新建向导（roadmap ㊺ §6.13.1-A）：只影响"空项目里建第一个 .tex"那一次 -->
+          <div class="field">
+            <label class="field-label" for="set-wizard">新建文件向导</label>
+            <div class="mode-seg" id="set-wizard">
+              <button
+                class="seg-btn"
+                :class="{ on: wizardOn }"
+                title="在空项目里新建第一个 .tex 时问一次「文档语言 / 类型 / 标题」，直接生成能编译的骨架"
+                @click="setWizard(true)"
+              >开</button>
+              <button
+                class="seg-btn"
+                :class="{ on: !wizardOn }"
+                title="新建 .tex 一律得到空文件（已有根文档的项目本来就不会弹）"
+                @click="setWizard(false)"
+              >关</button>
+            </div>
+            <p class="field-hint">
+              {{ wizardOn
+                ? "仅在「项目里还没有根文件」时、新建第一个 .tex 时弹一次；已有主文件的项目不受影响"
+                : "关闭：新建 .tex 得到空文件（需要自己写 \\documentclass）" }}
+            </p>
           </div>
 
           <div class="field-row">

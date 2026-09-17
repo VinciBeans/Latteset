@@ -613,7 +613,7 @@ pub struct Settings {
     pub ui: UiSettings,               // 全局；#[serde(default)] ⇒ 旧 settings.json 没有 ui 也能读
     pub root_file: Option<PathBuf>,   // 项目级手动覆盖（探测结果的逃生门）
 }
-pub struct CompileSettings { pub mode: CompileMode, pub debounce_ms: u64, pub timeout_secs: u64, pub engine: Engine }
+pub struct CompileSettings { pub mode: CompileMode, pub debounce_ms: u64, pub timeout_secs: u64, pub engine: Engine, pub new_file_wizard: bool }
 pub struct TectonicSettings { pub lib_form: bool, pub bundle: Option<String>, pub cache_dir: Option<PathBuf> }
 /// 界面（roadmap ⑩）。`UiTheme = light | dark | system`，**默认 light** —— 深色是新能力，
 /// 默认值必须让既有用户升级后**外观不变**（默认 system 会在升级那刻静默换掉系统偏好深色用户的配色）。
@@ -647,7 +647,7 @@ pub fn is_self_write(&self, path: &Path, content: &str) -> bool;  // 自写盘 h
 | 标签 | 内容 | 分页理由 |
 |---|---|---|
 | 外观 | 主题（浅色/深色/跟随系统） | 与文档无关的个人偏好 |
-| 编译 | 编译模式、防抖、超时 | 什么时候编、编多久 |
+| 编译 | 编译模式、防抖、超时、**新建文件向导**（㊺） | 什么时候编、编多久，以及"新建第一份文档时领不领路" |
 | 引擎 | TeX 引擎选择 + **Tectonic 形态与资源**（驱动形态 / 宏包集 / 缓存目录） | 用谁编；Tectonic 那几项只在选中 Tectonic 时才有意义 ⇒ 与引擎选择同页，"存了但不生效"的提示才有落点 |
 | 项目 | 根文件覆盖 | 只影响当前项目 |
 
@@ -721,6 +721,7 @@ pub fn compile_request_manual(ctx: ComposeContext<'_>) -> Option<CompileRequest>
 | list_dir(path) | 递归 `collect_tex_files` 变体（返回全树 DirEntryInfo，含目录；前端防抖重建用） |
 | read_file | `FileSystem::read_to_string` + 路径校验（core `project::paths`） |
 | save_all | 写盘（`save_content`）——不触发编译逻辑，watch 自然驱动；唯一保存路径 |
+| new_file_skeleton(lang, kind, title) | 新建 `.tex` 的**最小骨架**（roadmap ㊺ §6.13.1-A）：转发 core `newfile::document_skeleton`，**无副作用、不读项目状态**（纯函数 ⇒ 前端可在向导里逐次改选项做实时预览）。「语言 × 类型」这张表只此一份，前端只传选择值（`chinese/english` × `article/report/book/beamer`） |
 | compile_now | compose.compile_request_manual：只看 root_file（忽略活动文件路径），构造请求入队 |
 | abort_compile | scheduler.send(Abort) |
 | synctex_forward / inverse | 调 provider（失败按 100/200/300ms 退避重试）；`inverse` 输出 `InverseResultDto{source,note}`：命中生成产物/项目外文件时就近回落，落空则只给提示（㉒） |
@@ -797,7 +798,7 @@ useAutoSave 依赖 editorStore.dirty + settingsStore（读）
 
 | store | 状态（模块内） | 动作 |
 |---|---|---|
-| projectStore | project、rootFile、fileTree | openProject、refreshTree、refreshTreeDebounced、resolvePath、relativizePath（绝对 → 项目内相对路径，`update_settings` 唯一可接受的形态）、syncProject（经 `get_project` 重新同步） |
+| projectStore | project、rootFile、fileTree | openProject、refreshTree、refreshTreeDebounced、resolvePath、relativizePath（绝对 → 项目内相对路径，`update_settings` 唯一可接受的形态）、syncProject（经 `get_project` 重新同步）、**rescanRoot**（无根文档时的静默重探测，㊺ §6.13.1-B） |
 | editorStore | openTabs[]、activePath、dirtyPaths:Set、lastSaved:Map<path,time>、buffers、externalConflict | openFile、closeTab、markDirty、markSaved、saveAll、onFilesChanged、acceptExternal |
 | compileStore | phase、kind、draft、errors[]、pages | setStatus、setProgress、setLiveErrors、setErrors |
 | previewStore | pdfPath、reloadKey、highlight、syncNote、changedPages、pagesTotal、skippedReloads、**livePreview**（编译中的部分 PDF）、**docIdentity / sourcePath / displayPath**（派生：身份 / 字节来源 / 可显示） | onPdfUpdated（**页哈希全同则不递增 reloadKey**；但屏幕上是部分 PDF 时必须重载一次）、onCompilePreview（帧版本号 = `pages`，只增不减 ⇒ 旧帧丢弃）、clearLivePreview（编译终态收口；返回"刚才是否在预览"）、setHighlight、setSyncNote |
@@ -825,6 +826,14 @@ useAutoSave 依赖 editorStore.dirty + settingsStore（读）
 // 触发时机：仅 mode === "continuous" 自动写盘；on_save 模式不自动写盘，
 //   由 Ctrl+S / 点「编译」/ 关标签触发 flush()（写盘后经 watch 触发编译）
 // 取消：组件卸载时 clearTimeout（防泄漏）
+// 无根文档兜底（㊺ §6.13.1-B）：保存成功后若 project.root_file 仍为空 → projectStore.rescanRoot()
+//   （复用 open_project 那套探测 ⇒ 口径一致；探到即撤状态栏标签并补一次首编；全程静默，失败只记 console）
+
+// projectStore.rescanRoot：无根文档时的静默重探测（㊺ §6.13.1-B）
+// 触达点两处：useAutoSave 保存成功后、FileTree 新建文件落盘后（同一份口径，不各写一遍）
+// 算法：root_file 已有 → 直接返回；否则 openProject(root) 重跑 core 探测 → 探到 ⇒ compile_now 补一次首编
+// 为什么补编译：watch 那条触发链在这个变化**之前**只能看到 root_file=None ⇒ 它已经把这个变化丢掉了，
+//   不补的话用户得再敲一个字或手动点「编译」才会出 PDF（真机日志：不触发编译：尚未确定根文件 → 探到 → 手动编译）
 
 // useIdleConvergence：空闲收敛（roadmap ㉘）
 // 进入条件：编译成功且是草稿（draft=true，屏幕上的 PDF 目录/引用页码可能落后一趟）
@@ -839,7 +848,8 @@ useAutoSave 依赖 editorStore.dirty + settingsStore（读）
 |---|---|---|---|
 | EditorPane | model(路径)、内容、语言 | 变更事件 → useAutoSave | Monaco 实例、worker、IME 组合状态；**无活动文件 → 显示"还没有打开文件"占位提示**（覆盖 Monaco）+ `readOnly`，打开文件才可编辑 |
 | PreviewPane | pdfPath、highlight、syncNote、**livePreview（编译中的部分 PDF）** | 点击坐标 → useSyncTex | pdf.js 文档句柄、滚动位置缓存、canvas 代次与页高（见下方渲染契约，含"编译中预览 = 换字节不换身份"） |
-| FileTree | 树数据、激活路径 | 打开文件/目录展开 | 展开状态（只在前端本地） |
+| FileTree | 树数据、激活路径 | 打开文件/目录展开 | 展开状态（只在前端本地）；**新建文件**（㊺）：标题栏 `＋` + 行内命名 → `save_all`（目标可不存在，D8 校验在项目内）→ 刷新树 + 打开；**新建向导**（㊺ §6.13.1-A）只在「无根文件 ∧ 无候选 ∧ 扩展名 `.tex` ∧ 设置开关为开」时拦一次，内容由 `new_file_skeleton` 现算 |
+| NewFileWizard | fileName、initialTitle、busy、error | `confirm({lang,kind,title})` / `cancel` | 语言 / 类型 / 标题三项本地状态 + **骨架实时预览**（每次改动调 `new_file_skeleton` 拿 core 的产物 ⇒ 预览与落盘不可能不一致）。Esc / 点蒙层 / 取消 = **不产生任何文件** |
 | RootFilePicker | root、candidates（探测候选）、fallbackFiles（零候选时全部 .tex）、busy、error | `select`（**项目内相对路径**）、`close` | 无（纯展示；相对路径由 `relativizePath` 计算） |
 | ErrorList | errors[] | 点击条目 → openFile+定位 | 无；**诊断展示**（roadmap ④）：条目带 `diagnosis` 时渲染两行（原因 + 建议），无诊断降级为原文首行；头部「已诊断 N」。**去重/截断**：同源（文件 + 首行消息相同）聚合为一条并显示 `×N`；不同源最多展示 `MAX_DISPLAY=30` 组，超出提示隐藏数量（错误雪崩时不刷屏） |
 | StatusBar | compileStore/editorStore/projectStore 只读投影 + 「未确定根文件」可点击入口（emit `pick-root`）+ 草稿期「引用待更新」+ 编译中「已排版 N 页」 | `pick-root` → App 打开根文件选择器 | 无（`queued/running/failed` 不改「引用待更新」标记——屏幕上的 PDF 仍是旧的，失败不产出新 PDF；「已排版 N 页」只在 `running && pages > 0` 时显示） |
@@ -997,6 +1007,8 @@ settings-changed: Settings
 - **大纲增量的三条不变量**（§3.5，改回去即复发）：① 内容必须每次重取（缓冲优先，否则读盘），缓存只复用**扫描结果**——按路径命中就不再读盘会让外部改动永远不生效；② 缓冲缓存按**项目根**作废、并按 `open_paths` 淘汰——漏了会让"关掉标签"或"切回旧项目"读到磁盘旧内容（脏缓冲丢失）；③ 入口路径必须先归一——否则同一文件两种拼写 = 两个 key，`visited` 去重失效、大纲出现重复项。
 - **前端"只发改动缓冲"必须与后端的缓冲缓存配套**：`lastSent` 差分（值比较）只决定"这次推不推"，真正的内容真相仍在后端缓存里；因此**项目根变化时前端必须清 `lastSent` 全量重发**（后端此刻已清空缓存），否则未变化的脏缓冲不会被重发。
 - **大纲刷新要合并**：`refresh()` 进行中只记一个"待补一次"意图（结构事件风暴实测一次连发 11 次）——并发刷新会让差分失效（每次都赶在上一次写回 `lastSent` 之前发出），且后端缓冲缓存的写入顺序不再确定。
+- **新建 `.tex` 必须让根探测认得出来**（㊺）：向导骨架**一定**含 `\documentclass`（单测钉住）——根探测要求文件里有它，所以"空文件 + 建完就编"这条路本身不成立；落盘后必须重跑一次探测（`projectStore.rescanRoot`，与 `open_project` 同一口径），探到即补一次 `compile_now`——漏掉补编译的症状是「状态栏已显示就绪，预览却一直停在『PDF 在这里等你』」（watch 那条链在探到根文件**之前**就丢掉了这次变化）。
+- **新加的设置键必须可缺省**（㊺ `compile.new_file_wizard`）：`#[serde(default = ...)]` —— 旧 `settings.json` 没有这个键也要能读，否则升级那一刻整个配置文件解析失败、用户设置全丢（与 `ui` / `tectonic` 同一条理由）。
 - **页哈希口径只有一个（V1）且缓存自带标记**（已知债 #26，2026-09 修）：`hash_page` 必须丢掉 `bop` 尾部的 4 B `prev`（保留 opcode + 10×i32 计数器）——改回"整页哈希"即复发"前面某页变长 ⇒ 第 3 页起全部判变化"（实测 25/26 页、Σ375 页假阳性）；`tmp/<stem>.<engine>.pages` 首行必须写 `PAGES_CACHE_VERSION`，读侧不匹配一律当 `None`。**且 A/B 的判据必须建在页级哈希（含页数）上，不得建在整篇 XDV 字节指纹上**——`pre` 注释在 TeX Live 的 `xelatex` 下是本地墙钟（跨分钟必失效，Tectonic 是固定串）。
 
 前端的三处异步守卫与 PreviewPane 渲染契约见 §9.2 / §9.4，SyncTeX 相关约束见 §5。
@@ -1011,6 +1023,7 @@ settings-changed: Settings
 | core 逻辑（调度 / 解析 / 诊断 / 大纲） | `cargo test -p latteset-core` |
 | **公式预览命令面**（㊸ 切片 2：`latteset-cli math <公式>` / `math -`） | `cargo build --release -p latteset-server --features tectonic-lib --bin latteset-cli` → `latteset-cli --project <夹具> math '$\int_0^1 x^2\,\mathrm{d}x$'`（同一公式两次 = 89 ms 档、换公式 = 新目录冷档、坏公式给原因）；落点 `<项目>/tmp/snippet/<键>/`，**权威 `main.pdf` 与 `tmp/main.*` 逐字节不变**（2026-09-17 实测）；实现契约见 [roadmap §6.11.5](./research/tex-ide-roadmap-priority.md) |
 | **公式扫描**（㊸ 切片 1：`core::math::math_at` 的边界口径） | `cargo test -p latteset-core --lib math`（16 例：行内/行间/环境/多行/`\$`/注释/`\verb`/嵌套/空公式/未闭合/中文**字节**偏移） |
+| **新建骨架**（㊺：`core::newfile::document_skeleton`） | `cargo test -p latteset-core --lib newfile`（6 例：4 类型 × 2 语言都含根探测三标记 / 语言选类 / 标题可选且 beamer 不给 `\maketitle` / 只预置 `amsmath` / **占位文字随语言**（英文骨架无汉字）/ 前后端交换的字面量） |
 | **片段文档装配**（㊸ 切片 1：`core::snippet::build_snippet_document`） | `cargo test -p latteset-core --lib snippet`（5 例：导言区逐字照搬/两处路径注入与守卫/缺 `\begin{document}` 如实报错/空片段拒绝/末尾缺换行） |
 | 真实 latexmk / synctex 集成 | `cargo test -p latteset-infra -- --ignored`（含两条流式用例：`-- --ignored streaming` / `-- --ignored live_errors`，断言"进度/错误在编译结束前 ≥100ms 就到了"） |
 | 流式反馈真机时间线（页进度 / 实时错误 / 终态不被覆盖） | `node scripts/gen-stream-fixture.mjs test_file/projects/_stream-lab [--error]` 生成 400KB / 162 页夹具 → `VITE_LATTESET_PROJECT=<夹具> npm run tauri dev` → 用 tauri server 注入 `window.__TAURI__.event.listen` 记录四个编译事件的时间线（脚本见提交说明；夹具目录已被 .gitignore 覆盖） |

@@ -97,6 +97,7 @@ mod tests {
                 debounce_ms: 500,
                 timeout_secs: 120,
                 engine: Engine::XeLaTeX,
+                new_file_wizard: true,
             },
             tectonic: Default::default(),
             ui: Default::default(),

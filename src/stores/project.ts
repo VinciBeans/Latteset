@@ -57,12 +57,45 @@ export const useProjectStore = defineStore("project", () => {
     return project.value;
   }
 
+  /**
+   * 无根文档时的**静默重探测**（roadmap ㊺ §6.13.1-B）：保存/新建后调用。
+   *
+   * 复用 `openProject` 那条路 ⇒ 与初次打开项目的探测是**同一套口径**（不新增判定）；
+   * 已经有根文件时直接返回（`project.root_file` 非空 ⇒ 不再打扰）。
+   *
+   * 探到根文件就顺手补一次编译：这次落盘正是"第一份能编译的文档"写下去的时刻，而 watch
+   * 那条触发链在探测到根文件**之前**已经把这个变化丢掉了（当时它只能看到 `root_file = None`）
+   * ⇒ 不补的话用户得再敲一个字、或手动点「编译」才会出 PDF。
+   *
+   * **静默**：不弹任何提示；失败只记 console（下次保存/新建再试）。
+   */
+  async function rescanRoot(): Promise<boolean> {
+    const cur = project.value;
+    if (!cur || cur.root_file) return false;
+    let info: ProjectInfo | null = null;
+    try {
+      info = await openProject(cur.root);
+    } catch (e) {
+      console.debug("静默重探测根文件失败（下次保存再试）：", e);
+      return false;
+    }
+    if (!info?.root_file) return false;
+    try {
+      await ipc.compileNow();
+    } catch (e) {
+      // 探测本身成功了：编译没起来不该让调用方以为"还没探到"（标签该撤还是撤）
+      console.debug("探测到根文件后的首次编译失败：", e);
+    }
+    return true;
+  }
+
   return {
     project,
     tree,
     root,
     openProject,
     syncProject,
+    rescanRoot,
     refreshTree,
     refreshTreeDebounced,
     resolvePath,

@@ -178,6 +178,8 @@ DEBUG 编辑触发档不再追收敛：停在草稿态（交给 ㉘ 的空闲收
 | 13 | 非 UTF-8 源文件提示（㉓） | 夹具 `中文GBK工程` → 展开 `子目录` → 点 `gbk.tex` → 读 `.open-error` 与标签页 | 状态栏出现中文提示「…不是 UTF-8 编码…另存为 UTF-8…」；**不开新标签**（此前是无人接的 rejection） |
 | 14 | 源码版模板提示（㉗） | 夹具 `源码版模板工程`（`\documentclass{nosuchthesis}` + `nosuchthesis.ins/.dtx`）→ 点「编译」→ 读第一条错误 | 「缺少文档类文件 nosuchthesis.cls」+「项目里有源码版模板文件 `nosuchthesis.ins`：先执行 `xelatex nosuchthesis.ins`…」（**必须是 `.ins`**，不能是 `.dtx`） |
 | 15 | 外部改 settings.json 生效（㉑） | 夹具 `多候选工程`（先把 `.latteset/settings.json` 置为 `{}` 并让它生效）→ 从**外部**写入 `{"root_file":"main.tex"}` → 看状态栏；随后改回 `{}` | 第一次：日志 `设置热更新：内存 root_file 已同步 from=None to=Some(…)` 且「未确定根文件」消失；改回：`from=Some(…) to=None` 且提示**回来**。**必须用非原子写法**（PowerShell `Set-Content` 就会"截断 → 写入"，正好覆盖竞态），原子替换测不出这条 |
+| 16 | 空目录第一条路：新建向导（㊺ §6.13.1-A） | **空目录**起 dev（`VITE_LATTESET_PROJECT=<空目录>`）→ 点 `.new-file` `＋` → 输 `main.tex` + Enter → 向导里选语言/类型 → 点 `[data-testid=wizard-create]` | **打开空目录时不弹根文件选择器**（只有状态栏那条标签）；向导出现且**预览**随选项变；创建后文件落盘（含 `\documentclass`）、树里出现、编辑器打开、状态栏标签**消失**、日志出现 `打开项目…候选 1 个` → `手动编译` → `编译成功`，预览**自动**出图（不用点「编译」）。关掉设置里「新建文件向导」后重来一次：**不弹向导**、得到 0 B 空文件 |
+| 17 | 无根文档的静默重探测（㊺ §6.13.1-B） | 有 `.tex` 但**没有 `\documentclass`** 的目录 → 确认状态栏出现「未确定根文件 · 点击选择」→ 在编辑器里补上 `\documentclass{article}` + 文档体（输入法见下节）→ 等自动保存（或 Ctrl+S） | 标签**消失**；磁盘上文件已写全；`main.pdf` **自动产出**；日志三段：`不触发编译：尚未确定根文件` → `打开项目…（根文件 Some(…)，候选 1 个）` → `手动编译` → `编译成功`。全程**无弹窗** |
 
 **取预览耗时的一行命令**（第 6 步的具体形态）：
 
@@ -211,6 +213,23 @@ DEBUG 编辑触发档不再追收敛：停在草稿态（交给 ㉘ 的空闲收
 **前置条件：窗口必须在前台**（2026-09-15 实测）。`document.hasFocus()` 为 false 时，`webview_keyboard` 的 type/press、`document.execCommand("insertText")`、手工构造的 `InputEvent` **三条路都无效**（textarea 的 value 被写上又立刻被 Monaco 的状态管理器收回）：先 `manage_window action=focus`，再确认 `document.hasFocus() === true`。
 
 **外部改文件不等于用户编辑**：外部写盘走的是「静默重载」分支，不触发 `@change`（真机核对：文件 mtime 不变 ⇒ 没有自动保存回写）。要验编辑器这一环就得用上面的 `ed.trigger("mcp","type",…)`。
+
+**备选入口：直接给 EditContext 发 `textupdate`（2026-09-17 实测可行）**。当 `ed.trigger` 那条路不合适（或只想"像打字一样"灌一段多行文本）时，注意**真正的输入 sink 不是那个 textarea**：
+
+- Monaco 0.56 用的是 **EditContext**：`.monaco-editor .overflow-guard > div.native-edit-context`，该 div 的 `editContext` 才是它监听的对象；`textarea.ime-text-area` 只是 IME 备份（`webview_keyboard action=type` 会把文本写进它，但 **Monaco 不会消费**——value 一直留在那儿、屏幕无变化，这是最容易误判成"敲进去了"的坑）。
+- `ec.updateText(0, len, "…")` **不会**触发 Monaco：它只改 EditContext 自己的文本，不派发 `textupdate`。
+- 可行做法：先**真实点击编辑器**（`webview_interact click` 命中 `.view-lines`），确认 `.monaco-editor.focused` 存在，再
+
+```js
+const ec = document.querySelector('.native-edit-context').editContext;
+ec.dispatchEvent(new TextUpdateEvent('textupdate', {
+  updateRangeStart: 0, updateRangeEnd: 0,          // 插入点（替换范围同理）
+  text: "\\documentclass{article}\n…",             // 多行可以（Monaco 的 type() 认 \n）
+  selectionStart: text.length, selectionEnd: text.length,
+}));
+```
+
+这会走 Monaco 的 `NativeEditContext → viewController.type()` ⇒ `onDidChangeModelContent` **真实触发**（脏标记 → 自动保存 → watch → 编译全链路，与手打完全同路）。判据不要看 `.view-line`（可能还没重渲染）：直接 `(await import(monacoUrl)).editor.getModels()[0].getValue()` 读模型。
 
 **另一个坑：`webview_execute_js` 的 JS 执行有 ~3s 上限**（`timeout` 参数不影响它）。要观测一段 5–15s 的 UI 时间线，别写成"轮询到超时再返回"，改为**装一个常驻探针再分段读**：
 
@@ -769,3 +788,18 @@ netstat -ano | Select-String ":1420"     # 期望一行 [::1]:1420 LISTENING；�
 - `mylatexformat.ltx` 要传**裸文件名**（让 kpathsea 找）；给绝对路径会 `Please type another input file name` 然后什么都 dump 不出来；
 - PowerShell 里带 `&` 的参数（`"&xelatex"`）走 `cmd /c "…"` 最稳（`&` 是 PS 的调用运算符）；
 - ⚠ **但即便口令全对，本机造出来的 format 加载即崩**（`xelatex -fmt=<name>` 退出码 `-1073741819` = `0xC0000005` 访问违例，日志 0 字节；**最小 `article` 同样崩**）⇒ 别在这条路上投入。完整侦察（两条路线、四个导言区、字节对拍）见 [roadmap §6.12](./research/tex-ide-roadmap-priority.md)。
+
+## 实验室的精简 bundle 不含 `beamer.cls`：选「幻灯片」会编不过（2026-09-17 实测，非缺陷）
+
+**症状**：向导里选「幻灯片」建出的骨架，在本机（引擎 = Tectonic 库内嵌 + `LATTESET_TECTONIC_BUNDLE=test_file/tectonic-bundle`）编译**失败得很快（0.35 s）**，错误列表一条：
+
+```
+! LaTeX Error: File `beamer.cls' not found.
+```
+
+**原因**：`test_file/tectonic-bundle` 是**为离线复现手工裁出来的最小 bundle**（424 个文件）——`ctexart.cls`/`book.cls`/`article.cls`/`amsmath.sty` 都在，**`beamer.cls` 不在**。骨架本身没问题：同一份 `slides.tex` 用 **TeX Live 2026 的 `xelatex`** 编译得到 `Output written on slides.pdf (1 page)`、exit 0；上游标准（网络）bundle 也含 beamer。
+
+**处置**：
+- **不要去改骨架**（`core::newfile` 的 beamer 分支是对的），也**不要**为了这个把 beamer 塞进精简 bundle —— 那会把"最小离线 fixture"变成又一个宏包仓库；
+- 要在本机验幻灯片这条路，就把引擎临时切到 **XeLaTeX**（TeX Live 自带 beamer），或在 `settings.json` 里把 `tectonic.bundle` 指向上游/完整 bundle；
+- 顺带记住操作顺序：`LATTESET_TECTONIC_LIB=1` 是**显式覆盖**（不受"只有 engine=tectonic 才走库形态"那道闸门约束）⇒ **设了它，在设置面板里换成 XeLaTeX 也仍然是 Tectonic 库形态**（实测：日志照旧 `库形态失败…`、`.log` 里还是 Tectonic 的 `LaTeX2e <2021-11-15>`）。要让引擎选择真正生效，得去掉该环境变量再起 dev。

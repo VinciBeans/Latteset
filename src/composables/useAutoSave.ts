@@ -39,18 +39,12 @@ export function useAutoSave() {
       editor.markSaved(clean.map((f) => f.path));
       if (clean.length < files.length) schedule();
       // ㊺ §6.13.1-B：**还没有根文档**时，每次保存都静默重跑一次根探测，直到探测到为止
-      // （状态栏那条「未确定根文件 · 点击选择」会在探测成功后自行消失）。
+      // （状态栏那条「未确定根文件 · 点击选择」会在探测成功后自行消失，并补一次首编）。
       // 为什么挂在"保存后"：探测读的是磁盘（ADR-0007 内容真相源），保存才是磁盘状态变化的时刻；
-      // 只在无根文档这一过渡态下发生，成功后即不再触发。**静默**：不弹提示，失败也只记 console。
+      // 只在无根文档这一过渡态下发生，成功后即不再触发。**静默**：不弹提示，失败只记 console。
+      // 判定与"探到之后怎么办"都在 store（`rescanRoot`）：新建文件那条路共用同一份口径。
       if (project.project && !project.project.root_file) {
-        const root = project.project.root;
-        if (root) {
-          try {
-            await project.openProject(root); // 复用打开项目那条路 ⇒ 与初次的探测口径完全一致
-          } catch (e) {
-            console.debug("无根文档时的静默重探测失败（下次保存再试）：", e);
-          }
-        }
+        await project.rescanRoot();
       }
     } catch (e) {
       editor.rollbackSaving(files.map((f) => f.path));

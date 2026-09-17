@@ -80,7 +80,7 @@ onMounted(async () => {
   if (envProject) {
     try {
       const info = await openProjectInto(envProject);
-      if (!info.root_file) openRootPicker();
+      maybeOpenRootPicker(info);
     } catch (e) {
       console.error("自动打开项目失败：", e);
     }
@@ -119,6 +119,20 @@ function openRootPicker() {
   rootPickerOpen.value = true;
 }
 
+/**
+ * 打开项目后按需弹根文件选择器（roadmap P0-②-1 + ㊺ §6.13.1-B）。
+ *
+ * **项目里一个 `.tex` 都没有时不弹**：那种弹窗没有可选项（只有一句"项目内没有 .tex 文件"），
+ * 而"空目录"恰恰是新用户的第一条路 —— 一进去先被一个模态挡住，正是本项要消掉的打扰。
+ * 此时改由状态栏那条「未确定根文件 · 点击选择」常驻提示（点了仍能打开本选择器），
+ * 用户也可以直接用文件树的 `＋` 新建第一份文档。
+ */
+function maybeOpenRootPicker(info: ProjectInfo) {
+  if (info.root_file) return;
+  if (!rootPickerFallback.value.length) return;
+  openRootPicker();
+}
+
 /** 选择候选 → 写项目覆盖 → 同步内存项目状态 → 打开该文件 → 刷新大纲。
  *  顺序关键：后端 update_settings 现在会同步 `ProjectState.root_file`（此前不同步，
  *  表现为「选完仍报未确定根文件」），故选择后必须重新 get_project 再打开文件。 */
@@ -151,7 +165,7 @@ async function chooseProject() {
   if (!dir) return;
   try {
     const info = await openProjectInto(dir);
-    if (!info.root_file) openRootPicker();
+    maybeOpenRootPicker(info);
   } catch (e) {
     console.error("打开项目失败：", e);
   }

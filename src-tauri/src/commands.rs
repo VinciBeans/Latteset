@@ -11,6 +11,7 @@ use specta::Type;
 use std::path::{Path, PathBuf};
 use tauri::{Manager, State};
 use latteset_core::compose::compile_request_manual;
+use latteset_core::newfile::{DocKind, DocLanguage};
 use latteset_core::project::{
     is_tex_file, resolve_creatable_in_project, resolve_in_project, resolve_project_root, PathError,
     ProjectState, RootResolution,
@@ -452,6 +453,20 @@ pub async fn get_outline(
         state.fs.as_ref(),
     )
     .await)
+}
+
+// ---------------------------------------------------------------- 新建文件
+
+/// 新建 `.tex` 的**最小骨架**（roadmap ㊺ §6.13.1-A）：新手向导选完"语言 × 类型 × 标题"之后，
+/// 前端把这段内容交给 `save_all` 落盘。
+///
+/// 为什么由后端给内容而不是前端拼：这张"语言 × 类型"表在 `core::newfile`（与将来 headless 的
+/// 入口共用同一份），前端只传选择值 —— 否则两边各拼一份，早晚会飘。
+/// 无副作用、不需要项目上下文，所以它不进 `AppState`。
+#[tauri::command]
+#[specta::specta]
+pub fn new_file_skeleton(lang: DocLanguage, kind: DocKind, title: Option<String>) -> String {
+    latteset_core::newfile::document_skeleton(lang, kind, title.as_deref().unwrap_or_default())
 }
 
 // ---------------------------------------------------------------- 编译

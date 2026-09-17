@@ -13,8 +13,15 @@
 //!   少一个 `\usepackage`、少一处能写错的地方；
 //! - beamer 不给 `\maketitle`（它要在 frame 里用 `\titlepage`），直接给一页可写的 frame。
 
+use serde::{Deserialize, Serialize};
+use specta::Type;
+
 /// 文档语言（决定用 ctex 类还是标准类）。
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+///
+/// 序列化名（`chinese` / `english`）就是前端 `NewFileWizard.vue` 传过来的字面量：这张表只此一份，
+/// 前端不另抄一遍（modules.md §8 命令面「DTO 进出、无业务逻辑」）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Type)]
+#[serde(rename_all = "snake_case")]
 pub enum DocLanguage {
     /// 中文（ctex 类：`\documentclass[UTF8]{ctexart}` …）。
     Chinese,
@@ -23,7 +30,8 @@ pub enum DocLanguage {
 }
 
 /// 文档类型（面向新手只放最常见的四种）。
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Type)]
+#[serde(rename_all = "snake_case")]
 pub enum DocKind {
     /// 短文 / 论文（`article` / `ctexart`）。
     Article,
@@ -53,10 +61,16 @@ impl DocKind {
 
 /// 生成最小骨架。`title` 为空时不写 `\title`（也别留空行噪声）。
 ///
-/// **不变量**（单测钉住）：产物**一定**含 `\documentclass`、`\begin{document}`、`\end{document}`。
+/// **不变量**（单测钉住）：产物**一定**含 `\documentclass`、`\begin{document}`、`\end{document}`；
+/// 且**占位文字随语言走**——给英文文档塞"第一节"是上一版真机验收时看出来的（英文书里冒出汉字）。
 pub fn document_skeleton(lang: DocLanguage, kind: DocKind, title: &str) -> String {
     let class = kind.class_name(lang);
     let options = if lang == DocLanguage::Chinese { "[UTF8]" } else { "" };
+    // 占位文字：只有语言决定它（与 `\documentclass` 的选择同源，不另开一个开关）
+    let (section, frame) = match lang {
+        DocLanguage::Chinese => ("第一节", "第一页"),
+        DocLanguage::English => ("Introduction", "First frame"),
+    };
     let title = title.trim();
     let mut out = String::new();
     out.push_str(&format!("\\documentclass{options}{{{class}}}\n"));
@@ -68,14 +82,14 @@ pub fn document_skeleton(lang: DocLanguage, kind: DocKind, title: &str) -> Strin
     match kind {
         DocKind::Beamer => {
             // beamer 不要 `\maketitle`（要 `\frame{\titlepage}`）—— 新手向导就给一页能直接写的 frame。
-            let head = if title.is_empty() { "第一页" } else { title };
+            let head = if title.is_empty() { frame } else { title };
             out.push_str(&format!("\\begin{{frame}}{{{head}}}\n\n\\end{{frame}}\n"));
         }
         _ => {
             if !title.is_empty() {
                 out.push_str("\\maketitle\n\n");
             }
-            out.push_str("\\section{第一节}\n\n");
+            out.push_str(&format!("\\section{{{section}}}\n\n"));
         }
     }
     out.push_str("\\end{document}\n");
@@ -134,5 +148,37 @@ mod tests {
         let s = document_skeleton(DocLanguage::English, DocKind::Article, "x");
         assert!(s.contains("\\usepackage{amsmath}"));
         assert!(!s.contains("amssymb"), "默认骨架不引入需要额外字体的宏包");
+    }
+
+    /// 占位文字随语言：英文文档里不该出现汉字（真机验收时英文 book 的目录里冒出过"第一节"）。
+    #[test]
+    fn placeholder_text_follows_the_language() {
+        let has_cjk = |s: &str| s.chars().any(|c| c as u32 >= 0x2E80);
+        for kind in KINDS {
+            let en = document_skeleton(DocLanguage::English, kind, "Title");
+            assert!(!has_cjk(&en), "英文 {kind:?} 骨架里不该有汉字：{en}");
+            let cn = document_skeleton(DocLanguage::Chinese, kind, "标题");
+            assert!(has_cjk(&cn), "中文骨架该有中文占位：{cn}");
+        }
+        // 无标题时 beamer 的 frame 标题也是分语言的
+        assert!(document_skeleton(DocLanguage::English, DocKind::Beamer, "").contains("\\begin{frame}{First frame}"));
+        assert!(document_skeleton(DocLanguage::Chinese, DocKind::Beamer, "").contains("\\begin{frame}{第一页}"));
+    }
+
+    /// 与前端交换的**字面量**（`NewFileWizard.vue` 的选择值 → 命令参数 → 这里）：
+    /// 钉住它们，改名就得同时改前端（编译期不会替我们抓这个）。
+    #[test]
+    fn wire_names_are_the_snake_case_literals() {
+        for (lang, want) in [(DocLanguage::Chinese, "\"chinese\""), (DocLanguage::English, "\"english\"")] {
+            assert_eq!(serde_json::to_string(&lang).unwrap(), want);
+        }
+        for (kind, want) in [
+            (DocKind::Article, "\"article\""),
+            (DocKind::Report, "\"report\""),
+            (DocKind::Book, "\"book\""),
+            (DocKind::Beamer, "\"beamer\""),
+        ] {
+            assert_eq!(serde_json::to_string(&kind).unwrap(), want);
+        }
     }
 }

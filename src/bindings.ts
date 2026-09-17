@@ -15,6 +15,15 @@ export const commands = {
 	readFile: (path: string) => typedError<string, CmdError>(__TAURI_INVOKE("read_file", { path })),
 	saveAll: (files: FileContent[]) => typedError<null, CmdError>(__TAURI_INVOKE("save_all", { files })),
 	/**
+	 *  新建 `.tex` 的**最小骨架**（roadmap ㊺ §6.13.1-A）：新手向导选完"语言 × 类型 × 标题"之后，
+	 *  前端把这段内容交给 `save_all` 落盘。
+	 * 
+	 *  为什么由后端给内容而不是前端拼：这张"语言 × 类型"表在 `core::newfile`（与将来 headless 的
+	 *  入口共用同一份），前端只传选择值 —— 否则两边各拼一份，早晚会飘。
+	 *  无副作用、不需要项目上下文，所以它不进 `AppState`。
+	 */
+	newFileSkeleton: (lang: DocLanguage, kind: DocKind, title: string | null) => __TAURI_INVOKE<string>("new_file_skeleton", { lang, kind, title }),
+	/**
 	 *  文档大纲（源结构树）：解析在 core `outline` 模块（2026-09-03 从前端下沉）。
 	 * 
 	 *  输入（roadmap ⑦a 起为增量语义）：
@@ -160,6 +169,15 @@ export type CompileSettings = {
 	debounce_ms: number,
 	timeout_secs: number,
 	engine: Engine,
+	/**
+	 *  新建**第一个** `.tex` 时弹「新手向导」（roadmap ㊺ §6.13.1-A）：选文档语言/类型/标题，
+	 *  直接生成一份能编译的最小骨架。
+	 * 
+	 *  **默认开**（新手第一条路要有人领），可在设置里关掉 ⇒ 关掉后回到"建空文件"。
+	 *  `#[serde(default = ...)]`：旧 `settings.json` 没有这个键也要能读，
+	 *  否则升级即报错、用户配置整个丢失（同 `ui` / `tectonic` 的理由）。
+	 */
+	new_file_wizard?: boolean,
 };
 
 /**  compile-status 事件载荷。 */
@@ -249,6 +267,29 @@ export type DirEntryInfo = {
 	path: string,
 	is_dir: boolean,
 };
+
+/**  文档类型（面向新手只放最常见的四种）。 */
+export type DocKind = 
+/**  短文 / 论文（`article` / `ctexart`）。 */
+"article" | 
+/**  报告（`report` / `ctexrep`）。 */
+"report" | 
+/**  书（`book` / `ctexbook`）。 */
+"book" | 
+/**  幻灯片（`beamer` / `ctexbeamer`）。 */
+"beamer";
+
+/**
+ *  文档语言（决定用 ctex 类还是标准类）。
+ * 
+ *  序列化名（`chinese` / `english`）就是前端 `NewFileWizard.vue` 传过来的字面量：这张表只此一份，
+ *  前端不另抄一遍（modules.md §8 命令面「DTO 进出、无业务逻辑」）。
+ */
+export type DocLanguage = 
+/**  中文（ctex 类：`\documentclass[UTF8]{ctexart}` …）。 */
+"chinese" | 
+/**  英文（标准类：`article` / `report` / `book` / `beamer`）。 */
+"english";
 
 /**  TeX 引擎（默认 xelatex，见 design.md）。 */
 export type Engine = "xelatex" | "pdflatex" | "lualatex" | 
@@ -445,6 +486,11 @@ export type SettingsPatch_Deserialize = {
 	debounce_ms?: number | null,
 	timeout_secs?: number | null,
 	engine?: Engine | null,
+	/**
+	 *  新建向导开关（roadmap ㊺ §6.13.1-A）：`None` = 不动。**全局**设置，无项目覆盖
+	 *  （它是"界面要不要拦一下"，与具体项目无关）。
+	 */
+	new_file_wizard?: boolean | null,
 	root_file?: string | null,
 	/**  引擎形态（Tectonic 库内嵌）：`None` = 不动。 */
 	lib_form?: boolean | null,
@@ -471,6 +517,11 @@ export type SettingsPatch_Serialize = {
 	debounce_ms?: number | null,
 	timeout_secs?: number | null,
 	engine?: Engine | null,
+	/**
+	 *  新建向导开关（roadmap ㊺ §6.13.1-A）：`None` = 不动。**全局**设置，无项目覆盖
+	 *  （它是"界面要不要拦一下"，与具体项目无关）。
+	 */
+	new_file_wizard?: boolean | null,
 	root_file?: string | null,
 	/**  引擎形态（Tectonic 库内嵌）：`None` = 不动。 */
 	lib_form?: boolean | null,
