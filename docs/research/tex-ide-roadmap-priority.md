@@ -861,7 +861,9 @@ XDV 逐字节对比显示原因：重导言区里有 `pdf:pagesize width 614.295
 4. 打开一个"有 .tex 但没有 `\documentclass`"的目录 ⇒ 状态栏**出现标签**；在编辑器里补上 `\documentclass` 并保存 ⇒ **标签消失**且能编译（每次保存都重探测，直到成功）；
 5. 全程**无弹窗打扰**（除第一次向导）—— 这是本项与"处处弹提示"的分界。
 
-**落地状态（2026-09-17）**：**骨架生成已落地**（`core::newfile::document_skeleton`，`DocLanguage` × `DocKind` = 8 种组合，4 例单测全绿 —— 含"任何组合都含 `\documentclass`/`\begin{document}`/`\end{document}`"这条**根探测不变量**；只预置 `amsmath`，因为 `amssymb` 的符号字体在缺字体的 bundle 下会让预览转换失败；中文一律走 `ctex*` 类；beamer 不给 `\maketitle`，直接给一页 frame）。**其余待实现**：① `NewFileWizard.vue`（弹窗：语言/类型/标题）+ 接进 `FileTree` 的新建流程（**仅在"空项目 + 第一个 .tex + 开关为开"时弹**）；② 设置面 `compile.newFileWizard`（默认 true，走 schema/merge/validate + 面板开关）；③ **状态栏"未确定根文档"标签**（可点 → `RootFilePicker`）+ **保存后静默重探测**（复用 open_project 的同一套 core 探测，探测到就撤标签；不弹提示、只留 debug 日志）。判据见上（5 条），实现后按它真机验收。
+**落地状态（2026-09-17）**：**骨架生成已落地**（`core::newfile::document_skeleton`，`DocLanguage` × `DocKind` = 8 种组合，4 例单测全绿 —— 含"任何组合都含 `\documentclass`/`\begin{document}`/`\end{document}`"这条**根探测不变量**；只预置 `amsmath`，因为 `amssymb` 的符号字体在缺字体的 bundle 下会让预览转换失败；中文一律走 `ctex*` 类；beamer 不给 `\maketitle`，直接给一页 frame）。**B 已落地（2026-09-17）**：状态栏那条「未确定根文件 · 点击选择」**本来就有**（可点 → `RootFilePicker`，`App.vue` 已接），本次补上缺的那半 —— **保存后静默重探测**：`useAutoSave` 在保存成功后，若 `project.root_file` 仍为空就 `openProject(root)` 重跑一次根探测（复用打开项目那条路 ⇒ 与初次口径完全一致），**探测到即停止触发、标签自动消失**；**静默**（不弹提示，失败只记 `console.debug`）。为什么挂"保存后"：探测读磁盘（ADR-0007），保存才是磁盘真相变化的时刻。`npm run build` 通过 ✓。**待真机验收**（判据 4：补上 `\documentclass` 保存 ⇒ 标签消失且能编）。
+
+**其余待实现**：① `NewFileWizard.vue`（弹窗：语言/类型/标题）+ 接进 `FileTree` 的新建流程（**仅在"空项目 + 第一个 .tex + 开关为开"时弹**）；② 设置面 `compile.newFileWizard`（默认 true，走 schema/merge/validate + 面板开关）；~~③ 状态栏标签 + 保存后静默重探测~~ ✅ 已落地（见上）。判据 4 待真机验收。
 
 **与 6.13 的关系**：6.13 的"新建文件"是入口，本条是它的**新手引导与无根兜底**；A 同时把 6.13 遗留的"空文件探测不出根"一并解决（骨架里有 `\documentclass`），B 则是"用户手打内容"那条路的兜底。
 

@@ -3,10 +3,12 @@
 import { onBeforeUnmount } from "vue";
 import { ipc } from "../services/ipc";
 import { useEditorStore } from "../stores/editor";
+import { useProjectStore } from "../stores/project";
 import { useSettingsStore } from "../stores/settings";
 
 export function useAutoSave() {
   const editor = useEditorStore();
+  const project = useProjectStore();
   const settings = useSettingsStore();
   let timer: ReturnType<typeof setTimeout> | undefined;
 
@@ -36,6 +38,20 @@ export function useAutoSave() {
       const clean = files.filter((f) => (editor.buffers.get(f.path) ?? "") === f.content);
       editor.markSaved(clean.map((f) => f.path));
       if (clean.length < files.length) schedule();
+      // ㊺ §6.13.1-B：**还没有根文档**时，每次保存都静默重跑一次根探测，直到探测到为止
+      // （状态栏那条「未确定根文件 · 点击选择」会在探测成功后自行消失）。
+      // 为什么挂在"保存后"：探测读的是磁盘（ADR-0007 内容真相源），保存才是磁盘状态变化的时刻；
+      // 只在无根文档这一过渡态下发生，成功后即不再触发。**静默**：不弹提示，失败也只记 console。
+      if (project.project && !project.project.root_file) {
+        const root = project.project.root;
+        if (root) {
+          try {
+            await project.openProject(root); // 复用打开项目那条路 ⇒ 与初次的探测口径完全一致
+          } catch (e) {
+            console.debug("无根文档时的静默重探测失败（下次保存再试）：", e);
+          }
+        }
+      }
     } catch (e) {
       editor.rollbackSaving(files.map((f) => f.path));
       console.error("自动保存失败：", e);
