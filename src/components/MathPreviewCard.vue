@@ -62,7 +62,8 @@ async function draw() {
   // （用户实测反馈）。所以先离屏渲染一页，再按**内容包围盒**裁到公式本身。
   const SCALE = 2; // 离屏渲染倍率：够清晰，又不至于让像素扫描太贵
   const PAD = 10; // 裁剪留白（离屏像素）
-  const MAX_CSS_W = 340; // 卡片里公式的最大显示宽度（CSS px）
+  const MAX_CSS_W = 480; // 卡片里公式的最大显示宽度（CSS px；用户反馈原来 340 偏小）
+  const MIN_CSS_W = 180; // 极小公式（如 \\$）放大到至少这么宽，否则字太小
 
   const off = document.createElement("canvas");
   off.width = Math.max(1, Math.floor(base.width * SCALE));
@@ -111,7 +112,7 @@ async function draw() {
   const ch = Math.min(off.height - cy, maxY - minY + 1 + PAD * 2);
 
   // 裁剪后按"最多 MAX_CSS_W"缩小显示（公式很长时也不撑爆卡片）
-  const cssW = Math.min(MAX_CSS_W, cw / SCALE);
+  const cssW = Math.min(MAX_CSS_W, Math.max(MIN_CSS_W, cw / SCALE));
   const cssH = (ch / cw) * cssW;
   const dpr = window.devicePixelRatio || 1;
   canvas.width = Math.floor(cssW * dpr);

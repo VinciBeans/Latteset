@@ -4,6 +4,7 @@
 import { onBeforeUnmount, onMounted, ref, watch } from "vue";
 import * as monaco from "monaco-editor";
 import { useEditorStore } from "../stores/editor";
+import { useCompileStore } from "../stores/compile";
 import { useSyncTex } from "../composables/useSyncTex";
 import { ipc } from "../services/ipc";
 import MathPreviewCard from "./MathPreviewCard.vue";
@@ -24,6 +25,7 @@ const monacoSubscriptions: monaco.IDisposable[] = [];
 // ---- 公式预览（roadmap ㊸ 切片 3）：悬停一个公式 → 单独编译它 → 浮层里给真实排版结果 ----
 // 触发是**我们自己**的 `onMouseMove` + 去抖（不走 Monaco 的 hover provider：浮层要放一张画布，
 // Monaco 的 hover 内容只能放 markdown）。
+const compileStore = useCompileStore();
 const MATH_HOVER_DELAY_MS = 160;
 const mathCard = ref({ visible: false, x: 0, y: 0, pdfPath: "", message: "", formula: "", mode: "auto" });
 let mathTimer: number | undefined;
@@ -62,6 +64,13 @@ async function requestMathPreview(text: string, utf16Offset: number, x: number, 
 }
 
 function onEditorMouseMove(e: monaco.editor.IEditorMouseEvent) {
+  // 主编译（queued/running）期间**不发起**悬停编译：库形态的引擎是**进程内全局锁**，此刻发起
+  // 只会排队等锁（图出来时鼠标早走了），还会白占一次 30 s 上限的任务（roadmap §6.11.4 决定）。
+  if (compileStore.phase === "running" || compileStore.phase === "queued") {
+    window.clearTimeout(mathTimer);
+    hideMathCard();
+    return;
+  }
   const position = e.target.position;
   const model = monacoEditor?.getModel();
   if (!position || !model) {
