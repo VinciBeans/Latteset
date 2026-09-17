@@ -685,7 +685,7 @@ LiveFeedback 三条读任务（stdout / stderr / `.log` 尾随）· watcher 线�
 | ④ 错误诊断 | modules.md §4.1 + design.md §错误列表 + `log_parser/diagnosis.rs` / `real_error_corpus.rs` |
 | ⑤ SyncTeX | [ADR-0008](../adr/0008-synctex-via-cli-with-interface.md) + modules.md §5 + design.md §预览 + `scripts/synctex-report.mjs` |
 | ㊷ 库形态同步数据补丁 | modules.md §5（契约）与 §12.2 #26（已修）+ troubleshooting.md「库内嵌档下 SyncTeX 定位不可用」+ 本文件 §6.10.1（实测与 A/B）+ `test_file/e2e/synctex-42-{verify,artifacts-ab,selfcheck}.ps1`（工作区产物） |
-| ㊸ 悬停公式即时预览 | 本文件 §6.11（竞品口径 + 需求读数 + 三条路线 + 判据/风险）+ `src/latexSyntax.ts` 的 `math` 状态（定界规则来源）+ `src/latexSuggest.ts`（Monaco provider 注册范式）+ `git show 0ac930c`（片段编译的实测成本与三个真机坑） |
+| ㊸ 悬停公式即时预览 | 本文件 §6.11（竞品口径 + 需求读数 + 三条路线 + 判据/风险）与 **§6.11.8（P0 定量数据）** + `src/latexSyntax.ts` 的 `math` 状态（定界规则来源）+ `src/latexSuggest.ts`（Monaco provider 注册范式）+ `git show 0ac930c`（片段编译的实测成本与三个真机坑）+ `test_file/e2e/math-preview-lab.ps1` / `math-preview-lab.json`（工作区产物） |
 | ⑥ CLI + MCP（**已完成**） | [cli-mcp-plan.md](../cli-mcp-plan.md) + modules.md §8.1 + `crates/latteset-server` |
 | ⑦a 大纲增量（**已完成**） | modules.md §3.5（缓存三不变量）/ §12.2 + `core::outline::{load_cached, OutlineCache}` + `src/stores/outline.ts` |
 | ⑦c / ⑦b（**已完成 / 缓做**） | [p1-large-doc-editor-analysis.md](./p1-large-doc-editor-analysis.md)（拆分依据）+ [p1c-multifile-large-project.md](./p1c-multifile-large-project.md)（夹具/口径/数据）+ `scripts/{gen-large-project,editor-report}.mjs` |
