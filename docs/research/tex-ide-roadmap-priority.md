@@ -62,6 +62,7 @@
 | ID | 事项 | W | D | C | V | P | 档 | 依据与下一步 |
 |---|---|---|---|---|---|---|---|---|
 | ⑧ | 跨文件 LaTeX 语义操作 | 4 | 5 | 4 | 3 | **1.29** | P1 | P10：VS Code 明确缺失（§6.3） |
+| ㊸ | **悬停/光标所在公式的即时预览**（TeXStudio 式内联浮层：把**这一个公式**单独编译成图给出来） | 3 | 3 | 3 | 2 | **1.2** | P1 | **产品负责人点名入表（2026-09-17）**。竞品有但都停在"近似渲染"：TeXStudio 用真排版做内联浮层/`Alt+P`（其已知坑见 §6.11），**LaTeX Workshop 的 hover 是 MathJax 近似**（不认项目宏、字体与断行都不保真）⇒ 我们的差异化 = **项目导言区 + 真引擎**排这一个公式。需求侧有一手信号（SE `hover preview` 系 5 题合计 **≈2.5 万浏览** + Neovim 侧有 `latex-preview.nvim` 这类第三方实现，逐条见 §6.11）。成本锚点**已实测**（不是估的）：片段文档单独编译 **79 ms（最小）/ ≈200 ms（真实导言区）**，同机全篇 125 页第 1 趟 **1716 ms** ⇒ ≈1/8；后端与三个真机坑的修法都在 `git show 0ac930c`（已回退的片段预览 A）。C 记 3 是含"公式扫描器 + 悬停去抖/缓存 + 稿层隔离"；**若直接复用 A 的后端可压到 C=2 ⇒ P=1.5，且满足"成本 ≤2 且独立可交付"⇒ 可走快速通道插队**。关键约束：库形态引擎是**进程内全局锁** ⇒ 主编译期间不发起（㊴ 落地后可放开）。落地第一步是**先量导言区成本分布**（重宏包导言区会把 200 ms 拉向全篇，见 §6.11 风险①） |
 | ㉖ | **模板自带 latexmkrc 与构建约定的交互**（硬证据已就位） | 3 | 4 | 3 | 3 | **1.17** | P1 | hithesis：rc 覆写 `$pdflatex` + `--shell-escape` + 尾部 `;cp`，在 `-outdir=tmp` 下 `\include{body/...}` 写不出 aux、报错后 latexmk 挂住；精简 rc 最小复现仍能恢复 → 触发条件待定位（§6.1） |
 | ⑪ | 预览滚动/缩放保持、只重排变更页 | 4 | 3 | 4 | 2 | **1.17** | P1 | 官方承认"丢失滚动位置"；判定输入**已就位**（页哈希差分，见 §6.4 与 [增量编辑 × DVI 专项](./incremental-edit-x-dvi.md)）；建议先做零风险的"全同则不刷新"（C1） |
 | ㉞ | **流式出图**：编译期把"已完成页"变成**部分 PDF** 交给预览（长编译可见地逐页出现） | 3 | 4 | 3 | 3 | **1.17** | P1 | 可行性已重评（[DVI 报告](./dvi-preview-feasibility.md) §10）：合成 postamble **9–12 ms** + **进程内**转换 **92–131 ms/次**（旧评估的外部进程是 0.65–0.94 s）；价值窗口 = 冷 Full 125 页 **7601 ms** 里"排版结束→出 PDF"那 5736 ms；体感已测（5 次背靠背重载 **0 long task**、滚动位置 1797 帧零偏移）。**落地完成（§6.6）**：切片 1–4 全部完成并各自真机验证（趟边界出图，提前 ≈5.5 s、代价 +4.4%；`compile-preview` 事件；前端换字节不换身份）。**能力边界**：只能"趟间可见"（多趟文档，冷编通常 2–3 趟），单趟就收敛的编译拿不到中间帧 |
@@ -94,6 +95,7 @@
 | **指定项（未排期）** | **㉟** 窗口按钮融入应用界面（产品负责人点名；P=0.57 低于自动门槛） | 无边框窗口下**系统行为一条不丢**：拖拽/8 向缩放/双击最大化/右键系统菜单/Alt+F4/Win+方向键吸附/DPI 切换/贴靠布局（后者分两步，㉟-a 可暂缺但要如实标注） | ⬜ 未开始（见 §6.7） |
 | **Batch 5 并行与"白等"** | 快速通道 **（空，㊱㊲㊳ 均已收口）** → **㊴ 子进程编译通道**（→ **㊶ 分章并行草稿**）→ ㊵ | ㊱：✅ **已完成**——失败查询 **668 → 14 ms**、无同步数据 **645 → 10 ms**、inverse **3127 → 11 ms**，瞬时竞争仍退避成功（㉒ 不回归），见 §1/§6.9.1。㊲：✅ **已定量否决**——索引真实耗时 **278 ms**（旧外推高 2.6×）且**不挡首屏**（加载完成时索引仍在跑），最坏附加延迟 ≈40 ms，不做，见 §1/§6.9.1。㊳：✅ **已定量否决**（往返 ≈7 ms，不做，见 §1）。㊴：主编译墙钟增量 ≤10%（真机 ≥8 核）、**低核机器（≤4 核）默认不开**、缓存零互踩、进程杀干净无残留。㊶：分章草稿的页码/编号与全篇一致（先做页哈希对拍） | 🟡 入表 2026-09-16；**快速通道三项已全部收口**（㊱ 修完、㊲㊳ 定量否决），余项（㊴㊵㊶）未开始（依据与实测见 §6.9） |
 | **㊷ 库形态 SyncTeX 修复** | 让**库内嵌档**的同步数据里**主输入带上真实文件名**（修法已预验证，见 §6.10） | 库形态编译后 `.synctex.gz` 的 `Input:1` 是真实路径（不是 `texput`）；**单文件（`large`）与分章（`multifile`）两个夹具**上，两形态的 `forward`/`inverse` **逐字段一致**；`scripts/synctex-report.mjs` 三组样本的往返跳到位率不降；排版结果/日志/错误行归属零变化（纯数据补丁，不动文档结构） | ✅ **已完成**（2026-09-17，落地与实测见 §6.10）。四问全过：① 两夹具的库形态产物 `Input:1` = 真实绝对路径；② `forward` **7/7 逐字段相同**、`inverse` **9/11 相同**（余 2 项是**与本补丁无关**的「目录区域归属」差异 —— 用"把主输入名改回 `texput` 结果一字不变"反证）；③ 精度不降：`synctex-report.mjs` 的 CLI 侧复现文档基线（`bench/large` 12/12、beamer 7/10），我们的自解析在补丁后数据上往返行差 ≤6 且**两形态逐点相同**；④ 零变化 A/B（HEAD 二进制 vs 补丁版、三夹具）**PDF/`.log`/错误归属/同步数据（除 Input 行）逐字节相同** |
+| **㊸ 悬停公式即时预览（候选，未排期）** | 光标停在公式上 → 浮层给出**这一个公式**的真实排版预览（TeXStudio 式），不重排全篇、不碰权威产物 | ① **先量**：三个夹具（轻/中/重导言区）的片段编译耗时分布 + 缓存命中后的响应，出数再决定是否投入（先量后做，同 ㊲㊳ 的处置）；② 出数后若做：公式扫描器逐例单测通过（行内/行间/环境/多行/转义 `\$`/注释/`\verb`）、首次出图 p50 ≤ 400 ms（目标，待校准）、缓存命中 ≤ 50 ms、**主编译墙钟增量 ≤5%**、权威 `main.pdf`/`tmp/main.*` 与关闭该功能时**逐字节相同**、坏公式**给原因不留白**；③ 真机用可观测钩子断言（同 `window.__previewLastReload` 约定） | ⬜ 未排期（2026-09-17 产品负责人点名入表；P=1.2，若复用 `0ac930c` 后端则 P=1.5 可插队；设计与风险见 §6.11） |
 
 ## 5. 外部方案与产物格式评估（否决与吸收都在这里）
 
@@ -525,6 +527,80 @@ LiveFeedback 三条读任务（stdout / stderr / `.log` 尾随）· watcher 线�
 **遗留（不在本项范围）**：① 目录区域的反向归属差异（上面那条，涉及 ㉒ 的"就近回落"策略，不是"主输入名"问题）；② `test_file/projects/multifile`（`ctexbook[11pt]`）在本地测试 bundle 下编不过（bundle 有 `bk10.clo`、缺 `bk11.clo`）—— 与本项无关，但**分章夹具要用 `test_file/projects/bench/multifile`**（`ctexbook` 10pt，文档里的 `bench/multifile` 指的就是它）。
 
 
+### 6.11 ㊸ 悬停公式即时预览（TeXStudio 式内联浮层；2026-09-17 产品负责人点名入表）
+
+**一句话**：光标停在（或悬停在）一个**数学公式**上 → 弹出浮层，里面是**这一个公式的真实排版结果**。触发面按公式定而不是按"选中一段"定：`$…$`、`\(…\)`、`$$…$$`、`\[…\]`，以及 `equation`/`align`/`gather`/`multline` 等环境（含 `*` 变体、跨行）。
+
+**为什么不是"再来一遍片段预览 A"**：A（已回退，`git show 0ac930c`）是**编辑触发的段落级**预览 —— 悬浮一张"改动那一段长什么样"的卡；本项是**指针触发的公式级**预览，触发时机、扫描对象（数学模式而不是段落）、缓存键（公式文本 + 导言区指纹）都不同。**但后端可以整段复用**：A 的独立小文档编译 + `tmp/snippet/` 隔离 + 三个真机坑的修法都留在历史里，这是本项成本能压到 C=2 的原因。
+
+#### 6.11.1 竞品各做到哪一步（2026-09-17 核实）
+
+| 编辑器 | 做法 | 短板（= 我们能做得更好的地方） |
+|---|---|---|
+| **TeXStudio** | **真排版**：光标在公式上即出内联浮层（可配范围：行内/行间公式、图、todo），另可 `Alt+P` / 右键 Preview 主动触发；原文改动后浮层会自动更新（[配置文档](https://texstudio-org.github.io/configuration.html)、[r/LaTeX](https://www.reddit.com/r/LaTeX/comments/3rszm7/automatic_preview_texstudio/)） | 历史坑集中：**显式输出目录会让内联预览失效**（[#552](https://github.com/texstudio-org/texstudio/issues/552)）、浮层只显示约 1 秒/与工具栏预览重复（[SF #2102](https://sourceforge.net/p/texstudio/bugs/2102/)、[SE 500114](https://tex.stackexchange.com/questions/500114/texstudio-tooltip-help-on-mouseover-only-displaying-for-about-1-second)）、**多行公式与多字符定界符的上下文识别弱**（[SE 108401](https://tex.stackexchange.com/questions/108401/texstudio-user-defined-hover-preview) 的答复承诺改进，4.9.7 变更日志才写"improved context detection for preview (multi-line math, cursor inside multi-char delimiter)"）、**math preview 生成曾直接崩**（同变更日志"fix: crash in math preview generation"） |
+| **LaTeX Workshop**（VS Code） | 悬停在**数学环境的起始标签**上弹 **MathJax** 预览；另有独立的 math preview 面板（[wiki: Hover](https://github.com/james-yu/latex-workshop/wiki/Hover)） | **是近似渲染**：按 MathJax 排，**不读项目导言区里的宏**（`\newcommand`/`\DeclareMathOperator`/自定义环境）、字体度量与断行都与最终 PDF 不保真；且以**环境的起始标签**为锚（[SE 554795](https://tex.stackexchange.com/questions/554795/how-to-get-latex-workshop-showing-equations-previews-as-i-move-my-cursor-into-in) 问的正是"光标进到行内公式里能不能也出预览"） |
+
+**⇒ 差异化点（D=3 的依据）**：两家都有，但**"用项目自己的导言区 + 真引擎排这一个公式"只有 TeXStudio 做**，而它把上面四个坑留给了用户；我们做同一件事并且把"输出目录无关 / 浮层可停留 / 多行与多字符定界符 / 不崩"当成立项判据。
+
+#### 6.11.2 需求信号（量化，2026-09-17 取数）
+
+| 来源 | 读数 |
+|---|---|
+| [SE 108401](https://tex.stackexchange.com/questions/108401/texstudio-user-defined-hover-preview)「Texstudio user-defined hover preview」 | 票 **6**、**3777** 浏览（2013，且站内自建了 2 条衍生链接） |
+| [SE 338368](https://tex.stackexchange.com/questions/338368/texstudio-equation-preview-does-not-work-anymore)「Texstudio equation preview does not work anymore」 | 票 1、**3418** 浏览（2016，2025 年仍有活动） |
+| [SE 338840](https://tex.stackexchange.com/questions/338840/sublime-text-3-equation-preview-broken-fix-or-disable)「Sublime text 3 Equation preview broken」 | 票 2、**6149** 浏览 |
+| [SE 500114](https://tex.stackexchange.com/questions/500114/texstudio-tooltip-help-on-mouseover-only-displaying-for-about-1-second)「tooltip … only displaying for about 1 second」 | 票 3、**1252** 浏览 |
+| [SE 534321](https://tex.stackexchange.com/questions/534321/showing-hyperrefs-figures-references-in-a-pop-up-when-hovering-over)「hovering 弹窗看图/引用」 | 票 4、**1691** 浏览（同类心智模型，对象是图/引用不是公式） |
+| [SE 32314](https://tex.stackexchange.com/questions/32314/is-there-an-easy-way-to-add-hover-text-to-all-incidents-of-math-mode-where-the-h)「给所有数学片段加 hover 文本」 | 票 **35**、**10633** 浏览 —— **性质不同**：那是"在**成稿 PDF** 里加 tooltip"，不是编辑器预览，只作旁证 |
+| 第三方实现 | [`latex-preview.nvim`](https://github.com/sonv/latex-preview.nvim)：Neovim 的 hover 式数学预览（含随打字实时更新、公式/定理/引用）⇒ 说明"悬停看公式"是被反复自建的能力 |
+
+**W=3（不是 4）**：反复被要、且有第三方实现，但本仓痛点调研（[desktop-latex-editor-pain-points.md](./desktop-latex-editor-pain-points.md)）里排在前面的仍是"编译延迟 / 内置 PDF 预览质量 / 大项目卡死"；本项属**生产力增益**而非止血。
+
+#### 6.11.3 候选路线与取舍
+
+| 路线 | 做法 | 成本/证据 | 判定 |
+|---|---|---|---|
+| **① 独立小文档按需编译（主路）** | 把「项目导言区 + `\begin{document}` + 该公式 + `\end{document}`」装成一份小文档，在**独立项目根** `<项目>/tmp/snippet/` 编译，取第 1 页渲染 | **已实测**（A，release、库形态、125 页夹具、热 format）：最小片段文档第 1 趟 **79 ms**；真实片段 **204/200/198 ms**（typeset 151–161、转换 1 ms、1 趟）；同机全篇第 1 趟 **1716 ms** ⇒ **≈1/8**。dev(debug) 同一操作 **2.7–2.9 s** ⇒ 手感只能拿 release 数说话 | **采用**（后端与三个坑的修法见 `git show 0ac930c`） |
+| ② 整篇 + `preview.sty`（`active,tightpage`）一次编译出"每公式一页" | 悬停只查表渲染，**零额外编译**；但每次公式变化要**重编全篇**（125 页 1.7 s 起，且与主编译争锁），还要**往用户文档注入宏包**（改文档结构 ⇒ 与 D7/ADR-0007 的取向冲突，且 `preview` 与部分宏包相互打架） | 未测（只作否决记录） | **否决**：把"单次 200 ms 的按需"换成"每次 1.7 s 的整篇"，方向反了 |
+| ③ 复用权威 PDF 的页 + 裁剪 | 悬停时若权威 PDF 新鲜，直接裁出该公式那一块 | SyncTeX 只给"源码行 → **一个点**"，**不给包围盒**；范围信息本身要靠 ② 的 `preview.sty` 或自算盒 ⇒ 没有免费午餐 | **不做**（留作以后若 ② 的 tightpage 元数据已在手时的降级路径） |
+
+#### 6.11.4 关键设计点（落地时必须照做）
+
+1. **公式扫描器（core，纯函数，可单测）**：输入「缓冲全文 + 光标偏移」，输出「公式范围 + 类型（行内/行间/环境）+ 内容」。定界规则可直接照 `src/latexSyntax.ts` 的 `math` 状态（`$`、`\(`、`\[` 进入；`$`、`\)`、`\]` 退出），但必须补齐它的**边界**：`\$` 转义、`%` 注释里的 `$`、`\verb`、`$$…$$`、`\begin{equation}` 等环境（含 `*`）、`\left…\right` 里的 `$` 不出现但 `\text{…$…$}` 会出现、跨行公式。**放在 Rust 侧**（与大纲/根探测同层 ⇒ GUI 与 headless 都能用、能单测；前端只做"偏移 → 请求"）。
+2. **触发与缓存**：Monaco `registerHoverProvider`（注册范式照 `src/latexSuggest.ts` + `src/main.ts` 的 `registerLatexProvider()`），并复用既有光标管线 `EditorPane.vue` 的 `onDidChangeCursorPosition`。**悬停去抖**（指针停留 ~120–200 ms 才发起）+ **缓存**：键 = `公式文本 + 导言区哈希 + 引擎/形态 + format 指纹`，命中直接复用上一次的位图/PDF 页 ⇒ 同一公式反复悬停**零编译**。
+3. **隔离（硬要求，照 A 的结论）**：独立项目根 `<项目>/tmp/snippet/`（产物 `tmp/snippet/main.pdf`、中间产物 `tmp/snippet/tmp/`）；**不碰**权威 `<stem>.pdf`、**不碰**主编译的 `tmp/`；**不经调度器**（否则 `compile-status`/`pdf-updated`/页哈希基线/A 闸门/「引用待更新」语义会被中间产物污染）；`tmp/` 已在 watch 与文件树忽略清单里 ⇒ 不触发编译（A 真机日志确认过）。
+4. **与主编译的关系**：库形态的引擎是**进程内全局锁**（㉞ 的探测：4 线程并发 == 单线程），所以**主编译进行中不发起**悬停编译（A 当年就是"编译中直接跳过"）；子进程档（`LATTESET_TECTONIC_LIB=0`）无此约束。**㊴（子进程编译通道）落地后可放开这条** —— 那时悬停编译走自己的进程通道，真并行。
+5. **诚实边界（沿用 A，别让用户当成"文档里的那一处"）**：版式从第 1 页第 1 行起、公式编号/`\tag` 与真文档可能不同、**无 aux ⇒ `\cite`/`\ref` 显示 `??`**、只认导言区里的宏、字体取决于导言区（`article` 无 CJK ⇒ 中文缺字，**这是忠实结果**）。
+6. **失败可见（A 的教训 ③）**：公式排不出来时浮层里给一行原因；**绝不静默留白** —— A 当年正是"画布未挂载就渲染 + 静默 return"藏了一轮 bug。
+
+#### 6.11.5 成本、优先级与验收
+
+- **成本**：C=3（公式扫描器 + 悬停/去抖/缓存 + 隔离与接线 + 三个已知坑的复用 + 真机验收）；**若把 A 的后端整段取回**（`git show 0ac930c` 的 `core/snippet.rs` + `compile_snippet` + 卡片组件），可压 **C=2**。V=2（扫描器逐例单测 + 真机可观测钩子断言延迟/缓存/零污染）。W=3、D=3 ⇒ **P=1.2（P1）**；按 C=2 算 **P=1.5**，且满足"成本 ≤2 且独立可交付"⇒ **可走快速通道插队**。
+- **验收判据**（先量后做的次序不能反）：
+  1. **P0 前置（先量，不写功能）**：三档夹具（轻导言区 `bench/tiny`、中 `bench/large`、重导言区如 `thesis`/`hithesis` 类含 `tikz`/`pgfplots` 的工程）各测「片段文档编译耗时」与「重复悬停（缓存命中）耗时」；**若重导言区把 200 ms 拉向全篇量级，本项的形态要改判**（可能只对轻/中导言区开启，或改成"悬停显示按钮、点击才编译"）。
+  2. 公式扫描器：构造样例逐例断言范围（行内/行间/环境/多行/`\$`/注释里的 `$`/`\verb`/嵌套/跨行 `align`）。
+  3. 首次出图（缓存未命中）**目标** p50 ≤ 400 ms、p95 ≤ 900 ms（release、热 format、库形态；依据 = A 实测 ~200 ms + IPC 与渲染开销，**待实测校准**）；缓存命中 **目标** ≤ 50 ms。
+  4. **主编译墙钟增量 ≤5%**（同夹具同编辑脚本，开/关各 N 次；口径与 ㊴ 的判据一致），且**主编译进行中不发起**悬停编译（日志断言）。
+  5. **零污染**：权威 `main.pdf` 与 `tmp/main.*` 的 SHA256 与关闭该功能时**逐字节相同**（照 ㊷ 的 A/B 做法：HEAD 二进制 vs 改动版、清空 `tmp/` 各跑一轮）。
+  6. 失败可见：坏公式 ⇒ 浮层含原因文本；**任何情况下不出现空白卡**。
+  7. 真机验收走**可观测钩子**（`window.__mathPreview`，同 `window.__previewLastReload` / `window.__snippetPreview` 约定）：MCP 的合成按键驱动不了 Monaco，这条是硬约束。
+
+#### 6.11.6 风险与未测（诚实标注）
+
+1. **导言区成本分布 `[未测]`**：A 的 200 ms 是在**中等导言区**上量的；`tikz`/`pgfplots`/`minted`/大量 `\newcommand` 会把片段编译拉长（甚至超过全篇的一半）⇒ **这是本项最可能翻车的地方**，所以验收第 1 条就是先量它。
+2. **悬停抖动**：鼠标扫过一行会路过多个公式 ⇒ 去抖 + （可选）只在指针**静止**时触发；是否需要"悬停即编译"还是"悬停显示『预览』按钮/快捷键（TeXStudio 的 `Alt+P`）"，两者的**编译量差约一个量级**（实现成本相近），**列为待定决策**（拿真机手感定，不靠推断）。
+3. **浮层 UX**：停留时长、位置（遮挡光标）、多屏/DPI、滚动时是否跟随 —— TeXStudio 的两个历史坑（约 1 秒消失、与工具栏预览重复）都是 UX 层的，必须真机试。
+4. **多行公式的归属**：`align` 里光标在第 3 行时预览"整段环境"还是"当前行"？TeXStudio 的历史短板正在这里 ⇒ 我们的判据是先按**整个环境**（忠实），再考虑是否给"只当前行"的选项。
+5. **导言区口径（A 的结论可直接复用，已核源码）**：A 的口径 = 「根文件里 `\begin{document}` **之前**的全部内容逐字照搬（含注释与空行）」，并靠 `\input@path` 指回项目根 ⇒ **导言区自己的 `\input{preamble}` 是能工作的**（那正是它踩坑后专门修的一处）。仍在本项范围外的：项目根**之外**的共享导言区、**正文里**定义的宏（A 已明确不解决）、以及 `\begin {document}` 这类带空格的写法（A 选择不容忍、如实报错）。本项沿用同一口径，并把"正文宏不可用"如实显示给用户。
+6. **编译中 + 悬停的组合**：引擎锁期间只显示"上一次的结果/无结果"还是排队到编译结束（㊴ 之前）—— 行为要显式定义并显示，别静默不响应。
+
+#### 6.11.7 与其它项的关系
+
+- **㊴ 子进程编译通道**：落地后本项才能在主编译期间并行（4 条约束里唯一的外部依赖）；本项**不阻塞**㊴。
+- **㉞ 编译中预览**：那是"整篇的中间态"，本项是"单个公式的即时态"，互不替代；两者抢的是同一个引擎锁，闸门要一起看。
+- **既有草稿层（字符近似，31–34 ms）**：本项**不加也不动**它（A 当年也是加一层）。
+- **㉒/⑤ 的 SyncTeX**：本项**不用** SyncTeX（那是"源码 ↔ 已排版页"的映射；公式预览是"另排一份"），所以 ㊷ 的修补与本项无关。
+
 ## 7. 明确不做（否决项）
 
 | 项 | 理由 |
@@ -560,6 +636,7 @@ LiveFeedback 三条读任务（stdout / stderr / `.log` 尾随）· watcher 线�
 | ④ 错误诊断 | modules.md §4.1 + design.md §错误列表 + `log_parser/diagnosis.rs` / `real_error_corpus.rs` |
 | ⑤ SyncTeX | [ADR-0008](../adr/0008-synctex-via-cli-with-interface.md) + modules.md §5 + design.md §预览 + `scripts/synctex-report.mjs` |
 | ㊷ 库形态同步数据补丁 | modules.md §5（契约）与 §12.2 #26（已修）+ troubleshooting.md「库内嵌档下 SyncTeX 定位不可用」+ 本文件 §6.10.1（实测与 A/B）+ `test_file/e2e/synctex-42-{verify,artifacts-ab,selfcheck}.ps1`（工作区产物） |
+| ㊸ 悬停公式即时预览 | 本文件 §6.11（竞品口径 + 需求读数 + 三条路线 + 判据/风险）+ `src/latexSyntax.ts` 的 `math` 状态（定界规则来源）+ `src/latexSuggest.ts`（Monaco provider 注册范式）+ `git show 0ac930c`（片段编译的实测成本与三个真机坑） |
 | ⑥ CLI + MCP（**已完成**） | [cli-mcp-plan.md](../cli-mcp-plan.md) + modules.md §8.1 + `crates/latteset-server` |
 | ⑦a 大纲增量（**已完成**） | modules.md §3.5（缓存三不变量）/ §12.2 + `core::outline::{load_cached, OutlineCache}` + `src/stores/outline.ts` |
 | ⑦c / ⑦b（**已完成 / 缓做**） | [p1-large-doc-editor-analysis.md](./p1-large-doc-editor-analysis.md)（拆分依据）+ [p1c-multifile-large-project.md](./p1c-multifile-large-project.md)（夹具/口径/数据）+ `scripts/{gen-large-project,editor-report}.mjs` |
