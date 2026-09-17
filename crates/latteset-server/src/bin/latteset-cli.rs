@@ -26,6 +26,7 @@ latteset-cli —— Latteset headless CLI（读 → 改 → 编译验证 → 修
   tree [--all]                      项目文件列表（默认只列 .tex）
   read <路径>                       读文件
   write <路径> <内容|->             写文件（`-` = 从 stdin 读）
+  math <公式|->                   编译这一个公式（项目导言区 + 片段）并给单页预览产物
   forward <文件> <行> [--column N]  源码位置 → PDF 页码/坐标
   inverse <页> [--x N] [--y N]      PDF 坐标 → 源码位置
   settings                          生效设置
@@ -49,6 +50,8 @@ enum Cmd {
     Write { path: String, content: String },
     Forward { file: String, line: u32, column: u32 },
     Inverse { page: u32, x: f32, y: f32 },
+    /// 公式预览（roadmap ㊸ 切片 2）：math <公式> 或 math -（从 stdin 读，躲开 PowerShell 的 $ 展开）。
+    Math { formula: String },
     Settings,
 }
 
@@ -141,6 +144,10 @@ fn parse(raw: &[String]) -> Result<Args, String> {
                 line,
                 column: number("--column", 1.0)? as u32,
             }
+        }
+        "math" => {
+            let formula = positional.first().cloned().ok_or("math 需要 <公式>（用 - 从 stdin 读）")?;
+            Cmd::Math { formula }
         }
         "inverse" => {
             let page: u32 = positional
@@ -255,6 +262,21 @@ async fn run(session: &mut Session, args: &Args) -> Result<serde_json::Value, Se
             let resolved = project_path(session, path)?;
             let content = session.read(&resolved).await?;
             json!({ "ok": true, "path": resolved.to_string_lossy(), "bytes": content.len(), "content": content })
+        }
+        Cmd::Math { formula } => {
+            // `math -` 从 stdin 读整条公式（躲开 PowerShell 对 `$` 的展开；与 `write` 同款约定）。
+            let body = if formula == "-" {
+                use std::io::Read;
+                let mut buf = String::new();
+                std::io::stdin()
+                    .read_to_string(&mut buf)
+                    .map_err(|e| ServerError::Internal(format!("读 stdin 失败：{e}")))?;
+                buf
+            } else {
+                formula.clone()
+            };
+            let preview = session.compile_math(body.trim()).await?;
+            json!({ "ok": preview.ok, "math": preview })
         }
         Cmd::Write { path, content } => {
             let resolved = project_path(session, path)?;

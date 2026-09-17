@@ -63,6 +63,22 @@ impl ServerError {
     }
 }
 
+/// 公式预览（roadmap ㊸ 切片 2 的 headless 入口；GUI 的悬停浮层在切片 3 接同一套 core/infra）。
+#[derive(Debug, Clone, Serialize)]
+pub struct MathPreview {
+    pub ok: bool,
+    /// 本次调用的墙钟。**首次**（冷）与**同一公式二次**（走 runner 的 A 闸门）差别很大。
+    pub elapsed_ms: u64,
+    /// 缓存键 = `<项目>/tmp/snippet/<键>/` 的目录名（`core::snippet::snippet_key`）。
+    pub key: String,
+    /// 片段产物（`<项目>/tmp/snippet/<键>/main.pdf`）。
+    pub pdf_path: Option<String>,
+    /// `auto` = 悬停即编译；`button` = 首次片段编译 > 3 s（外部工具等），该项目退回按钮式。
+    pub mode: String,
+    /// 失败原因（**不留白**：公式排不出来时给一句话）。
+    pub message: Option<String>,
+}
+
 /// 编译报告（`compile` 的返回体，也是 `status`/`errors` 的数据源）。
 #[derive(Debug, Clone, Serialize)]
 pub struct CompileReport {
@@ -325,6 +341,95 @@ impl Session {
         };
         self.last = Some(report.clone());
         Ok(report)
+    }
+
+    /// **公式预览**（roadmap ㊸ 切片 2）：把这一个公式连项目导言区装成独立小文档编译，返回单页产物。
+    ///
+    /// 隔离（ADR/§6.11.5 的硬要求）：落点 `<项目>/tmp/snippet/<键>/`，**独立的 project_root**、
+    /// **不经调度器**（不产出 `compile-status`/`pdf-updated`，也不碰权威 `<stem>.pdf` 与主编译的
+    /// `tmp/main.*`）。`mode=button` 表示首次片段编译超过 3 s（多为 latexmk 拖起外部工具），
+    /// 该项目应退回"悬停出按钮"而不是自动编译。
+    pub async fn compile_math(&mut self, formula: &str) -> Result<MathPreview, ServerError> {
+        let project = self
+            .project
+            .clone()
+            .ok_or_else(|| ServerError::Invalid("尚未打开项目：先执行 project_open".into()))?;
+        let root_file = project.root_file.clone().ok_or_else(|| {
+            ServerError::Invalid(format!(
+                "未确定根文件（候选中 {} 个）：请手工指定后再做公式预览",
+                project.root.display()
+            ))
+        })?;
+        let source = self
+            .fs
+            .read_to_string(&root_file)
+            .await
+            .map_err(|e| {
+                ServerError::Internal(format!("读根文件失败（{}）：{e}", root_file.display()))
+            })?;
+        let key = latteset_core::snippet::snippet_key(
+            source.split("\\begin{document}").next().unwrap_or(&source),
+            formula,
+        );
+        let document = latteset_core::snippet::build_snippet_document(&source, &project.root, formula)
+            .map_err(|e| ServerError::Invalid(e.to_string()))?;
+        // 建目录/写文档是文件系统操作 ⇒ 落在 infra（ADR-0010）。
+        let snippet_root =
+            latteset_infra::snippet::prepare_snippet_dir(&project.root, &key, &document).map_err(
+                |e| {
+                    ServerError::Internal(format!(
+                        "准备片段目录失败（{}）：{e}",
+                        project.root.display()
+                    ))
+                },
+            )?;
+        let entry = snippet_root.join("main.tex");
+
+        let request = CompileRequest {
+            root_file: entry,
+            project_root: snippet_root,
+            engine: self.settings.compile.engine,
+            // 片段应当秒级完成；给一个短上限，卡住就放弃而不是拖住编辑器（与 A 同口径）。
+            timeout: std::time::Duration::from_secs(30),
+            kind: CompileKind::Quick,
+        };
+        let runner = build_runner(
+            self.fs.clone(),
+            std::sync::Arc::new(latteset_core::scheduler::NoProgress),
+        );
+        let started = Instant::now();
+        let outcome = runner
+            .compile(request, tokio_util::sync::CancellationToken::new())
+            .await;
+        let elapsed_ms = started.elapsed().as_millis() as u64;
+        let mode = if elapsed_ms > 3_000 { "button" } else { "auto" };
+
+        let (ok, pdf_path, message) = match outcome {
+            CompileOutcome::Success { pdf_path, .. } => {
+                (true, Some(pdf_path.to_string_lossy().into_owned()), None)
+            }
+            // 片段单独编译失败是**常见**情形（宏定义在正文里、`\cite` 没有 aux、`\input` 了正文才
+            // 定义的东西）——如实给第一条错误，别装作有预览（也不留白）。
+            CompileOutcome::ContentError { errors } => (
+                false,
+                None,
+                Some(format!(
+                    "片段无法单独编译：{}",
+                    errors.first().map(|e| e.message.as_str()).unwrap_or("（无细节）")
+                )),
+            ),
+            CompileOutcome::Timeout { .. } => (false, None, Some("片段编译超时（30 s）".into())),
+            CompileOutcome::Aborted => (false, None, Some("片段编译已中止".into())),
+            CompileOutcome::IoError { message } => (false, None, Some(message)),
+        };
+        Ok(MathPreview {
+            ok,
+            elapsed_ms,
+            key,
+            pdf_path,
+            mode: mode.into(),
+            message,
+        })
     }
 
     /// 文档大纲（源结构树）：与 GUI 同一实现（`core::outline`），headless 直接读盘、无缓冲。

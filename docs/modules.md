@@ -732,7 +732,7 @@ pub fn compile_request_manual(ctx: ComposeContext<'_>) -> Option<CompileRequest>
 
 ```
 crates/latteset-server
-├── lib.rs              Session：项目会话（打开 / 编译 / 大纲 / 文件 / SyncTeX / 设置）
+├── lib.rs              Session：项目会话（打开 / 编译 / 大纲 / 文件 / SyncTeX / 设置 / **公式预览**）
 ├── mcp.rs              MCP（stdio JSON-RPC：initialize / tools/list / tools/call / ping）
 └── bin/{latteset-cli,latteset-mcp}.rs
 ```
@@ -1009,6 +1009,7 @@ settings-changed: Settings
 | 构建确定性（逐字节） | `node scripts/check-determinism.mjs`（三档 × Full/Quick 各两次；`--without-epoch` 可复现非确定性） |
 | SyncTeX 往返精度 | `node scripts/synctex-report.mjs`（三组样本；基线见 design.md §预览） |
 | core 逻辑（调度 / 解析 / 诊断 / 大纲） | `cargo test -p latteset-core` |
+| **公式预览命令面**（㊸ 切片 2：`latteset-cli math <公式>` / `math -`） | `cargo build --release -p latteset-server --features tectonic-lib --bin latteset-cli` → `latteset-cli --project <夹具> math '$\int_0^1 x^2\,\mathrm{d}x$'`（同一公式两次 = 89 ms 档、换公式 = 新目录冷档、坏公式给原因）；落点 `<项目>/tmp/snippet/<键>/`，**权威 `main.pdf` 与 `tmp/main.*` 逐字节不变**（2026-09-17 实测）；实现契约见 [roadmap §6.11.5](./research/tex-ide-roadmap-priority.md) |
 | **公式扫描**（㊸ 切片 1：`core::math::math_at` 的边界口径） | `cargo test -p latteset-core --lib math`（16 例：行内/行间/环境/多行/`\$`/注释/`\verb`/嵌套/空公式/未闭合/中文**字节**偏移） |
 | **片段文档装配**（㊸ 切片 1：`core::snippet::build_snippet_document`） | `cargo test -p latteset-core --lib snippet`（5 例：导言区逐字照搬/两处路径注入与守卫/缺 `\begin{document}` 如实报错/空片段拒绝/末尾缺换行） |
 | 真实 latexmk / synctex 集成 | `cargo test -p latteset-infra -- --ignored`（含两条流式用例：`-- --ignored streaming` / `-- --ignored live_errors`，断言"进度/错误在编译结束前 ≥100ms 就到了"） |

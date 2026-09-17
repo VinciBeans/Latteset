@@ -46,8 +46,7 @@ impl std::fmt::Display for SnippetError {
 
 impl std::error::Error for SnippetError {}
 
-/// `\begin{document}` 在源码里的位置（返回 `\begin{document}` 的**起始字节**）。
-///
+/// `\begin{document}` 在源码里的位置（返回 `\begin{document}` 的**起始字节**）。///
 /// 容忍 `\begin {document}` 这种带空格的写法？**不容忍** —— LaTeX 允许，但真实项目里没见过，
 /// 而"猜"会让边界更难解释；找不到就如实报 [`SnippetError::NoBeginDocument`]。
 fn begin_document_at(source: &str) -> Option<usize> {
@@ -61,6 +60,21 @@ fn tex_dir(path: &Path) -> String {
         s.push('/');
     }
     s
+}
+
+/// 片段键：`「导言区 + 片段」→ 12 位十六进制`（roadmap ㊸ 切片 2）。
+///
+/// 用途：`<项目>/tmp/snippet/<键>/` 的目录名 —— 同一公式（同一导言区）落**同一个**目录，才能吃到
+/// runner 已有的 **A 闸门**（页哈希相同 ⇒ 跳过 XDV→PDF 转换）与热 aux；换公式或改导言区都会换目录，
+/// 因此不会把别的公式的产物当缓存复用。用标准库 `DefaultHasher`（与 `core::xdv::page_hashes` 同源），
+/// **不引人新依赖**；它只是缓存键，**不是**安全用途的哈希。
+pub fn snippet_key(preamble: &str, body: &str) -> String {
+    use std::collections::hash_map::DefaultHasher;
+    use std::hash::{Hash, Hasher};
+    let mut h = DefaultHasher::new();
+    preamble.hash(&mut h);
+    body.hash(&mut h);
+    format!("{:012x}", h.finish() & 0xffff_ffff_ffff)
 }
 
 /// 装配片段文档。`project_root` 用来指回相对路径（见模块头的口径）。
@@ -83,6 +97,10 @@ pub fn build_snippet_document(
     out.push_str(&format!("\\def\\input@path{{{{{dir}}}}}\n"));
     out.push_str("\\makeatother\n");
     out.push_str(preamble);
+    // 切片 2 的决定：**注入 `\nofiles`**（roadmap ㊸ §6.11.9）——新目录本来是 2 趟（第 1 趟写出 `.aux`
+    //   ⇒ 重跑判据判"变了"），而公式预览不需要 aux/toc ⇒ 1 趟，实测省 30–43%。
+    //   ⚠ **必须放在导言区**：放进文档体会报 `Command \nofiles not allowed in the document body`（实测踩到）。
+    out.push_str("\\nofiles\n");
     out.push_str("\\begin{document}\n");
     // ② `\graphicspath` 只能在文档体开始处设，且**必须守卫**：它是 `graphicx` 提供的，
     //    放在导言区之前会 `! Undefined control sequence`（真机实测踩到），
@@ -109,6 +127,30 @@ mod tests {
     use std::path::PathBuf;
 
     const DOC: &str = "\\documentclass{article}\n\\usepackage{amsmath}\n\\begin{document}\nhi\n\\end{document}\n";
+
+    /// 切片 2：公式键 = 「导言区 + 公式」的短哈希，用作 `tmp/snippet/<键>/` 的目录名（必须文件系统安全）。
+    #[test]
+    fn 公式键稳定_可区分_且只含十六进制() {
+        let k1 = snippet_key("\\documentclass{article}\n", "$E=mc^2$");
+        let k2 = snippet_key("\\documentclass{article}\n", "$E=mc^2$");
+        let k3 = snippet_key("\\documentclass{article}\n", "$a^2+b^2=c^2$");
+        let k4 = snippet_key("\\documentclass{book}\n", "$E=mc^2$");
+        assert_eq!(k1, k2, "同输入必须同键（缓存与 A 闸门都靠它）");
+        assert_ne!(k1, k3, "公式不同 ⇒ 键不同");
+        assert_ne!(k1, k4, "导言区不同 ⇒ 键不同");
+        assert!(k1.chars().all(|c| c.is_ascii_hexdigit()), "键要能直接当目录名：{k1}");
+        assert_eq!(k1.len(), 12, "短哈希长度固定：{k1}");
+    }
+
+    /// 切片 2：`\nofiles` 必须在**导言区**（放文档体会报 `Command \nofiles not allowed…`）。
+    #[test]
+    fn nofiles_注入在导言区() {
+        let out = build_snippet_document(DOC, &PathBuf::from("E:/proj"), "hello").unwrap();
+        let nofiles = out.find("\\nofiles").expect("必须注入 \\nofiles");
+        let body = out.find("\\begin{document}").expect("有文档体");
+        assert!(nofiles < body, "`\\nofiles` 要在 `\\begin{{document}}` 之前：{out}");
+        assert!(out.contains("\\usepackage{amsmath}\n\\nofiles\n"), "紧跟在导言区之后：{out}");
+    }
 
     #[test]
     fn 导言区逐字照搬_片段插进文档体() {
