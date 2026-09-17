@@ -979,6 +979,7 @@ settings-changed: Settings
 
 ### 12.2 跨模块不变量（改回去即复发）
 
+- **引擎口径（ADR-0014）**：新功能的设计与验收基准是 **Tectonic**（优先库内嵌形态）；任何优化若与其它引擎（XeLaTeX/LuaLaTeX/pdfLaTeX + latexmk）不兼容或行为不同，**默认退回默认行为**且**显式显示不可用**（不得静默失效）。⚠ 免除的只是"优化适配"，**兼容/正确性照旧**（默认档仍是 `engine = XeLaTeX` + `lib_form = false`）。
 - **Quick 的前置条件**：无 `tmp/<stem>.aux` 时 runner 必须把 Quick 升级为 Full，且 `Success{kind}` 报**实际**强度——否则引用全成 `??`，或前端多提示一次「引用待更新」并多跑一次空收敛。
 - **设置的读入口**：`open_project`、`update_settings`、**以及 watch 的设置热更新**都必须先读**纯全局**设置（`load_global`）再合并项目覆盖；后两者还必须同步内存 `ProjectState.root_file`——否则出现跨项目设置污染、「选了根文件仍报未确定根文件，必须重开项目」，以及**外部清掉覆盖永远不生效**（拿有效值当基数会粘住旧值）。
 - **覆盖清洗逐字段**：`sanitize_overrides` 不能退回「整包丢弃」（会连带丢掉同一文件里合法的 compile 覆盖）。
