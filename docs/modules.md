@@ -537,6 +537,17 @@ pub fn diagnose(msg: &LogMessage) -> Option<Diagnosis>;
 > 验收 = `node scripts/synctex-selfcheck.mjs`：三组真实工程上与 CLI **逐点对拍**，
 > 往返跳到位 **12/12、7/10、12/12**，与 CLI 逐项相同。已知偏差：beamer 类页面的前向坐标
 > 中位差 132 pt（样本行在记录里没有对应行）、`column` 恒 -1。
+>
+> **重试语义（roadmap ㊱，2026-09-17 落地）**：退避**只给瞬时错误**（`Io` / `Busy`），确定性失败
+> （`Unavailable` = 同步数据不存在、`Parse` = 没有这段映射）**立刻返回**；并且"整份同步数据用不了"时
+> `resolve_inverse` 会**跳出 5 个 y 候选的回落循环**。此前是所有错误都退避 ⇒ 一次失败查询 **668 ms**、
+> 无同步数据时 inverse **3.13 s**（5 候选 × 625 ms），现在分别是 **14 ms** 与 **11 ms**；
+> 瞬时竞争（编译中同步文件被重写）仍按 100/200/300 ms 退避且实测能救回来。
+>
+> ⚠ **库形态的已知功能缺口（roadmap ㊷，未修）**：库内嵌档编译出的 `.synctex.gz` 里 `Input:` 记录
+> **没有真实路径**（`Input:1:texput`、其余为空）⇒ **正向定位必然失败**，反向也拿不到可打开的源码；
+> 原因是主文件**内存直喂**（见 §2.7「输入四层」），子进程档正常。诊断方法与对照证据见
+> [troubleshooting.md](./troubleshooting.md)。
 
 ```
 synctex（core）              synctex（latteset-infra）

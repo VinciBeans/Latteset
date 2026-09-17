@@ -5,6 +5,11 @@
 //! **竞争重试（roadmap ⑤，2026-09）**：编译进行中时 `tmp/<stem>.synctex.gz` 正被重写
 //! （引擎先写 `main.synctex(busy)` 再改名），此时 `synctex view/edit` 会失败或返回空块——
 //! 表现为"点了没反应"。故失败后按短退避重试几次；调用方只在"尚未编译过"时才该报错。
+//!
+//! **只对瞬时错误退避（roadmap ㊱，2026-09-17）**：上面那条重试**不能**套在确定性失败上 ——
+//! "同步数据里没有这个源文件""第 N 行没有映射"重试一万次也是同一个答案，而每次退避 100/200/300 ms。
+//! 实测一次失败查询 **668 ms**；反向定位更被候选数放大（`resolve_inverse` 有 5 个 y 候选 ⇒
+//! **3.13 s**）。判定规则见 [`is_transient`]。
 
 use async_trait::async_trait;
 use std::path::{Path, PathBuf};
@@ -50,7 +55,19 @@ impl SyncTexCli {
     }
 }
 
-/// 带退避的重试：仅当 `attempt` 返回 `Err` 时按 `backoff` 依次等待重试；全失败返回**最后一次**错误。
+/// 失败后是否值得**退避重试**（roadmap ㊱，2026-09-17 收口）。
+///
+/// - **瞬时**（`Io` / `Busy`）：进程起不来、或同步数据正被重写（读被占用 / gzip 半截 / 解不出页面）
+///   ⇒ 退避几次是对的（㉒ 观察到的"点了没反应"就是这一段竞争）；
+/// - **确定性**（`Unavailable` / `Parse`）：文件不存在（改名是原子的 ⇒ 读不到就是**从没编译过**）、
+///   或"没有这段映射"—— 重试一万次也是同一个答案。实测（本项立项依据）：源文件不在同步数据里，
+///   一次查询要 **668 ms**，而它本该是毫秒级；"完全没有同步数据"另因反向定位的 5 个 y 候选
+///   放大到 **3.13 s**。
+fn is_transient(err: &SyncTexError) -> bool {
+    matches!(err, SyncTexError::Io(_) | SyncTexError::Busy(_))
+}
+
+/// 带退避的重试：**只对瞬时错误**按 `backoff` 依次等待重试；确定性失败立刻返回；全失败返回**最后一次**错误。
 ///
 /// 单独抽出来是为了可测：退避时长由调用方注入，测试传全零即可瞬间跑完（不必等真时间）。
 async fn with_retry<T, F, Fut>(backoff: &[Duration], mut attempt: F) -> Result<T, SyncTexError>
@@ -62,11 +79,19 @@ where
         Ok(v) => return Ok(v),
         Err(e) => e,
     };
+    if !is_transient(&last) {
+        return Err(last);
+    }
     for wait in backoff {
         tokio::time::sleep(*wait).await;
         match attempt().await {
             Ok(v) => return Ok(v),
-            Err(e) => last = e,
+            Err(e) => {
+                if !is_transient(&e) {
+                    return Err(e);
+                }
+                last = e;
+            }
         }
     }
     Err(last)
@@ -155,10 +180,16 @@ impl SyncTexSelf {
     fn load(pdf: &Path) -> Result<SyncTexDoc, SyncTexError> {
         let path = Self::doc_path(pdf);
         let gz = std::fs::read(&path).map_err(|e| {
-            SyncTexError::Io(format!(
-                "读同步数据失败（{}）：{e}（还没编译过？或编译中正被重写）",
-                path.display()
-            ))
+            // **两种"读不到"要分开**（roadmap ㊱）：引擎写 `.synctex` 是"先写 `(busy)` 再改名"，
+            // 改名是原子的 ⇒ 文件**不存在**就意味着**从没编译过**（确定性，立刻失败）；
+            // 其余读错误（被占用 / 共享冲突）才是"正被重写"（瞬时，值得退避）。
+            let msg = format!("读同步数据失败（{}）：{e}", path.display());
+            match e.kind() {
+                std::io::ErrorKind::NotFound => SyncTexError::Unavailable(format!(
+                    "{msg}（还没编译过？）"
+                )),
+                _ => SyncTexError::Busy(format!("{msg}（编译中正被重写？）")),
+            }
         })?;
         // 先按 gzip 解；不是 gzip 就当作未压缩的 `.synctex` 文本（`-synctex=-1` 的形态）。
         let text = match gunzip(&gz) {
@@ -167,8 +198,10 @@ impl SyncTexSelf {
         };
         let doc = SyncTexDoc::parse(&text);
         if doc.is_empty() {
-            return Err(SyncTexError::Parse(format!(
-                "同步数据里解不出任何页面（{}）：文件损坏，或这次编译没开 --synctex",
+            // 解不出页面 ⇒ 多半是**半截文件**（正在重写）：没开 `--synctex` 时引擎根本不写这个文件
+            // （那种情况会走上面的 NotFound 分支），所以这里按瞬时处理、退避重试。
+            return Err(SyncTexError::Busy(format!(
+                "同步数据里解不出任何页面（{}）：文件损坏或正在重写",
                 path.display()
             )));
         }
@@ -264,11 +297,71 @@ mod tests {
         let calls = AtomicU32::new(0);
         let out: Result<u32, SyncTexError> = with_retry(&[Duration::ZERO, Duration::ZERO], || async {
             let n = calls.fetch_add(1, Ordering::SeqCst) + 1;
-            Err(SyncTexError::Parse(format!("第 {n} 次失败")))
+            Err(SyncTexError::Io(format!("第 {n} 次：文件被占用")))
         })
         .await;
         let err = out.unwrap_err().to_string();
-        assert!(err.contains("第 3 次失败"), "应返回最后一次错误：{err}");
+        assert!(err.contains("第 3 次"), "应返回最后一次错误：{err}");
         assert_eq!(calls.load(Ordering::SeqCst), 3, "1 次首试 + 2 次重试");
+    }
+
+    /// ㊱ 的核心：**确定性失败不重试**（否则一次失败查询白等 600 ms）。
+    #[tokio::test]
+    async fn deterministic_failure_is_not_retried() {
+        let calls = AtomicU32::new(0);
+        let out: Result<u32, SyncTexError> = with_retry(&[Duration::ZERO, Duration::ZERO], || async {
+            calls.fetch_add(1, Ordering::SeqCst);
+            Err(SyncTexError::Parse("第 42 行在同步数据里没有对应位置".into()))
+        })
+        .await;
+        assert!(out.unwrap_err().to_string().contains("第 42 行"));
+        assert_eq!(calls.load(Ordering::SeqCst), 1, "Parse 是确定性失败 ⇒ 只调一次");
+    }
+
+    /// 同步数据**读不到**（`Unavailable` = 从没编译过）是**确定性**失败 ⇒ 不重试。
+    #[tokio::test]
+    async fn unavailable_is_not_retried() {
+        let calls = AtomicU32::new(0);
+        let out: Result<u32, SyncTexError> = with_retry(&[Duration::ZERO, Duration::ZERO], || async {
+            calls.fetch_add(1, Ordering::SeqCst);
+            Err(SyncTexError::Unavailable("还没编译过".into()))
+        })
+        .await;
+        assert!(out.unwrap_err().to_string().contains("还没编译过"));
+        assert_eq!(calls.load(Ordering::SeqCst), 1, "文件不存在是确定性的（改名原子）⇒ 只调一次");
+    }
+
+    /// 同步数据**正被重写**（`Busy`）是编译期竞争的表现 ⇒ 仍要退避重试。
+    #[tokio::test]
+    async fn busy_is_retried_like_transient() {
+        let calls = AtomicU32::new(0);
+        let out: Result<u32, SyncTexError> = with_retry(&[Duration::ZERO, Duration::ZERO, Duration::ZERO], || async {
+            let n = calls.fetch_add(1, Ordering::SeqCst) + 1;
+            if n < 2 {
+                Err(SyncTexError::Busy("文件正被重写".into()))
+            } else {
+                Ok(n)
+            }
+        })
+        .await;
+        assert_eq!(out.unwrap(), 2);
+        assert_eq!(calls.load(Ordering::SeqCst), 2);
+    }
+
+    /// 首试瞬时失败、重试时变成确定性失败 ⇒ 立刻把确定性的那条报出去（不要把退避耗完）。
+    #[tokio::test]
+    async fn retry_stops_when_failure_turns_deterministic() {
+        let calls = AtomicU32::new(0);
+        let out: Result<u32, SyncTexError> = with_retry(&[Duration::ZERO, Duration::ZERO, Duration::ZERO], || async {
+            let n = calls.fetch_add(1, Ordering::SeqCst) + 1;
+            if n == 1 {
+                Err(SyncTexError::Busy("文件正被重写".into()))
+            } else {
+                Err(SyncTexError::Parse("没有这个源文件".into()))
+            }
+        })
+        .await;
+        assert!(out.unwrap_err().to_string().contains("没有这个源文件"));
+        assert_eq!(calls.load(Ordering::SeqCst), 2, "第 2 次就是确定性失败 ⇒ 不再试第 3 次");
     }
 }

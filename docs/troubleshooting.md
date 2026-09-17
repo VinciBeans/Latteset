@@ -636,6 +636,42 @@ Rename-Item .texpresso .latteset
 
 > 与 AGENTS.md §4 的「PowerShell 转义」是同类排查场景：反斜杠过度转义、编码、**引擎选择**都会表现为 exit 12，先确认是哪一个再改。
 
+## 库内嵌档下 SyncTeX 定位不可用：同步数据里没有真实源文件名（2026-09-17 定位，未修）
+
+**症状**：引擎切到「库内嵌」后，Ctrl+点击源码不再跳到 PDF、点 PDF 也不再回到源码 —— 用户视角就是"点了没反应"。CLI 侧的直接读数（这一条是**唯一**能把三种原因区分开的证据）：
+
+```
+latteset-cli --project <项目> forward <项目>\main.tex 100
+{ "error": { "code": "Internal", "message": "SyncTeX：输出解析失败：同步数据里没有这个源文件（…\main.tex）—— 库形态产出的文件可能只有空 Input（…）" } }
+```
+
+**一眼确认**（不必编译两遍）：把 `tmp/<stem>.synctex.gz` 解开看 `Input:` 记录 ——
+
+```powershell
+$gz = "<项目>\tmp\main.synctex.gz"
+$in = [IO.File]::OpenRead($gz)
+$g  = New-Object IO.Compression.GZipStream($in, [IO.Compression.CompressionMode]::Decompress)
+$sr = New-Object IO.StreamReader($g)
+($sr.ReadToEnd() -split "`n") | Where-Object { $_ -like 'Input:*' } | Select-Object -First 8
+$sr.Close(); $in.Close()
+```
+
+| 引擎形态 | `Input:1` 的样子 | `forward` 结果 |
+|---|---|---|
+| **子进程档**（`LATTESET_TECTONIC_LIB=0`） | `Input:1:E:\…\main.tex` ✓ | `{"ok":true,"page":8,…}` ✓ |
+| **库形态**（`LATTESET_TECTONIC_LIB=1`） | `Input:1:texput`、`Input:2..8` 空 ✗ | ✗ "同步数据里没有这个源文件" |
+
+**原因**：库形态把**主文件内存直喂**引擎 ⇒ XeTeX 眼里的作业名是默认的 `texput`，`Input:` 记录因此没有真实路径；子进程档走命令行文件路径 ⇒ 记录正常。**根治**已立为 roadmap ㊷（`docs/research/tex-ide-roadmap-priority.md` §6.10）。
+**临时对策**：要用双向定位就先切**子进程档**（设置里的引擎形态位）。
+
+**别把三种"点了没反应"混起来**（它们的修法完全不同）：
+
+| 原因 | 判别 | 现状 |
+|---|---|---|
+| 同步数据里**没有真实文件名**（本条） | `Input:1:texput` / 空 | 未修，㊷ |
+| 编译**正把同步数据重写** | `tmp/` 里出现 `*.synctex(busy)` 或查询偶发失败后自愈 | 退避重试（100/200/300 ms），实测能救回来 |
+| **根本没编译过** | `tmp/<stem>.synctex.gz` 不存在 | 现在**立刻**报"同步数据不存在"（roadmap ㊱：此前要白等 645 ms，inverse 更差 3.13 s） |
+
 ## headless（CLI / MCP）怎么跑、怎么排障（2026-09，⑥ 落地记录）
 
 **跑起来**（二进制是工作区产物，`cargo build -p latteset-server` 后位于 `src-tauri/target/debug/latteset-{cli,mcp}.exe`）：

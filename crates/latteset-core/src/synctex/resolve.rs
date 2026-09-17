@@ -83,8 +83,16 @@ pub async fn resolve_inverse(
                 }
             },
             Err(e) => {
+                // **数据级失败就不必再试位置候选**（roadmap ㊱，2026-09-17）：`Unavailable`（没编译过）
+                // 与 `Busy`（正被重写）都是"整份同步数据用不了"—— 换 y 偏移不会变好，继续循环只会把
+                // provider 的退避**乘上候选数**（实测 5 × 625 ms ≈ **3.13 s**）。位置级失败（`Parse`：
+                // 这个点上没有映射）才继续回落 —— 那正是这几档偏移的用途。
+                let data_level = matches!(e, SyncTexError::Unavailable(_) | SyncTexError::Busy(_));
                 if last_err.is_none() {
                     last_err = Some(e);
+                }
+                if data_level {
+                    break;
                 }
             }
         }
@@ -183,6 +191,55 @@ mod tests {
 
     const ROOT: &str = "/proj";
     const PDF: &str = "/proj/main.pdf";
+
+    /// 固定返回同一种错误的假 provider（用来量"候选回落循环跑了几次"，roadmap ㊱）。
+    struct FailingProvider {
+        err: SyncTexError,
+        calls: Mutex<u32>,
+    }
+
+    #[async_trait]
+    impl SyncTexProvider for FailingProvider {
+        async fn forward(&self, _src: &SourcePosition, _pdf: &Path) -> Result<SyncTexPosition, SyncTexError> {
+            unreachable!()
+        }
+        async fn inverse(&self, _pos: &SyncTexPosition, _pdf: &Path) -> Result<SourcePosition, SyncTexError> {
+            *self.calls.lock().unwrap() += 1;
+            Err(self.err.clone())
+        }
+    }
+
+    /// **数据级失败**（同步数据不存在 / 正被重写）⇒ 立刻放弃位置回落，只查一次。
+    #[tokio::test]
+    async fn data_level_failure_stops_the_fallback_loop() {
+        for err in [
+            SyncTexError::Unavailable("还没编译过".into()),
+            SyncTexError::Busy("正被重写".into()),
+        ] {
+            let want = err.to_string();
+            let p = FailingProvider { err, calls: Mutex::new(0) };
+            let r = resolve_inverse(&p, Path::new(ROOT), Path::new(PDF), 3, 100.0, 600.0).await;
+            assert!(r.source.is_none());
+            assert_eq!(*p.calls.lock().unwrap(), 1, "数据级失败不该把 5 个 y 候选都试一遍");
+            assert!(r.note.unwrap().contains(&want), "提示要带原始原因");
+        }
+    }
+
+    /// **位置级失败**（这个点上没有映射）⇒ 5 档偏移照旧全试（㉒ 的回落行为不能回归）。
+    #[tokio::test]
+    async fn parse_miss_keeps_trying_all_candidates() {
+        let p = FailingProvider {
+            err: SyncTexError::Parse("此处没有可用的源码映射".into()),
+            calls: Mutex::new(0),
+        };
+        let r = resolve_inverse(&p, Path::new(ROOT), Path::new(PDF), 3, 100.0, 600.0).await;
+        assert!(r.source.is_none());
+        assert_eq!(
+            *p.calls.lock().unwrap() as usize,
+            FALLBACK_Y_OFFSETS.len(),
+            "位置级失败要继续回落（候选表有几档就试几档）"
+        );
+    }
 
     #[tokio::test]
     async fn direct_hit_has_no_note_and_single_call() {
