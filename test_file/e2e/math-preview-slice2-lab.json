@@ -1,0 +1,102 @@
+{
+  "M1_per_formula_dir": {
+    "P0 article（24 B）": {
+      "公式A 首次（冷）": {
+        "status": "success",
+        "wall": 1184,
+        "typeset": "85",
+        "convert": "77",
+        "pages": "1",
+        "reused": "false",
+        "passes": "1"
+      },
+      "公式A 二次（A 闸门）": {
+        "status": "success",
+        "wall": 89,
+        "typeset": "74",
+        "convert": "1",
+        "pages": "1",
+        "reused": "true",
+        "passes": "1"
+      },
+      "公式B 首次（另一个公式 ⇒ 另一个目录）": {
+        "status": "success",
+        "wall": 177,
+        "typeset": "80",
+        "convert": "79",
+        "pages": "1",
+        "reused": "false",
+        "passes": "1"
+      }
+    },
+    "P2 ctexbook+tikz": {
+      "公式A 首次（冷）": {
+        "status": "success",
+        "wall": 443,
+        "typeset": "341",
+        "convert": "84",
+        "pages": "1",
+        "reused": "false",
+        "passes": "1"
+      },
+      "公式A 二次（A 闸门）": {
+        "status": "success",
+        "wall": 350,
+        "typeset": "335",
+        "convert": "1",
+        "pages": "1",
+        "reused": "true",
+        "passes": "1"
+      },
+      "公式B 首次（另一个公式 ⇒ 另一个目录）": {
+        "status": "success",
+        "wall": 430,
+        "typeset": "336",
+        "convert": "78",
+        "pages": "1",
+        "reused": "false",
+        "passes": "1"
+      }
+    }
+  },
+  "M2_preamble_fingerprint": {
+    "test_file\\projects\\bench\\large\\main.tex": {
+      "bytes": 461961,
+      "read_ms": 0.79,
+      "extract_ms": 2.4,
+      "sha256_ms": 0.55
+    },
+    "test_file\\projects\\bench\\multifile\\main.tex": {
+      "bytes": 637,
+      "read_ms": 0.14,
+      "extract_ms": 0.25,
+      "sha256_ms": 0.03
+    }
+  },
+  "M3_zero_pollution": {
+    "snip": {
+      "status": "success",
+      "wall": 182,
+      "typeset": "83",
+      "convert": "81",
+      "pages": "1",
+      "reused": "false",
+      "passes": "1"
+    },
+    "authoritative_unchanged": true,
+    "before": {
+      "main.pdf": "37249C19D5B720AE746938C4440DC22F66A1A42618488D3BFBDEF17402F0121F",
+      "tmp\\main.log": "BD3FA1CE8E66B10E4A83F4346A9D50BBFFD8C97A1D7C4B2B70CC3DF378229FDA",
+      "tmp\\main.synctex.gz": "D90F203396975819A6E5B8957178AD3F330A28F14E58EC674FBD533B2CD13B98",
+      "tmp\\main.tectonic.pages": null
+    },
+    "after": {
+      "main.pdf": "37249C19D5B720AE746938C4440DC22F66A1A42618488D3BFBDEF17402F0121F",
+      "tmp\\main.log": "BD3FA1CE8E66B10E4A83F4346A9D50BBFFD8C97A1D7C4B2B70CC3DF378229FDA",
+      "tmp\\main.synctex.gz": "D90F203396975819A6E5B8957178AD3F330A28F14E58EC674FBD533B2CD13B98",
+      "tmp\\main.tectonic.pages": null
+    }
+  },
+  "when": "2026-09-17T20:21:39",
+  "note": "Tectonic 库形态；--quick；片段文档注入 \\nofiles；每公式一个目录；LATTESET_TECTONIC_CACHE 指向工作区实验缓存"
+}
