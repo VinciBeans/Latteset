@@ -1,0 +1,20 @@
+Use of uninitialized value $title in concatenation (.) or string at c:\texlive\2026\texmf-dist\scripts\latexmk\latexmk.pl line 11937.
+Latexmk: Couldn't create directory 'tmp/body'.
+    System error: 'No such file or directory'
+Latexmk: Using bibtex to make bibliography file(s).
+Latexmk: Missing input file 'body/intro.aux' message in .log file:
+  No file body/intro.aux.
+Latexmk: Using bibtex to make bibliography file(s).
+Latexmk: Using bibtex to make bibliography file(s).
+tmp/main.xdv -> C:\Users\Vinci\AppData\Local\Temp\dsh-1glh4N/main_tmp1.pdf
+[1][2]
+4267 bytes written
+Latexmk: ====Undefined refs and citations with line #s in .tex file:
+  Missing character: There is no 探 (U+63A2) in font [lmroman12-bold]:mapping=tex-
+  Missing character: There is no 探 (U+63A2) in font [lmroman12-bold]:mapping=tex-text;!
+  Missing character: There is no 针 (U+9488) in font [lmroman12-bold]:mapping=tex-
+  Missing character: There is no 针 (U+9488) in font [lmroman12-bold]:mapping=tex-text;!
+  Missing character: There is no 被 (U+88AB) in font [lmroman10-regular]:mapping=t
+  Missing character: There is no 被 (U+88AB) in font [lmroman10-regular]:mapping=tex-text;!
+  Missing character: There is no 进 (U+8FDB) in font [lmroman10-regular]:mapping=t
+ And 17 more --- see log file 'tmp/main.log'

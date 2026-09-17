@@ -1,0 +1,4 @@
+# ㉖ 的 e2e 夹具：只复刻真实模板 rc 里**咬过我们**的两件事（最小化、无第三方依赖）
+$pdf_mode = 1;                              # xelatex → pdf
+$preview_continuous_mode = 1;               # ← 真凶：= latexmk -pvc ⇒ 编译完/出错后都不退出
+$pdflatex = "xelatex -file-line-error -interaction=nonstopmode %O %S;cp %D %R.pdf";  # %O 带 -outdir；尾部 ;cp 复刻 hithesis 写法

@@ -1238,6 +1238,33 @@ mod tests {
     }
 
     #[test]
+    fn include_subdirs_are_precreated_under_outdir() {
+        // ㉖：`\include{body/intro}` 要写 `tmp/body/intro.aux`，而 xelatex 不建输出子目录。
+        let root = std::env::temp_dir().join("latteset-infra-include-subdir-test");
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).expect("建临时项目根");
+        std::fs::write(
+            root.join("main.tex"),
+            "\\documentclass{article}\n% \\include{commented/out}\n\\include{body/intro}\n\\input{extra/part}\n\\input{\\jobname-extra}\n",
+        )
+        .expect("写根文件");
+
+        ensure_include_subdirs(&root.join("main.tex"), &root);
+
+        assert!(root.join("tmp/body").is_dir(), "`\\include` 带子目录 ⇒ 要预建 tmp/body");
+        assert!(root.join("tmp/extra").is_dir(), "`\\input` 带子目录同样要预建");
+        assert!(
+            !root.join("tmp/\\jobname-extra").exists(),
+            "宏名（含反斜杠）不猜、不建目录"
+        );
+        // 顶层文件（没有子目录）不该造出多余目录
+        std::fs::write(root.join("main.tex"), "\\include{top}\n").expect("改根文件");
+        ensure_include_subdirs(&root.join("main.tex"), &root);
+        assert!(!root.join("tmp/top").exists(), "没有子目录的 include 不该建目录");
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
     fn both_paths_pin_source_date_epoch_for_reproducible_pdf() {
         // roadmap ㉚：不固定这个变量时，同一份源码两次编译的 PDF 只差 trailer 的 /ID（实测 64 字节），
         // 会让"输出 diff / 只重排变化页"分不清"真变了"和"ID 抖了"。
