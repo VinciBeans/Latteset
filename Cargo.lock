@@ -2429,6 +2429,7 @@ name = "latteset-tectonic"
 version = "0.1.0"
 dependencies = [
  "async-trait",
+ "flate2",
  "latteset-core",
  "serde_json",
  "tectonic_bridge_core",

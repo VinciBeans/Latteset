@@ -19,6 +19,10 @@ async-trait.workspace = true
 tokio.workspace = true
 tokio-util.workspace = true
 tracing = "0.1"
+# 同步数据补丁（roadmap ㊷）要解/压 `tmp/<stem>.synctex.gz`。**不是新依赖**：tectonic 自己的
+# 依赖树里已经有它（`Cargo.lock` 的 `flate2 1.1.9`，纯 Rust 后端 miniz_oxide），这里只是把它
+# 写成直依赖，供 `src/synctex.rs` 使用（`latteset-core` 依旧不碰压缩）。
+flate2 = "1"
 
 # 版本**照抄上游 0.17.0 自己的 `Cargo.lock`**（`test_file/tectonic-src/Cargo.lock`），不是猜的：
 #   bridge_core 0.5.3 / bundles 0.4.2 / engine_xdvipdfmx 0.4.4 / engine_xetex 0.5.3 /

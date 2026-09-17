@@ -13,7 +13,8 @@
 //! - [`io`]：`TectonicIo`（`IoProvider`）——内存直喂输入 + 项目磁盘 + bundle 兜底 + 输出捕获；
 //! - [`status`]：`ProgressStatus`（`StatusBackend`）——把引擎状态映射到 `CompileProgress` 与日志；
 //! - [`bundle`]：bundle 源解析（`detect_bundle`）与分类失败文案；
-//! - [`runner`]：`TectonicLibRunner`（与 `LatexmkRunner` 同一个 `CompileRunner` trait）。
+//! - [`runner`]：`TectonicLibRunner`（与 `LatexmkRunner` 同一个 `CompileRunner` trait）；
+//! - [`synctex`]：同步数据的**主输入记录修补**（roadmap ㊷ —— 引擎在库形态下把主文件记成 `texput`）。
 //!
 //! **线程模型**（方案 §3.4 末段）：引擎有进程内全局互斥（`ENGINE_LOCK`），编译必须在
 //! `spawn_blocking` 里自建自跑；同一进程内不并发跑两个引擎。
@@ -23,6 +24,7 @@ pub mod io;
 pub mod preview;
 pub mod runner;
 pub mod status;
+pub mod synctex;
 
 pub use bundle::{BundleSource, bundle_digest, open_bundle};
 pub use io::{CANCEL_MESSAGE, IoCapture, TectonicIo, format_file_name};

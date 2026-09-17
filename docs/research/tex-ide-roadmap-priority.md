@@ -38,6 +38,7 @@
 | ㊳ | 保存→开编链路的往返成本（**先量后定 → 定量后否决**） | 2026-09-17 | 实测（dev、`bench/tiny`、库形态、真机）：**Leg A**（前端 `save_all` IPC + 落盘）**7 / 7 / 7 / 6 / 8 ms**（5 样本，页内 `Date.now()` 包住 invoke）；**Leg B**（FS 事件 → 忽略过滤 → 排编译 → runner 起跑）**211 / 244 / 232 / 245 / 255 µs**（日志三元组 `watch 原始事件`→`触发编译`→`开始编译`）。端到端"落盘 → 开编" **≈7 ms** ⇒ 与"≥100 ms 才值得做"的门槛**差 14 倍**，**不做**"自写盘快速通道"。**顺带纠正一处误解**：`debounce_ms`（当前 500 ms、可调 100–2000）是**自动保存**的防抖（`src/composables/useAutoSave.ts:16-17`），**不是**编译侧的合并窗口 —— "编辑 → 开编"的主导项是它，而它是有意设计（一次编辑常伴随多处写盘）。 |
 | ㊱ | SyncTeX 失败查询的重试语义（**失败查询不再白等**） | 2026-09-17 | 根因两处，都修了：① `infra/synctex.rs::with_retry` 把**所有**错误都退避重试（含"没有这个源文件"这类**确定性**失败）⇒ 一次失败查询 668 ms；② `resolve_inverse` 有 **5 个 y 候选**，每个候选都白付一次 600 ms 退避 ⇒ 无同步数据时 `inverse` **3.13 s**（5 × 625 ms，与实测 3127–3156 ms 吻合）。改法：错误按**语义**分四类（`Io`/`Busy` 瞬时 ⇒ 退避；`Unavailable`/`Parse` 确定性 ⇒ 立刻返回），并让"整份同步数据用不了"时**跳出候选循环**。**实测**（release、`bench/large`、**子进程档**产出的有效同步数据）：forward 确定性失败 **668 → 14–15 ms**、forward 无同步数据 **645 → 10–11 ms**、inverse 无同步数据 **3127 → 11 ms**（≈285×）；成功路径不变（forward 15–21 ms / inverse 14–16 ms）。**瞬时竞争不回归**：独占锁住 `.synctex.gz` 250 ms 期间发起查询 → **608 ms 后退避成功命中 page 8** ✓。契约见 [modules.md](../modules.md) §5、诊断入口见 [troubleshooting.md](../troubleshooting.md)。⚠ 验证途中发现的**新缺口**另立 **㊷**（库形态的**根文件**在同步数据里叫 `texput` ⇒ 根文件自身定位不可用；被 `\include` 的章节正常。见 §6.10）。 |
 | ㊲ | 首屏让位：文本行索引不再挡首屏（**先量后定 → 定量后否决**） | 2026-09-17 | 立项依据是"28 页 164–173 ms ⇒ 外推 125 页 0.7–0.8 s 且挡住首屏"—— **两条都被实测否掉**（dev、`bench/large` 125 页 / 5646 行、子进程档）：① 索引真实耗时 **278 ms**（旧外推高 2.6×，`[draft] 文本行索引就绪：5646 行 / 125 页，278ms`）；② **首屏没被挡**：同一轮加载 `total=98–115 ms`、`render=55–74 ms`（8 页全渲染完）**完成时索引仍在跑**（日志显示索引比加载晚 **204 ms** 结束）—— 因为索引是 `void` 发起、逐页 `await`，与渲染在 worker 队列里**交错**而不是串在前面；③ 最坏情况"加载刚结束（索引仍在跑）就跳到第 60 页"= **52 ms**，稳态跳页 **12–13 ms** ⇒ 索引的**最坏附加延迟 ≈40 ms**。⇒ **不改**（把索引挪到 idle 只会把这 278 ms 的占用从"加载后"挪到"首次编辑时"，换 ~40 ms 的最坏情况，不划算）。⚠ 教训：这次立项用的是**线性外推**（28 页 ×4.5），实测是**次线性**的 278 ms ⇒ 涉及"每页成本"的估算必须实测。 |
+| ㊷ | 库形态「根文件」的 SyncTeX 定位不可用（**失败即修，2026-09-17 落地**） | 2026-09-17 | 库形态产出的 `tmp/<stem>.synctex.gz` 里主输入记录是 **`Input:1:texput`**（引擎 C 侧 `open_log_file()` 抢先把 jobname 定成 `texput`，根因见 §6.10）⇒ 自解析按文件找 tag 时主文件永远落空 ⇒ **单文件项目**双向定位全失效（分章项目只有被 `\include` 的章节能定位）。修法 = 收尾把主输入名补成**真实绝对路径**（`crates/latteset-tectonic/src/synctex.rs`，纯数据补丁 + gz 往返；**不改引擎**）。**实测**（release CLI、`LATTESET_TECTONIC_LIB=1`）：`bench/large` 的 `forward main.tex 100` 从「同步数据里没有这个源文件」→ **`{"page":8,"x":133.76837158203125,"y":204.46743774414062}`**，与子进程档**逐字段相同**；`bench/multifile`（20 章）根文件 `forward main.tex 10` → `page 39` 同样逐字段相同（章节样本本来就正常）。**零变化 A/B**（HEAD 二进制 vs 补丁版、清空 `tmp/` 各跑一轮、三夹具）：**PDF/`.log`/错误归属/同步数据（除 Input 行）逐字节相同**，有错文档的 `line:3 / undefined_control_sequence` 一字不差。残留 1 处**与本补丁无关**的差异：目录区域的反向命中，库形态落在生成物 `main.toc`（㉒ 的提示），子进程档落在源码行 `\tableofcontents` —— 把主输入名改回 `texput` 后该结果**一字不变**（即判决性反证）。
 
 > 同期完成的**非 roadmap 工程项**（记录以免重复提议）：`latteset-infra` 拆分（ADR-0010）、大纲解析下沉 Rust、架构图与渲染脚本、MCP Bridge 0.12→0.13 升级、真机验收清单固化、**为 DVI/G2 研究新增 `scripts/xdv-report.mjs`**。
 
@@ -65,7 +66,6 @@
 | ⑪ | 预览滚动/缩放保持、只重排变更页 | 4 | 3 | 4 | 2 | **1.17** | P1 | 官方承认"丢失滚动位置"；判定输入**已就位**（页哈希差分，见 §6.4 与 [增量编辑 × DVI 专项](./incremental-edit-x-dvi.md)）；建议先做零风险的"全同则不刷新"（C1） |
 | ㉞ | **流式出图**：编译期把"已完成页"变成**部分 PDF** 交给预览（长编译可见地逐页出现） | 3 | 4 | 3 | 3 | **1.17** | P1 | 可行性已重评（[DVI 报告](./dvi-preview-feasibility.md) §10）：合成 postamble **9–12 ms** + **进程内**转换 **92–131 ms/次**（旧评估的外部进程是 0.65–0.94 s）；价值窗口 = 冷 Full 125 页 **7601 ms** 里"排版结束→出 PDF"那 5736 ms；体感已测（5 次背靠背重载 **0 long task**、滚动位置 1797 帧零偏移）。**落地完成（§6.6）**：切片 1–4 全部完成并各自真机验证（趟边界出图，提前 ≈5.5 s、代价 +4.4%；`compile-preview` 事件；前端换字节不换身份）。**能力边界**：只能"趟间可见"（多趟文档，冷编通常 2–3 趟），单趟就收敛的编译拿不到中间帧 |
 | ⑨ | LSP（texlab）集成 | 4 | 3 | 4 | 3 | **1.00** | P1 | P8：补全/引用是长期痛点；建议与 ⑧ 合并（§6.3） |
-| ㊷ | **库形态下「根文件」的 SyncTeX 定位不可用**（同步数据里主输入名是 `texput`） | 4 | 1 | 2 | 2 | **1.25** | P1 | **侦察完毕（2026-09-17）**：只有**主输入 `Input:1`** 是 `texput`，**被 `\include`/`\input` 的章节正常**（`multifile` 实测章节 `forward` 与子进程档**逐字段一致**）⇒ **单文件项目**表现为双向全失效（`bench/large` 实测）。根因定位到 C 源码行：`tt_run_engine` 在 `start_input` **之前**（`xetex-ini.c:2945` vs `:3872`）就调 `open_log_file()`，把 jobname 定成 `texput`（`xetex-xetex0.c:10874`）；而 `tt_xetex_set_string_variable` 是**空实现** ⇒ Rust 侧设不了。**修法已就地预验证**：把 `Input:1:texput` 补成真实路径（**不重新编译**）⇒ `forward`/`inverse` 立刻与子进程档逐字段相同 ✓。代价 C **3→2**（纯函数 + 收尾接线 + 单测）。见 §6.10 |
 | ⑫ | ~~TinyTeX 捆绑~~ → **Tectonic 库形态集成**（2026-09 改判；"零预装可用"已由子进程形态兑现） | 5 | 4 | 5 | 4 | **1.00** | P2\* | 分数沿用"环境引导"口径，待库形态准入判据出数后重评；建议独立里程碑（§6.5） |
 | ⑬ | AI 集成 | 3 | 4 | 4 | 3 | **1.00** | P2 | 2026 竞争主轴；**仍无一手需求证据** |
 | ⑭ | 拼写检查 | 3 | 2 | 3 | 2 | **1.00** | P2 | P8：拼写/语法弱 |
@@ -93,7 +93,7 @@
 | **Batch 4 流式出图** | **㉞**（长编译的编译中预览） | 长编译（预计 ≥3–5 s）期间预览**可见地逐页出现**，页数与滚动位置正确；短编译与 **Tectonic 子进程档行为不变**（该档不落 XDV ⇒ 能力位如实显示"不可用"，不得静默不生效）；单测覆盖"前缀切在完整页 + 合成件被引擎接受" | ✅ **已完成**（切片 1 `d994691` / 切片 2 `1e3a9f8` / 切片 3 `b284cb9` / 切片 4）：长编译期间预览可见逐页出现（121→125 页），滚动零漂移、0 long task、无 DOM 重建，中止后 106 ms 退回权威 PDF；短编译与子进程档不出现任何提示（零行为变化）。⚠ 能力边界：引擎**进程内全局锁** ⇒ 只能"趟间可见"（见 §6.6） |
 | **指定项（未排期）** | **㉟** 窗口按钮融入应用界面（产品负责人点名；P=0.57 低于自动门槛） | 无边框窗口下**系统行为一条不丢**：拖拽/8 向缩放/双击最大化/右键系统菜单/Alt+F4/Win+方向键吸附/DPI 切换/贴靠布局（后者分两步，㉟-a 可暂缺但要如实标注） | ⬜ 未开始（见 §6.7） |
 | **Batch 5 并行与"白等"** | 快速通道 **（空，㊱㊲㊳ 均已收口）** → **㊴ 子进程编译通道**（→ **㊶ 分章并行草稿**）→ ㊵ | ㊱：✅ **已完成**——失败查询 **668 → 14 ms**、无同步数据 **645 → 10 ms**、inverse **3127 → 11 ms**，瞬时竞争仍退避成功（㉒ 不回归），见 §1/§6.9.1。㊲：✅ **已定量否决**——索引真实耗时 **278 ms**（旧外推高 2.6×）且**不挡首屏**（加载完成时索引仍在跑），最坏附加延迟 ≈40 ms，不做，见 §1/§6.9.1。㊳：✅ **已定量否决**（往返 ≈7 ms，不做，见 §1）。㊴：主编译墙钟增量 ≤10%（真机 ≥8 核）、**低核机器（≤4 核）默认不开**、缓存零互踩、进程杀干净无残留。㊶：分章草稿的页码/编号与全篇一致（先做页哈希对拍） | 🟡 入表 2026-09-16；**快速通道三项已全部收口**（㊱ 修完、㊲㊳ 定量否决），余项（㊴㊵㊶）未开始（依据与实测见 §6.9） |
-| **㊷ 库形态 SyncTeX 修复** | 让**库内嵌档**的同步数据里**主输入带上真实文件名**（修法已预验证，见 §6.10） | 库形态编译后 `.synctex.gz` 的 `Input:1` 是真实路径（不是 `texput`）；**单文件（`large`）与分章（`multifile`）两个夹具**上，两形态的 `forward`/`inverse` **逐字段一致**；`scripts/synctex-report.mjs` 三组样本的往返跳到位率不降；排版结果/日志/错误行归属零变化（纯数据补丁，不动文档结构） | ⬜ 未开始（2026-09-17 入表并侦察完毕；代价 C=2、修法与判据见 §6.10） |
+| **㊷ 库形态 SyncTeX 修复** | 让**库内嵌档**的同步数据里**主输入带上真实文件名**（修法已预验证，见 §6.10） | 库形态编译后 `.synctex.gz` 的 `Input:1` 是真实路径（不是 `texput`）；**单文件（`large`）与分章（`multifile`）两个夹具**上，两形态的 `forward`/`inverse` **逐字段一致**；`scripts/synctex-report.mjs` 三组样本的往返跳到位率不降；排版结果/日志/错误行归属零变化（纯数据补丁，不动文档结构） | ✅ **已完成**（2026-09-17，落地与实测见 §6.10）。四问全过：① 两夹具的库形态产物 `Input:1` = 真实绝对路径；② `forward` **7/7 逐字段相同**、`inverse` **9/11 相同**（余 2 项是**与本补丁无关**的「目录区域归属」差异 —— 用"把主输入名改回 `texput` 结果一字不变"反证）；③ 精度不降：`synctex-report.mjs` 的 CLI 侧复现文档基线（`bench/large` 12/12、beamer 7/10），我们的自解析在补丁后数据上往返行差 ≤6 且**两形态逐点相同**；④ 零变化 A/B（HEAD 二进制 vs 补丁版、三夹具）**PDF/`.log`/错误归属/同步数据（除 Input 行）逐字节相同** |
 
 ## 5. 外部方案与产物格式评估（否决与吸收都在这里）
 
@@ -465,7 +465,7 @@
 
 LiveFeedback 三条读任务（stdout / stderr / `.log` 尾随）· watcher 线程与编译 actor 独立 · ㉞ 预览出图在趟间隙跑（受锁约束，不是没做）· pdf.js worker 与 UI 主线程分离 · tokio 的 bundle/设置 I/O（实测 `bundle_read_ms ≈ 4.5 ms`）· 以及既有的"省一次串行"手段：format 缓存（`format_ms=0`）、页哈希跳过转换、bib 跳过。
 
-### 6.10 ㊷ 库形态下**根文件**的 SyncTeX 定位不可用（2026-09-17 发现 → 同日侦察完毕，修法与代价已定）
+### 6.10 ㊷ 库形态下**根文件**的 SyncTeX 定位不可用（2026-09-17 发现 → 同日侦察完毕 → **同日落地**）
 
 **一句话（侦察后修正过范围）**：库内嵌档编译出的 `.synctex.gz` 里，**主输入的 `Input:1` 名字是 `texput`**（引擎默认 jobname，不是真实文件名）⇒ **根文件自身的内容定位不了**；而被 `\include`/`\input` 的**章节源码是正常的**（实测章节 `forward` 与子进程档逐字段一致 ✓）。**单文件项目**（如 `bench/large`）全部内容都在根文件里 ⇒ 表现为**双向全失效** —— 这正是第一版结论过宽的原因（当时只用单文件夹具测）。
 
@@ -496,6 +496,33 @@ LiveFeedback 三条读任务（stdout / stderr / `.log` 尾随）· watcher 线�
 **验收判据**（同 §4 的 ㊷ 批次行）：库形态产物的 `Input:1` 是真实路径；**单文件与分章两个夹具**上，两形态的 `forward`/`inverse` **逐字段一致**；`scripts/synctex-report.mjs` 三组样本的往返跳到位率不降。
 
 **与 ㊱ 的关系**：㊱ 修的是"失败要**快**"，本项修的是"**不该**失败" —— 别把两者混为一谈。第一版把范围写成"双向定位整体不可用"是**用单文件夹具外推**的又一次教训（与 ㊲ 同款：小样本外推 → 进表前必须实测）。
+
+#### 6.10.1 落地（2026-09-17）
+
+**实现**：新增 `crates/latteset-tectonic/src/synctex.rs`（模块文档记根因、备选方案与"为什么落在本 crate"）：
+
+| 件 | 落点 | 说明 |
+|---|---|---|
+| 纯函数 | `patch_primary_input(sync: &[u8], real_name) -> PatchOutcome` | 三态（`Patched`/`AlreadyCorrect`/`NotApplicable`）；只改 `Input:1:` 那一行，**逐字节搬运其余内容**，行尾（`\n`/`\r\n`/末行无换行）原样保留；gzip 进 gzip 出、未压缩文本原样进出；按**行首**匹配（顺带挡住 `Input:10:`）；幂等 |
+| 落点 | `patch_outputs(capture, stem, mirror_dir, real_name) -> bool` | 捕获表 + `tmp/` 镜像**两处都改**（定位读的是磁盘那份）；`AlreadyCorrect` 记 `debug!`、`NotApplicable` 记 `warn!`（缺陷回来的唯一线索）；**写盘失败不致命**（只 `warn!`，不让编译失败） |
+| 接线 | `runner.rs` 的 `drop(driver)` 之后、⑧ 收尾之前 | 位于所有出口（含"PDF 为空 / 拷贝失败"的早退）**之前**；`root_file` 作为新参数传进 `run_engines`（与子进程档记的是同一个绝对路径）；`tmp_dir` 先留一份 `mirror_dir` 再交给 `TectonicIo` |
+| 依赖 | `flate2 = "1"` 写成本 crate 的直依赖 | **不是新依赖**：`Cargo.lock` 里本来就有（tectonic 传递，纯 Rust miniz_oxide）；`latteset-core` 依旧不碰压缩 |
+
+单测 **8 条**（`cargo test -p latteset-tectonic --lib synctex` 全绿；该 crate 全部 **38** 条单测亦全绿）：只改主输入行、幂等、未压缩形态、CRLF/末行无换行、空 `Input:1:`、不伪造记录（`Input:10:` 不算）、坏 gzip/空字节不 panic、**捕获表与 `tmp/` 镜像拿到同一份字节**。
+
+**真机验证**（release CLI `latteset-cli`（`--features tectonic-lib`）+ 本地 bundle；脚本见下）：
+
+| 问 | 结果 |
+|---|---|
+| 库形态 `Input:1` 是真实路径？ | **两夹具都是**（`bench/large` 8 条 Input / `bench/multifile` 167 条，首条 = 项目根下 `main.tex` 绝对路径） |
+| 两形态 `forward` 逐字段一致？ | **7/7 相同**：`large` `main.tex:100/1000/5000` → `page 8/28/117`（`x 133.76837158203125`、`y 204.46743774414062`、`x 535.9402465820312`）；`multifile` `main.tex:10` → `page 39`、`chapters/ch01.tex:5` → `page 7`、`ch03:50` → `page 12`、`ch20:3` → `page 73`。**修复前**同一问法直接报"同步数据里没有这个源文件"（已用"把产物里的名字改回 `texput`"复现 ✓） |
+| 两形态 `inverse` 逐字段一致？ | **9/11 相同**（`large` 8/40 与 8@300,400；`multifile` 7、7@300,400、73）。余 2 项：`large` 第 1 页 与 `multifile` 第 3 页的**目录区域** —— 子进程档归到源码行 `\tableofcontents`（= `main.tex:3` / `:7`），库形态归到生成物 `main.toc`（前端按 ㉒ 显示"来自自动生成的文件"）。**判决性反证**：把补丁后的产物里主输入名改回 `texput` 再问同样两处，答案**一字不变**（而 `forward` 立刻退回失败）⇒ 该差异由两引擎对目录盒子的记录归属决定，与本补丁无关 |
+| 排版/日志/错误归属零变化？ | **逐字节相同**。做法：`git worktree` 检出 HEAD 编一个基线 CLI（共享 target 目录，7.8 s），与补丁版**各自清空 `tmp/` 跑一轮**，比 `main.pdf` SHA256 / `tmp/main.log` SHA256 / `compile` JSON（去 `elapsed_ms`）/ 同步数据**去掉全部 `Input:` 行**后的 SHA256：三夹具（`large`、`multifile`、**有错文档** `诊断测试工程`）全部一致；有错文档的 `content_error line:3 / undefined_control_sequence` 逐字不差。**唯一差异就是 `Input:1` 那一行** ✓ |
+| 精度不降？ | ① `node scripts/synctex-report.mjs`：CLI 侧复现文档基线（`bench/large` **12/12**、beamer **7/10**）；② 我们的自解析在**补丁后的库形态数据**上与系统 CLI 逐点比：前向**页号 6/6 一致**（坐标差是 ADR-0013 记录的既有口径差：Δy `-11.955/0/-49.356/0/-32.989`），往返**每侧用自己前向的坐标**问自己 —— CLI 侧行差 0–1、自解析侧 0–6 且**两形态逐点相同**（即补丁没动它）。⚠ 脚本 `synctex-report.mjs` 在本机 `multifile` 组是红的（样本文件拼写与同步记录不一致 ⇒ `SyncTeX Warning: No tag`），**与本次改动无关**：该脚本只用 `latexmk` + 系统 `synctex`，不经过我们的代码 |
+
+**验证脚本（工作区产物，未提交）**：`test_file/e2e/synctex-42-verify.ps1`（两夹具 × 两形态逐字段对拍 + 已定性差异白名单）、`test_file/e2e/synctex-42-artifacts-ab.ps1`（零变化 A/B）、`test_file/e2e/synctex-42-selfcheck.ps1`（同产物上系统 CLI vs 自解析），证据 JSON 同名落 `test_file/e2e/*.json`。
+
+**遗留（不在本项范围）**：① 目录区域的反向归属差异（上面那条，涉及 ㉒ 的"就近回落"策略，不是"主输入名"问题）；② `test_file/projects/multifile`（`ctexbook[11pt]`）在本地测试 bundle 下编不过（bundle 有 `bk10.clo`、缺 `bk11.clo`）—— 与本项无关，但**分章夹具要用 `test_file/projects/bench/multifile`**（`ctexbook` 10pt，文档里的 `bench/multifile` 指的就是它）。
 
 
 ## 7. 明确不做（否决项）
@@ -532,6 +559,7 @@ LiveFeedback 三条读任务（stdout / stderr / `.log` 尾随）· watcher 线�
 | ③ 性能基准 | design.md §基准脚本与实测基线 + `scripts/{gen-bench-projects,bench}.mjs` |
 | ④ 错误诊断 | modules.md §4.1 + design.md §错误列表 + `log_parser/diagnosis.rs` / `real_error_corpus.rs` |
 | ⑤ SyncTeX | [ADR-0008](../adr/0008-synctex-via-cli-with-interface.md) + modules.md §5 + design.md §预览 + `scripts/synctex-report.mjs` |
+| ㊷ 库形态同步数据补丁 | modules.md §5（契约）与 §12.2 #26（已修）+ troubleshooting.md「库内嵌档下 SyncTeX 定位不可用」+ 本文件 §6.10.1（实测与 A/B）+ `test_file/e2e/synctex-42-{verify,artifacts-ab,selfcheck}.ps1`（工作区产物） |
 | ⑥ CLI + MCP（**已完成**） | [cli-mcp-plan.md](../cli-mcp-plan.md) + modules.md §8.1 + `crates/latteset-server` |
 | ⑦a 大纲增量（**已完成**） | modules.md §3.5（缓存三不变量）/ §12.2 + `core::outline::{load_cached, OutlineCache}` + `src/stores/outline.ts` |
 | ⑦c / ⑦b（**已完成 / 缓做**） | [p1-large-doc-editor-analysis.md](./p1-large-doc-editor-analysis.md)（拆分依据）+ [p1c-multifile-large-project.md](./p1c-multifile-large-project.md)（夹具/口径/数据）+ `scripts/{gen-large-project,editor-report}.mjs` |

@@ -563,6 +563,8 @@ fn run_engines(
     root_bytes: Vec<u8>,
     stem: String,
     name: String,
+    // 根文件**绝对路径**：㊷ 的同步数据补丁要把它写进主输入记录（子进程档记的也是它）。
+    root_file: PathBuf,
     pdf_dst: PathBuf,
     requested_kind: CompileKind,
     progress: Arc<dyn CompileProgress>,
@@ -636,6 +638,8 @@ fn run_engines(
     // bib 判据缓存落点与 `.bib` 的解析根（同上：`project_root`/`tmp_dir` 紧接着被 `TectonicIo` 拿走）。
     let bib_sig = bib_signature_path(&tmp_dir, &stem);
     let bib_root = project_root.clone();
+    // ㊷ 同步数据补丁的落点（同上：`tmp_dir` 紧接着被 `TectonicIo` 拿走）：见 `crate::synctex`。
+    let mirror_dir = tmp_dir.clone();
     let mut io = TectonicIo::new(
         project_root,
         Some(tmp_dir),
@@ -921,6 +925,12 @@ fn run_engines(
     };
     drop(driver);
 
+    // ㊷ **同步数据的主输入记录修补**：引擎在库形态下把主文件记成 `texput`（根因在 C 侧，
+    //    见 `crate::synctex` 模块文档），补成项目根下的真实绝对路径 —— 与子进程档同值。
+    //    放这里 = 所有出口（含下面的拷贝失败 / IoError 早退）之前，且捕获表与 `tmp/` 镜像
+    //    拿到同一份字节（自解析定位读的就是磁盘那份）。补丁是**纯数据**，不动排版与 `.log`。
+    crate::synctex::patch_outputs(&shared, &stem, &mirror_dir, &root_file.to_string_lossy());
+
     // ⑧ 收尾（§3.4 第 9 步）：产物落点与子进程档一致。`tmp/` 里的副本由 I/O 层的镜像写完；
     //    这里取内存文件表，把 PDF 拷到项目根、把 `.log` 作为权威错误来源。
     let files: HashMap<String, Vec<u8>> = {
@@ -1077,6 +1087,7 @@ impl CompileRunner for TectonicLibRunner {
         let cache_dir = self.cache_dir.clone();
         let requested_kind = req.kind;
         let project_root = req.project_root.clone();
+        let root_file = req.root_file.clone();
         let blocking = tokio::task::spawn_blocking(move || {
             run_engines(
                 bundle_source,
@@ -1087,6 +1098,7 @@ impl CompileRunner for TectonicLibRunner {
                 root_bytes,
                 stem,
                 name,
+                root_file,
                 pdf_dst,
                 requested_kind,
                 progress,

@@ -544,10 +544,18 @@ pub fn diagnose(msg: &LogMessage) -> Option<Diagnosis>;
 > 无同步数据时 inverse **3.13 s**（5 候选 × 625 ms），现在分别是 **14 ms** 与 **11 ms**；
 > 瞬时竞争（编译中同步文件被重写）仍按 100/200/300 ms 退避且实测能救回来。
 >
-> ⚠ **库形态的已知功能缺口（roadmap ㊷，未修）**：库内嵌档编译出的 `.synctex.gz` 里 `Input:` 记录
-> **没有真实路径**（`Input:1:texput`、其余为空）⇒ **正向定位必然失败**，反向也拿不到可打开的源码；
-> 原因是主文件**内存直喂**（见 §2.7「输入四层」），子进程档正常。诊断方法与对照证据见
-> [troubleshooting.md](./troubleshooting.md)。
+> ✅ **库形态的「主输入名」缺口已修（roadmap ㊷，2026-09-17）**：库内嵌档编译出的 `.synctex.gz` 里
+> `Input:1` 原本是引擎的默认 jobname **`texput`**（根因在 C 侧：`tt_run_engine()` 先 `open_log_file()`
+> 把 jobname 定成 `texput`，之后 `start_input()` 里"jobname 为空才用主输入名"的分支永不命中；
+> 而 `tt_xetex_set_string_variable` 是空实现 ⇒ Rust 侧设不了），于是自解析按文件找 tag 时**主文件永远落空**
+> —— 单文件项目双向定位全失效（被 `\include` 的章节本来就正常）。修法是**纯数据补丁**：收尾处把主输入记录
+> 补成真实绝对路径（`crates/latteset-tectonic/src/synctex.rs`，捕获表与 `tmp/` 镜像两处都改），
+> **不改引擎、不动文档结构**。实测：两夹具的 `forward` 与子进程档**逐字段相同**、PDF/`.log`/错误归属
+> **逐字节不变**（详见 [roadmap §6.10.1](./research/tex-ide-roadmap-priority.md)）。
+>
+> ⚠ **残留（与本补丁无关、属既有引擎差异）**：**目录区域**的反向命中 —— 子进程档归到源码行
+> `\tableofcontents`，库形态归到生成物 `main.toc`（前端按 ㉒ 显示"来自自动生成的文件"）。
+> 诊断方法（gunzip 看 `Input:` 行）与对照证据见 [troubleshooting.md](./troubleshooting.md)。
 
 ```
 synctex（core）              synctex（latteset-infra）
@@ -959,7 +967,7 @@ settings-changed: Settings
 | 23 | **页哈希缓存的口径只有一份（core）** | `PAGES_CACHE_VERSION` / `pages_cache_path` / `parse_pages_cache` / `format_pages_cache` 都定义在 `latteset_core::xdv`（2026-09 从 `latteset-infra` 提上去）：两个 runner 都要用它，而库形态档在 `latteset-tectonic`、按 ADR-0012 **不依赖 infra** ⇒ 两处各写一份必然漂移，而漂移的代价是"永远首轮"（A 面每轮白跑一次转换 + 视窗全量重绘）。infra 侧只留薄封装 |
 | 24 | **常驻档（同进程连续编译）在重文档上是负收益** | 实测（方案 §6.4，release）：进程地板只有 **9.3 ms**，轻档（1 页）净收益 −26 ms，**重档（28 页多文件 Full）第 3 轮起退化、稳态比"每次起进程"慢 31%**（1450 vs 1109 ms）。**退化不是"活变多"**：`passes` 恒 2、`req_*` 每轮完全相同，但 `typeset` +27% / `convert` +39% / **`bundle_read_ms` +75%（读次数恒 2009）** ⇒ 同进程内累计的内存压力把**所有**操作一起拖慢（峰值工作集 245 MB）。**上游从未承接过"一进程跑 N 次引擎"**（CLI 一进程一次）。⇒ **P4 常驻按回退点处理：不投入**；该投的是 bib 跳过判据（≈470 ms/次）与 bundle/format 常驻化（≈30–55 ms/次） |
 | 25 | 复核 `--example bench` / `bench-tectonic-lib.mjs` 的口径 | `crates/latteset-tectonic/examples/bench.rs` = **同进程连续编译 N 次**（常驻档的唯一入口，CLI 是一次性语义）；脚本是**每样本起一个进程**的 harness，常驻档要让模板自带 `--runs N` 循环（注释已写明）。`{root}` 替换的是**目录路径本身**，模板要自己写 `--root {root}` |
-| 26 | **库形态（路径 B）档的反向定位基本不可用** | 实测：库形态产出的 `.synctex.gz` 里 `Input:` **141 条只有 29 条非空**（且非空的是 `.aux` 等生成物），章节源码一个都没登记 ⇒ 反向命中落在空 tag 上，解析器**如实返回"没有对应源码"**（不伪造文件）。根因：引擎经 `input_open_name_with_abspath` 询问真实路径，而自持 I/O 层只对"项目根内找得到的文件"给得出路径（主输入走 `input_open_primary`，其 abspath 变体用的是 trait 默认实现 ⇒ 主输入被记成 `texput`）。**子进程档不受影响**（实测 121/141 非空）。待办：覆盖 `input_open_primary_with_abspath` + 排查章节为何也没登记 |
+| 26 | ~~库形态（路径 B）档的反向定位基本不可用~~ **已修（roadmap ㊷，2026-09-17）** | 旧读数（"`Input:` 141 条只有 29 条非空、章节源码一个都没登记"）里，**章节那半是解析器的锅**：`Input:` 记录是文件**首次被打开时**才登记的，多文件工程里有相当一部分落在 `Content:` **之后**，而当时的解析器只读文件头 ⇒ 看起来"没登记"（`core::synctex::parse` 改成全文扫描后章节即正常，实测 `multifile` 20 章的 `forward` 与子进程档逐字段一致）。**主输入那半是真缺陷**：主输入走 `input_open_primary`（内存直喂）⇒ 引擎 C 侧先把 jobname 定成 `texput`，`Input:1` 因此是 `texput`。修法 = 收尾把主输入记录补成真实绝对路径（`latteset-tectonic/src/synctex.rs`），两夹具两形态逐字段对拍 + 零变化 A/B 见 [roadmap §6.10.1](./research/tex-ide-roadmap-priority.md) |
 | 27 | SyncTeX 自解析的两条已知偏差 | 见 [ADR-0013](./adr/0013-synctex-in-process-parser.md)：① beamer 类页面上前向坐标与 CLI 中位差 132 pt（样本行在 `.synctex` 里没有对应记录，两侧的节点选择规则不同；**往返指标不受影响**）；② `column` 恒 -1（格式里没有列号）。漂移风险（格式官方未承诺公开）由 `scripts/synctex-selfcheck.mjs` 当探测器 |
 | 28 | 引擎形态是**全局**设置（无项目级覆盖） | 设置面已收口（settings.tectonic：形态 / bundle / 缓存目录），GUI 的 SwitchableRunner **每趟编译读一次全局设置** ⇒ 改完即生效、不需重启。但项目级覆盖要「形态位随 CompileRequest 下发」，而 CompileRequest 目前不带引擎形态（21 处构造点，含大量测试）⇒ **故意不放项目级字段**：放了就是「看着能覆盖、实际不生效」的假开关。要做是一次独立改动 |
 | 22 | 错误条目的**文件归属**会错一章（`parse_log` 文件栈） | 实测（2026-09，流式验证的夹具）：错误写在 `ch_05.tex:164`，列表报 `./ch_04.tex:164`。机制已定位：TeX 日志把"关闭上一个文件 + 打开下一个文件"写在**同一行**（`[64]) (./ch_05.tex`），而 `RE_OPEN` 要求行首是 `(`、弹栈只认行首 `)` → `ch_05` 没入栈、`ch_04` 被弹出。影响：错误列表显示的文件名与点击跳转目标（`ErrorList.jump(entry.file, entry.line)`）都错位；终态与流式共用同一解析器，两者皆然。修法要按字符顺序做括号匹配，属独立任务（**未修**，见 roadmap §10-D） |
