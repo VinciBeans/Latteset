@@ -58,6 +58,9 @@ impl FileSystem for LocalFs {
     async fn write(&self, path: &Path, contents: &str) -> io::Result<()> {
         std::fs::write(path, contents)
     }
+    async fn create_dir(&self, path: &Path) -> io::Result<()> {
+        std::fs::create_dir(path)
+    }
 }
 
 struct Args {

@@ -410,6 +410,44 @@ async fn save_content(state: &AppState, path: &Path, content: &str) -> Result<()
     Ok(())
 }
 
+/// 新建**单层**目录（roadmap ㊺ 待办②）：软件内建文件夹，不必跳出到资源管理器。
+///
+/// 路径校验与写文件同一条路（D8：`resolve_creatable_in_project` ⇒ 落点必须在项目根内，
+/// 且**父目录已存在**——建多层属于上层策略，前端也不会给出带 `/` 的目录名）。
+/// 目标已存在 ⇒ **明确报错**而不是静默成功：静默成功会让用户以为建了一个其实没建的目录。
+#[tauri::command]
+#[specta::specta]
+pub async fn create_dir(path: String, state: State<'_, AppState>) -> Result<(), CmdError> {
+    let project = state
+        .project
+        .read()
+        .await
+        .clone()
+        .ok_or_else(|| CmdError::Invalid("尚未打开项目".into()))?;
+    let target = resolve_creatable_in_project(state.fs.as_ref(), &project.root, Path::new(&path))
+        .await
+        .map_err(|e| path_error(e, Path::new(&path), "目录"))?;
+    match state.fs.create_dir(&target).await {
+        Ok(()) => {
+            debug!("新建目录：{}", target.display());
+            Ok(())
+        }
+        Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
+            // 提示里用**项目内相对路径**：面板只有 256 px 宽，绝对路径要折三行才看得完
+            let shown = target
+                .strip_prefix(&project.root)
+                .unwrap_or(&target)
+                .display()
+                .to_string();
+            Err(CmdError::Invalid(format!("已存在同名文件或文件夹：{shown}")))
+        }
+        Err(e) => Err(CmdError::Internal(format!(
+            "建目录失败（{}）：{e}",
+            target.display()
+        ))),
+    }
+}
+
 // ---------------------------------------------------------------- 大纲
 
 /// 文档大纲（源结构树）：解析在 core `outline` 模块（2026-09-03 从前端下沉）。

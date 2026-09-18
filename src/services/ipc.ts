@@ -39,6 +39,11 @@ export const ipc = {
   readFile: (path: string) => unwrap(commands.readFile(path)),
   saveAll: (files: { path: string; content: string }[]) => unwrap(commands.saveAll(files)),
   /**
+   * 新建**单层**目录（roadmap ㊺ 待办②）：目标可不存在但**父目录必须已存在**，落点必须在项目内（D8）；
+   * 已存在同名文件/文件夹 ⇒ 后端回 `Invalid`（"已存在同名文件或文件夹：…"），不静默成功。
+   */
+  createDir: (path: string) => unwrap(commands.createDir(path)),
+  /**
    * 新建 `.tex` 的最小骨架（roadmap ㊺ §6.13.1-A）：**内容口径在 core**（`core::newfile`），
    * 前端只传"语言 × 类型 × 标题"这三个选择值，不另拼一份模板。
    *

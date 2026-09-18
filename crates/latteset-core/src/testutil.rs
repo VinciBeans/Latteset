@@ -130,6 +130,15 @@ impl FileSystem for FakeFS {
             "FakeFS 只读：写入用例请用真实文件系统（infra 的 TokioFs）",
         ))
     }
+
+    /// 与 [`Self::write`] 同一条纪律：FakeFS 不做写侧（建目录的真实用例走 TokioFs）。
+    async fn create_dir(&self, path: &Path) -> io::Result<()> {
+        let _ = path;
+        Err(io::Error::new(
+            io::ErrorKind::Unsupported,
+            "FakeFS 只读：建目录用例请用真实文件系统（infra 的 TokioFs）",
+        ))
+    }
 }
 
 /// 可注入的编译结果队列（按调用顺序出队）。

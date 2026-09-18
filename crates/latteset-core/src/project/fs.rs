@@ -57,6 +57,14 @@ pub trait FileSystem: Send + Sync {
     /// 写入（覆盖）文本文件。父目录必须已存在——建目录属于上层策略。
     async fn write(&self, path: &std::path::Path, contents: &str) -> io::Result<()>;
 
+    /// 新建**单层**目录（roadmap ㊺ 待办②：软件内建文件夹，不必跳出到资源管理器）。
+    ///
+    /// 契约与 [`Self::write`] 一致：**父目录必须已存在**（建多层属于上层策略——命令面会用
+    /// `resolve_creatable_in_project` 校验落点，那条判据也要求父目录存在）。
+    /// 目标已存在 → `AlreadyExists`（调用方据此给"已存在同名文件或文件夹"的人话，
+    /// **不静默成功**——静默成功会让用户以为新建了一个其实没有的目录）。
+    async fn create_dir(&self, path: &std::path::Path) -> io::Result<()>;
+
     /// **从 `offset` 起**读新增内容（容错解码），返回新文本与新的偏移量（字节）。
     ///
     /// 用途（roadmap「阶段 2 · 流式输出」）：编译期间**尾随 `tmp/<stem>.log`**。

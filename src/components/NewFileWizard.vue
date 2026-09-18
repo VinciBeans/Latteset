@@ -23,6 +23,8 @@ const props = defineProps<{
 const emit = defineEmits<{
   (e: "confirm", value: { lang: DocLanguage; kind: DocKind; title: string }): void;
   (e: "cancel"): void;
+  /** 「先建个文件夹」：关掉向导、回到树里的文件夹命名流程（roadmap ㊺ 的目录入口之一）。 */
+  (e: "folder"): void;
 }>();
 
 /** 面向新手只放两种语言 / 四种类型：`ctex*` 与标准类一一对应，多一个选项就多一次犹豫。 */
@@ -164,7 +166,12 @@ function confirm() {
       </form>
 
       <footer class="panel-foot">
-        <span class="foot-hint">不想要这一步？在「设置 → 编译」里关掉「新建文件向导」即可。</span>
+        <span class="foot-hint">
+          不想要这一步？在「设置 → 编译」里关掉「新建文件向导」即可。
+          <button class="link" :disabled="busy" data-testid="wizard-folder" @click="emit('folder')">
+            或者先建个文件夹
+          </button>
+        </span>
         <button class="btn" :disabled="busy" @click="emit('cancel')">取消</button>
         <button class="btn primary" :disabled="busy" data-testid="wizard-create" @click="confirm">
           {{ busy ? "创建中…" : "创建" }}
@@ -303,6 +310,18 @@ function confirm() {
   flex: 0 0 auto;
 }
 .foot-hint { flex: 1 1 auto; font-size: 11px; color: var(--ink-faint); }
+/* 行内文字按钮（"或者先建个文件夹"）：跟着 hint 的排版走，不做成第三个按钮 */
+.link {
+  border: none;
+  background: transparent;
+  padding: 0;
+  margin-left: 4px;
+  color: var(--blueberry);
+  font: inherit;
+  text-decoration: underline;
+  cursor: pointer;
+}
+.link:disabled { opacity: 0.5; cursor: default; }
 .btn {
   height: 30px; padding: 0 13px;
   background: var(--card);

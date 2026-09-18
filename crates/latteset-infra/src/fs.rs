@@ -92,12 +92,17 @@ impl FileSystem for TokioFs {
     async fn write(&self, path: &Path, contents: &str) -> io::Result<()> {
         tokio::fs::write(path, contents).await
     }
+
+    /// 单层建目录（roadmap ㊺）：刻意**不用** `create_dir_all` —— 目标已存在时必须报
+    /// `AlreadyExists`，命令面才能给出"已存在同名文件或文件夹"而不是静默成功。
+    async fn create_dir(&self, path: &Path) -> io::Result<()> {
+        tokio::fs::create_dir(path).await
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-
     #[test]
     fn strips_verbatim_drive_prefix() {
         // Windows canonicalize 返回 \\?\ 前缀；对外暴露前必须剥掉，否则前端 resolvePath 判定失败
@@ -144,5 +149,37 @@ mod tests {
             strip_verbatim(Path::new(r"E:\项目\中文测试工程")),
             Path::new(r"E:\项目\中文测试工程")
         );
+    }
+
+    /// 建目录（roadmap ㊺ 待办②）：**单层**语义 —— 成功建出一个；已存在 ⇒ `AlreadyExists`
+    /// （命令面据此给"已存在同名文件或文件夹"）；父目录不存在 ⇒ 报错（不代建）。
+    #[tokio::test]
+    async fn create_dir_is_single_level_and_reports_existing() {
+        let base = std::env::temp_dir().join(format!("latteset-mkdir-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        std::fs::create_dir_all(&base).unwrap();
+        let fs = TokioFs;
+
+        let dir = base.join("章节");
+        fs.create_dir(&dir).await.expect("第一层该建得出来");
+        assert!(dir.is_dir(), "目录确实落盘（中文名也要能建）");
+
+        // 已存在 ⇒ AlreadyExists（不静默成功）
+        let err = fs.create_dir(&dir).await.unwrap_err();
+        assert_eq!(err.kind(), std::io::ErrorKind::AlreadyExists);
+
+        // 父目录不存在 ⇒ 报错（不代建多层）
+        let deep = base.join("no-such-parent").join("child");
+        assert!(fs.create_dir(&deep).await.is_err());
+
+        // 同名文件占位时同样报 AlreadyExists（用户看到的是"已存在同名文件或文件夹"）
+        let file = base.join("占位.tex");
+        std::fs::write(&file, "x").unwrap();
+        assert_eq!(
+            fs.create_dir(&file).await.unwrap_err().kind(),
+            std::io::ErrorKind::AlreadyExists
+        );
+
+        let _ = std::fs::remove_dir_all(&base);
     }
 }

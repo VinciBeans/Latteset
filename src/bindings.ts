@@ -15,6 +15,14 @@ export const commands = {
 	readFile: (path: string) => typedError<string, CmdError>(__TAURI_INVOKE("read_file", { path })),
 	saveAll: (files: FileContent[]) => typedError<null, CmdError>(__TAURI_INVOKE("save_all", { files })),
 	/**
+	 *  新建**单层**目录（roadmap ㊺ 待办②）：软件内建文件夹，不必跳出到资源管理器。
+	 * 
+	 *  路径校验与写文件同一条路（D8：`resolve_creatable_in_project` ⇒ 落点必须在项目根内，
+	 *  且**父目录已存在**——建多层属于上层策略，前端也不会给出带 `/` 的目录名）。
+	 *  目标已存在 ⇒ **明确报错**而不是静默成功：静默成功会让用户以为建了一个其实没建的目录。
+	 */
+	createDir: (path: string) => typedError<null, CmdError>(__TAURI_INVOKE("create_dir", { path })),
+	/**
 	 *  新建 `.tex` 的**最小骨架**（roadmap ㊺ §6.13.1-A）：新手向导选完"语言 × 类型 × 标题"之后，
 	 *  前端把这段内容交给 `save_all` 落盘。
 	 * 
