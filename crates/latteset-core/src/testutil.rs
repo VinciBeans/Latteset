@@ -139,6 +139,31 @@ impl FileSystem for FakeFS {
             "FakeFS 只读：建目录用例请用真实文件系统（infra 的 TokioFs）",
         ))
     }
+
+    /// 删 / 改名的真实用例同样走 TokioFs（FakeFS 只读，不实现写侧语义）。
+    async fn remove_file(&self, path: &Path) -> io::Result<()> {
+        let _ = path;
+        Err(io::Error::new(
+            io::ErrorKind::Unsupported,
+            "FakeFS 只读：删除用例请用真实文件系统（infra 的 TokioFs）",
+        ))
+    }
+
+    async fn remove_dir_all(&self, path: &Path) -> io::Result<()> {
+        let _ = path;
+        Err(io::Error::new(
+            io::ErrorKind::Unsupported,
+            "FakeFS 只读：删除用例请用真实文件系统（infra 的 TokioFs）",
+        ))
+    }
+
+    async fn rename(&self, from: &Path, to: &Path) -> io::Result<()> {
+        let _ = (from, to);
+        Err(io::Error::new(
+            io::ErrorKind::Unsupported,
+            "FakeFS 只读：改名用例请用真实文件系统（infra 的 TokioFs）",
+        ))
+    }
 }
 
 /// 可注入的编译结果队列（按调用顺序出队）。

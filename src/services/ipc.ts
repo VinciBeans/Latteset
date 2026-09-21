@@ -44,6 +44,13 @@ export const ipc = {
    */
   createDir: (path: string) => unwrap(commands.createDir(path)),
   /**
+   * 删除文件或**整个目录**（roadmap ㊼）：后端挡三道 —— 必须已存在、必须在项目根内、
+   * **不能是项目根**。目录是递归删除 ⇒ **调用方必须先弹二次确认**。
+   */
+  deletePath: (path: string) => unwrap(commands.deletePath(path)),
+  /** 改名（roadmap ㊽）：同目录内、不覆盖已存在的目标；返回**改后的绝对路径**（前端据此重映射标签）。 */
+  renamePath: (from: string, to: string) => unwrap(commands.renamePath(from, to)),
+  /**
    * 新建 `.tex` 的最小骨架（roadmap ㊺ §6.13.1-A）：**内容口径在 core**（`core::newfile`），
    * 前端只传"语言 × 类型 × 标题"这三个选择值，不另拼一份模板。
    *

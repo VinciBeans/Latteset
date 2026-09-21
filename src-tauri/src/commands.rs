@@ -448,6 +448,88 @@ pub async fn create_dir(path: String, state: State<'_, AppState>) -> Result<(), 
     }
 }
 
+// ---------------------------------------------------------------- 删除 / 改名（文件管理补齐）
+
+/// 删除文件或**整个目录**（roadmap ㊼）。
+///
+/// 安全边界（三条，缺一条就是数据事故）：
+/// 1. **必须已存在**且**在项目根内**（`resolve_in_project`，D8）；
+/// 2. **不能是项目根本身**（否则一次点击删掉整个项目）；
+/// 3. 目录递归删除 —— 前端已弹过二次确认并把"里面有多少东西"讲清楚。
+///
+/// 删除后项目状态由前端收口（关掉相关标签、根文件被删则重探）。
+#[tauri::command]
+#[specta::specta]
+pub async fn delete_path(path: String, state: State<'_, AppState>) -> Result<(), CmdError> {
+    let project = state
+        .project
+        .read()
+        .await
+        .clone()
+        .ok_or_else(|| CmdError::Invalid("尚未打开项目".into()))?;
+    // 项目根：`resolve_in_project` 内部已经 canonicalize 过一次（失败会给 RootUnavailable），
+    // 这里再取一次是为了拿"项目根本身"来做边界比对（禁止删/改项目根）。
+    let target = resolve_in_project(state.fs.as_ref(), &project.root, Path::new(&path))
+        .await
+        .map_err(|e| path_error(e, Path::new(&path), "路径"))?;
+    let root = state.fs.canonicalize(&project.root).await?;
+    if target == root {
+        return Err(CmdError::Invalid("不能删除项目根目录".into()));
+    }    let is_dir = state.fs.is_dir(&target).await.unwrap_or(false);
+    if is_dir {
+        state.fs.remove_dir_all(&target).await?;
+    } else {
+        state.fs.remove_file(&target).await?;
+    }
+    info!("已删除{}：{}", if is_dir { "目录" } else { "文件" }, target.display());
+    Ok(())
+}
+
+/// 改名（roadmap ㊽）：**同目录内**改个名字（不做跨目录移动）。
+///
+/// 规则：
+/// - `from` 必须已存在且在项目根内，且**不是项目根本身**；
+/// - `to` 的父目录必须已存在、落在项目根内，且**必须与 `from` 同目录**（v1 不做移动）；
+/// - `to` 已存在 ⇒ 明确报错（**不覆盖** —— 覆盖式改名会静默毁掉一个文件）。
+///
+/// 返回**改名后的绝对路径**：前端要拿它去重映射打开的标签与根文件。
+#[tauri::command]
+#[specta::specta]
+pub async fn rename_path(
+    from: String,
+    to: String,
+    state: State<'_, AppState>,
+) -> Result<String, CmdError> {
+    let project = state
+        .project
+        .read()
+        .await
+        .clone()
+        .ok_or_else(|| CmdError::Invalid("尚未打开项目".into()))?;
+    let src = resolve_in_project(state.fs.as_ref(), &project.root, Path::new(&from))
+        .await
+        .map_err(|e| path_error(e, Path::new(&from), "原路径"))?;
+    let root = state.fs.canonicalize(&project.root).await?;
+    if src == root {
+        return Err(CmdError::Invalid("不能给项目根目录改名".into()));
+    }
+    let dst = resolve_creatable_in_project(state.fs.as_ref(), &root, Path::new(&to))
+        .await
+        .map_err(|e| path_error(e, Path::new(&to), "新路径"))?;
+    if dst.parent() != src.parent() {
+        return Err(CmdError::Invalid(
+            "改名只能在本目录内（暂不支持跨目录移动）".into(),
+        ));
+    }
+    if state.fs.exists(&dst).await.unwrap_or(false) {
+        let shown = dst.strip_prefix(&root).unwrap_or(&dst).display().to_string();
+        return Err(CmdError::Invalid(format!("已存在同名文件或文件夹：{shown}")));
+    }
+    state.fs.rename(&src, &dst).await?;
+    info!("已改名：{} → {}", src.display(), dst.display());
+    Ok(dst.to_string_lossy().into_owned())
+}
+
 // ---------------------------------------------------------------- 大纲
 
 /// 文档大纲（源结构树）：解析在 core `outline` 模块（2026-09-03 从前端下沉）。

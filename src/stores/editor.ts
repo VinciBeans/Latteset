@@ -162,6 +162,69 @@ export const useEditorStore = defineStore("editor", () => {
     externalConflict.value.delete(path);
   }
 
+  /**
+   * 关掉某个路径（含它**下面**的全部路径）的标签 —— roadmap ㊼ 删除后的收口。
+   *
+   * 删目录时子文件的标签也必须关：文件已经不存在了，留着标签点进去只会得到"读取失败"。
+   * 归一化分隔符后再比前缀，避免 `a\b` 与 `a/b` 两种拼法漏判。
+   */
+  function closeTabsUnder(target: string) {
+    const norm = (p: string) => p.replace(/\\/g, "/");
+    const base = norm(target);
+    for (const t of [...tabs.value]) {
+      const p = norm(t.path);
+      if (p === base || p.startsWith(`${base}/`)) closeTab(t.path);
+    }
+  }
+
+  /**
+   * 路径整体重映射 —— roadmap ㊽ 改名后的收口（改文件 = 一条；改目录 = 它下面一整片）。
+   *
+   * 标签 / 活动路径 / 脏集合 / 缓冲 / 自保存时刻 / 冲突标记**都要跟着走**：漏掉任何一个，
+   * 症状分别是"标签指向不存在的文件"、"保存写回旧路径"、"改名后刚才的编辑被当成外部修改"。
+   * 内容不动（改名不改内容），所以只搬 key。
+   */
+  function remapPaths(from: string, to: string) {
+    const norm = (p: string) => p.replace(/\\/g, "/");
+    const base = norm(from);
+    const next = norm(to);
+    const remap = (p: string): string => {
+      const n = norm(p);
+      if (n === base) return next;
+      if (n.startsWith(`${base}/`)) return next + n.slice(base.length);
+      return p;
+    };
+
+    for (const t of tabs.value) {
+      const mapped = remap(t.path);
+      if (mapped !== t.path) {
+        t.path = mapped;
+        t.name = mapped.split(/[/\\]/).pop() ?? mapped;
+      }
+    }
+    if (activePath.value) activePath.value = remap(activePath.value);
+
+    const moveKeys = <V>(m: Map<string, V>) => {
+      const entries = [...m.entries()];
+      m.clear();
+      for (const [k, v] of entries) m.set(remap(k), v);
+    };
+    moveKeys(buffers.value);
+    moveKeys(lastSaved.value);
+
+    const moveSet = (s: Set<string>) => {
+      const items = [...s];
+      s.clear();
+      for (const i of items) s.add(remap(i));
+    };
+    moveSet(dirty.value);
+    moveSet(externalConflict.value);
+
+    if (pendingReveal.value) {
+      pendingReveal.value = { ...pendingReveal.value, path: remap(pendingReveal.value.path) };
+    }
+  }
+
   const pendingReveal = ref<{ path: string; line: number } | null>(null);
   function consumeReveal() {
     const r = pendingReveal.value;
@@ -171,7 +234,7 @@ export const useEditorStore = defineStore("editor", () => {
 
   return {
     tabs, activePath, dirty, buffers, lastSaved, externalConflict, openError, activeTab,
-    openFile, closeTab, markDirty, markSaved, markSaving, rollbackSaving,
+    openFile, closeTab, closeTabsUnder, remapPaths, markDirty, markSaved, markSaving, rollbackSaving,
     onFilesChanged, acceptExternal,
     pendingReveal, consumeReveal,
   };

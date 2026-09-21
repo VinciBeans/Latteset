@@ -69,6 +69,15 @@ impl FileSystem for LocalFs {
     async fn create_dir(&self, path: &Path) -> io::Result<()> {
         std::fs::create_dir(path)
     }
+    async fn remove_file(&self, path: &Path) -> io::Result<()> {
+        std::fs::remove_file(path)
+    }
+    async fn remove_dir_all(&self, path: &Path) -> io::Result<()> {
+        std::fs::remove_dir_all(path)
+    }
+    async fn rename(&self, from: &Path, to: &Path) -> io::Result<()> {
+        std::fs::rename(from, to)
+    }
 }
 
 struct Args {

@@ -23,6 +23,28 @@ export const commands = {
 	 */
 	createDir: (path: string) => typedError<null, CmdError>(__TAURI_INVOKE("create_dir", { path })),
 	/**
+	 *  删除文件或**整个目录**（roadmap ㊼）。
+	 * 
+	 *  安全边界（三条，缺一条就是数据事故）：
+	 *  1. **必须已存在**且**在项目根内**（`resolve_in_project`，D8）；
+	 *  2. **不能是项目根本身**（否则一次点击删掉整个项目）；
+	 *  3. 目录递归删除 —— 前端已弹过二次确认并把"里面有多少东西"讲清楚。
+	 * 
+	 *  删除后项目状态由前端收口（关掉相关标签、根文件被删则重探）。
+	 */
+	deletePath: (path: string) => typedError<null, CmdError>(__TAURI_INVOKE("delete_path", { path })),
+	/**
+	 *  改名（roadmap ㊽）：**同目录内**改个名字（不做跨目录移动）。
+	 * 
+	 *  规则：
+	 *  - `from` 必须已存在且在项目根内，且**不是项目根本身**；
+	 *  - `to` 的父目录必须已存在、落在项目根内，且**必须与 `from` 同目录**（v1 不做移动）；
+	 *  - `to` 已存在 ⇒ 明确报错（**不覆盖** —— 覆盖式改名会静默毁掉一个文件）。
+	 * 
+	 *  返回**改名后的绝对路径**：前端要拿它去重映射打开的标签与根文件。
+	 */
+	renamePath: (from: string, to: string) => typedError<string, CmdError>(__TAURI_INVOKE("rename_path", { from, to })),
+	/**
 	 *  新建 `.tex` 的**最小骨架**（roadmap ㊺ §6.13.1-A）：新手向导选完"语言 × 类型 × 标题"之后，
 	 *  前端把这段内容交给 `save_all` 落盘。
 	 * 

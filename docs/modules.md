@@ -722,6 +722,8 @@ pub fn compile_request_manual(ctx: ComposeContext<'_>) -> Option<CompileRequest>
 | read_file | `FileSystem::read_to_string` + 路径校验（core `project::paths`） |
 | save_all | 写盘（`save_content`）——不触发编译逻辑，watch 自然驱动；唯一保存路径 |
 | create_dir | 新建**单层**目录（roadmap ㊺ §6.13.2）：`resolve_creatable_in_project`（D8；父目录必须已存在）+ `FileSystem::create_dir`；已存在 ⇒ `Invalid`（"已存在同名文件或文件夹：<项目内相对路径>"，**不静默成功**）|
+| delete_path | 删除文件或**整个目录**（roadmap ㊼）：三道闸 —— `resolve_in_project` 必须**已存在且在项目根内**、**不能是项目根**；目录走 `remove_dir_all`（递归）。二次确认与编辑器收口（关标签、根文件被删则重探）在前端 |
+| rename_path(from, to) | 改名（roadmap ㊽）：`from` 必须已存在且在根内、不能是项目根；`to` 必须与 `from` **同目录**、落在根内、且**不存在**（不覆盖 ⇒ `Invalid`）；返回**改后的绝对路径**（前端据此 `editor.remapPaths` 并让根文件跟进）|
 | new_file_skeleton(lang, kind, title) | 新建 `.tex` 的**最小骨架**（roadmap ㊺ §6.13.1-A）：转发 core `newfile::document_skeleton`，**无副作用、不读项目状态**（纯函数 ⇒ 前端可在向导里逐次改选项做实时预览）。「语言 × 类型」这张表只此一份，前端只传选择值（`chinese/english` × `article/report/book/beamer`） |
 | compile_now | compose.compile_request_manual：只看 root_file（忽略活动文件路径），构造请求入队 |
 | abort_compile | scheduler.send(Abort) |
@@ -851,8 +853,9 @@ useAutoSave 依赖 editorStore.dirty + settingsStore（读）
 |---|---|---|---|
 | EditorPane | model(路径)、内容、语言 | 变更事件 → useAutoSave | Monaco 实例、worker、IME 组合状态；**无活动文件 → 显示"还没有打开文件"占位提示**（覆盖 Monaco）+ `readOnly`，打开文件才可编辑 |
 | PreviewPane | pdfPath、highlight、syncNote、**livePreview（编译中的部分 PDF）** | 点击坐标 → useSyncTex | pdf.js 文档句柄、滚动位置缓存、canvas 代次与页高（见下方渲染契约，含"编译中预览 = 换字节不换身份"） |
-| FileTree | 树数据、激活路径 | 打开文件/目录展开 | 展开状态（只在前端本地）+ `expandPath`（**一次性展开请求**，递归透传：在收起的目录里建完东西要把它展开，否则新内容看不见）；**新建（文件 / 文件夹）**（㊺）：标题栏**一个** `＋` → 行内输入 + 类型小切换（📄 默认 / 📁，点它不会收掉输入行）→ `save_all` / `create_dir`（目标可不存在，D8 校验在项目内）→ 刷新树 +（文件）打开；**节点右键菜单**（目录 ⇒ 建在它里面；文件 ⇒ 建在其所在目录）；**新建向导**只在「无根文件 ∧ 无候选 ∧ 扩展名 `.tex` ∧ 设置开关为开」时拦一次 |
-| FileTreeItem | node、expandPath | `menu`（右键：坐标 + 节点）| 展开状态（组件内，信息局部性）；右键只上报，菜单与创建流程在 FileTree（它才知道项目根）|
+| FileTree | 树数据、激活路径 | 打开文件/目录展开、右键菜单（新建/改名）、悬停垃圾桶（删除）、搜索 | 展开状态（只在前端本地）+ `expandPath`/`renamingPath`/`forceExpand`（三个**一次性请求**，递归透传：建完展开、行内改名、搜索强制展开）；**新建（文件 / 文件夹）**（㊺）：标题栏**一个** `＋` → 行内输入 + 类型小切换（📄 默认 / 📁，点它不会收掉输入行）→ `save_all` / `create_dir`；**删除**（㊼）：悬停垃圾桶 → `ConfirmDialog` 二次确认（目录报"里面还有 N 个文件"）→ `delete_path` → `closeTabsUnder` + 刷新；**改名**（㊽）：右键 → 行内编辑 → `rename_path` → `remapPaths` + 刷新；**搜索**（㊾）：`services/fuzzy.ts` 过滤树（保留祖先与整棵子树）；**新建向导**只在「无根文件 ∧ 无候选 ∧ `.tex` ∧ 开关为开」时拦一次 |
+| FileTreeItem | node、expandPath、renamingPath、forceExpand | `menu`（右键）、`remove`（垃圾桶）、`rename`/`renameCancel` | 展开状态（组件内，信息局部性）；改名态是行内输入框（**只选中主名**，不含扩展名）；垃圾桶默认 `opacity:0`（**仍占位**，避免悬停时名字省略号跳宽）|
+| ConfirmDialog | title、lines[]、confirmLabel、busy、error | `confirm` / `cancel` | 无状态（通用二次确认：先说要动什么、再说后果；`Esc`/点蒙层 = 取消）|
 | NewFileWizard | fileName、initialTitle、busy、error | `confirm({lang,kind,title})` / `cancel` | 语言 / 类型 / 标题三项本地状态 + **骨架实时预览**（每次改动调 `new_file_skeleton` 拿 core 的产物 ⇒ 预览与落盘不可能不一致）。Esc / 点蒙层 / 取消 = **不产生任何文件** |
 | RootFilePicker | root、candidates（探测候选）、fallbackFiles（零候选时全部 .tex）、busy、error | `select`（**项目内相对路径**）、`close` | 无（纯展示；相对路径由 `relativizePath` 计算） |
 | ErrorList | errors[] | 点击条目 → openFile+定位 | 无；**诊断展示**（roadmap ④）：条目带 `diagnosis` 时渲染两行（原因 + 建议），无诊断降级为原文首行；头部「已诊断 N」。**去重/截断**：同源（文件 + 首行消息相同）聚合为一条并显示 `×N`；不同源最多展示 `MAX_DISPLAY=30` 组，超出提示隐藏数量（错误雪崩时不刷屏） |
@@ -1031,6 +1034,7 @@ settings-changed: Settings
 | **新建骨架**（㊺：`core::newfile::document_skeleton`） | `cargo test -p latteset-core --lib newfile`（6 例：4 类型 × 2 语言都含根探测三标记 / 语言选类 / 标题可选且 beamer 不给 `\maketitle` / 只预置 `amsmath` / **占位文字随语言**（英文骨架无汉字）/ 前后端交换的字面量） |
 | **引擎清单**（㊻：`core::engine::engine_list` + infra `probe::find_in_path`） | `cargo test -p latteset-core --lib engine`（6 例：Tectonic 排第一 / 名字短且不含句子 / 缺可执行文件即不可用且给原因 / 库形态让 Tectonic 免 exe / env 覆盖可筛可排且全不认识时忽略 / **覆盖不能伪造可用性**）+ `cargo test -p latteset-infra --lib probe`（4 例，含真机 PATH 探针）。真机：设置面板选项来自后端、`LATTESET_TEX_ENGINES='pdf, xelatex'` ⇒ 选项恰为 `pdfLaTeX, XeLaTeX`（顺序照写，且别名/大小写容错） |
 | **新建目录**（㊺ §6.13.2） | `cargo test -p latteset-infra --lib fs::`（`create_dir` 单层语义：成功建出 / 已存在 `AlreadyExists` / 父目录不存在报错 / 同名文件占位也报 `AlreadyExists` / 中文目录名）。真机：工具栏 `🗀＋`、右键菜单（目录/文件两种目标）、向导「或者先建个文件夹」三处入口，重名与带 `/` 的非法名都给提示、`Esc` 零产物（见 roadmap §6.13.2 的表） |
+| **删除 / 改名 / 搜索**（㊼㊽㊾ §6.15） | `cargo test -p latteset-infra --lib fs::`（`remove_file`/`remove_dir_all`/`rename` 的语义：删文件与递归删目录、改名的 `AlreadyExists` 不覆盖）+ `npm run test`（`src/services/__tests__/fuzzy.spec.ts` 6 例：空查询 / 子串忽略大小写 / 子序列 / 文件名优先 / 子串优先 / 全不命中为 `null`）。真机：悬停垃圾桶（规则 + 结构，见 §6.15 的 ⚠）、二次确认的取消与确认、递归删目录、**删/改根文件的状态收口**（标签关闭 / 根跟着走 + 补编译）、搜索的命中/0 命中/清空（见 roadmap §6.15 的表） |
 | **片段文档装配**（㊸ 切片 1：`core::snippet::build_snippet_document`） | `cargo test -p latteset-core --lib snippet`（5 例：导言区逐字照搬/两处路径注入与守卫/缺 `\begin{document}` 如实报错/空片段拒绝/末尾缺换行） |
 | 真实 latexmk / synctex 集成 | `cargo test -p latteset-infra -- --ignored`（含两条流式用例：`-- --ignored streaming` / `-- --ignored live_errors`，断言"进度/错误在编译结束前 ≥100ms 就到了"） |
 | 流式反馈真机时间线（页进度 / 实时错误 / 终态不被覆盖） | `node scripts/gen-stream-fixture.mjs test_file/projects/_stream-lab [--error]` 生成 400KB / 162 页夹具 → `VITE_LATTESET_PROJECT=<夹具> npm run tauri dev` → 用 tauri server 注入 `window.__TAURI__.event.listen` 记录四个编译事件的时间线（脚本见提交说明；夹具目录已被 .gitignore 覆盖） |

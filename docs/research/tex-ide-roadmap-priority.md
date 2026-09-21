@@ -105,6 +105,7 @@
 | **㊹ 导言区固化为 format（候选，未排期）** | 让每次编译（主编译与公式预览都算）**不再重复加载项目导言区**，同时保持输出与"逐字读导言区"**逐字节一致** | ① 先侦察：能否用现有 format 缓存机制装一个"项目导言区 format"（键 = 导言区哈希 + bundle digest）、`mylatexformat` 的限制清单（哪些宏包不能进）、失败时如何无痛回落；② 判据：同一文档用/不用 format 的 **PDF 与页哈希逐字节相同**，重导言区（`ctexbook`+`tikz`）的 `typeset_ms` 至少降一半、冷编（3 趟）总墙钟降幅 ≥20%；③ 失效路径必须有测试（改导言区 ⇒ 自动重建、不得复用旧 format） | ⬜ **待测一条变体（技术主写法已被引擎拒绝）**（2026-09-17 两轮侦察：xelatex 路线全崩、Tectonic 路线主写法被引擎拒绝；复活前先测"导言区插在内核 `\dump` 之前、不越界"这条，见 §6.12.1） |
 | **㊺ 软件内新建文件/目录（新建文件 + 向导已完成；新建目录/右键待做）** | 打开空目录或需要加文件时**不必跳出软件** | ① 空目录：新建 `main.tex` ⇒ 树出现 + 编辑器打开 + **能直接编译**（根探测重跑）；② 新建目录后可在其中新建文件；③ 重名 / 非法字符 / 项目外路径都有明确提示（不静默失败）；④ 真机验收：文件树右键与 `+` 入口都能用、`Esc` 取消不产生空文件 | ✅ **新建文件 + 新手向导已完成并真机验收（2026-09-17）**：`FileTree` 标题栏 `＋` 就地输入 → `saveAll`（D8）→ 刷新树 + 打开；空目录那条路的"建完就能编"由**骨架 + `rescanRoot`（重探测 + 补首编）**闭合。其余：新建**目录**、右键在选中目录里建 **仍未做**（见 §6.13 待办）。判据与证据见 §6.13/§6.13.1 |
 | **㊻ 引擎清单动态化 + 默认引擎切 Tectonic（已完成）** | 设置面板的引擎选项**不再写死在前端**：顺序（Tectonic 优先）、名字、说明与**本机可用性**都由后端给；`LATTESET_TEX_ENGINES` 可覆盖；默认引擎改 Tectonic | ① 弹层不冲出面板（选项只留名字，说明在下方）；② 清单来自后端（前端无引擎数组，状态栏也走同一份）；③ 不可用的引擎禁用 + 给原因；④ `LATTESET_TEX_ENGINES` 能筛选与重排、**不能伪造可用性**；⑤ 新装（无 settings.json）默认 Tectonic，老配置不变 | ✅ **已完成并真机验收（2026-09-17）**：core 6 例 + infra 4 例单测；真机验到"清单来自后端 / 覆盖成 `pdf, xelatex` 恰为两项且顺序照写 / 当前引擎被收窄掉时补只读项不空白 / 状态栏同源"；`不可用⇒禁用` 的真机渲染需在没装引擎的机器上验（本机四个全可用）。见 §6.14 + [ADR-0014 修订 1](../adr/0014-tectonic-first.md) |
+| **㊼㊽㊾ 文件管理补齐：删 / 改名 / 搜索（已完成）** | 文件树从"只有增"补成完整 CRUD：**删**（悬停垃圾桶 + 二次确认 + 目录递归）、**改名**（右键 → 行内编辑）、**查**（树上方搜索栏 + 模糊匹配） | ① 删除必须确认、取消零副作用、目录要报"里面有多少东西"；② 改名只改本目录、不覆盖同名；③ 删/改都要收口编辑器状态（标签关闭 / 路径重映射 / 根文件重探）；④ 搜索子串优先 + 子序列兜底、命中保留祖先与整棵子树；⑤ 后端拒绝删/改项目根 | ✅ **已完成并真机验收（2026-09-21）**：`FileSystem` 三个新方法 + `delete_path`/`rename_path` 两道命令；前端 `ConfirmDialog.vue` + `services/fuzzy.ts`（6 例单测）；真机 10 项全过（含"改根文件名 ⇒ 根跟着走 + 补编译恢复就绪""删根文件 ⇒ 标签关闭 + 状态栏回到未确定根文件"）。见 §6.15 |
 
 ## 5. 外部方案与产物格式评估（否决与吸收都在这里）
 
@@ -836,6 +837,61 @@ XDV 逐字节对比显示原因：重导言区里有 `pdf:pagesize width 614.295
 **落地状态（2026-09-17）**：**新建文件**已实现 —— `src/components/FileTree.vue`（标题栏 `＋` + 行内输入 + Enter 落盘 / Esc 取消 + 错误提示留白不静默）、复用 `ipc.saveAll`（目标可不存在 ⇒ 后端无需改动）、成功后 `refreshTree()` + `editor.openFile()`，并在"项目还没有根文件"时重跑 `openProject`（空目录那条路）；`npm run build`（vue-tsc + vite build）通过 ✓。**真机验收（2026-09-17，空目录 `test_file/e2e/empty-project`）**：点 `＋` → 输入 `main.tex` → 回车 ⇒ **文件落盘 ✓、树里出现 ✓、编辑器把 `main.tex` 打开（标签已开）✓、无错误提示 ✓**。⚠ **但"建完就能编"这条当时没达成**：`get_project` 仍是 `rootFile=null / 候选 0` —— 因为**根探测要求文件里有 `\documentclass`**，而 `＋` 建的是**空文件**。**已修（2026-09-17，两条都做了）**：① 新建 `.tex` 时给**最小骨架**（新手向导，见 §6.13.1）；② 落盘后重跑根探测 + 补一次首编（`projectStore.rescanRoot`）。真机复验：空目录建 `main.tex` ⇒ 立刻认到根、PDF 自动出图 ✓。
 **其余待办**：~~② 新建**目录**~~ / ~~③ 右键在选中目录里建~~ ✅ **两项已落地（2026-09-18，见 §6.13.2）**。
 
+### 6.15 文件管理补齐：删 / 改 / 查（㊼㊽㊾，2026-09-21 产品负责人点名立项）
+
+**需求原文**：文件管理"只有增（新建）"，要把 CRUD 补齐 ——
+㊼ **删**：鼠标悬停在文件/文件夹行上时，行右侧出现垃圾桶按钮，点击触发**二次提示**，确认后删除；
+㊽ **改**：右键菜单增加**改名**；
+㊾ **查**：文件树上方加**搜索栏**，输入文字**模糊搜索**。
+
+**三件共用的地基**（一次做完，避免三次动同一处）：
+
+- `FileSystem` trait 新增 `remove_file` / `remove_dir_all` / `rename`（FakeFS 保持"只读"、两个示例实现补上）——
+  与 `write`/`create_dir` 同一分工：**能不能删、能不能改由命令面的策略决定，trait 只做系统调用**。
+- 命令面 `delete_path`（三道闸：**必须已存在**、**必须在项目根内**、**不能是项目根**；目录递归删）
+  与 `rename_path`（同目录改名、**不覆盖**已存在的目标、返回改后的绝对路径）。
+- 前端收口（**最容易漏，漏了就是静默坏掉**）：
+  - **删**：`editor.closeTabsUnder(path)`（删目录要连子文件的标签一起关，否则点进去必然报错）；
+  - **改**：`editor.remapPaths(from, to)`（标签 / 活动路径 / 脏集合 / 缓冲 / 自保存时刻 / 冲突标记
+    **全部跟着搬** —— 漏一个的症状分别是"标签指向不存在的文件""保存写回旧路径""改名后的编辑被当成外部修改"）；
+  - **两者都动到根文件时**：`afterTreeMutation` —— 有手动覆盖就改覆盖（删 ⇒ 清、改 ⇒ 换新名），
+    没有覆盖就重开项目重探；然后**补一次编译**（watch 在改名/删除那一刻已经用旧根编过一次，必然失败）。
+
+**㊼ 删**：垃圾桶按钮在行**悬停**时显形（`opacity: 0 → .7`，**仍占位** —— 用 `display:none` 会让文件名的
+省略号宽度在悬停瞬间跳一下）。二次确认用新增的 `ConfirmDialog.vue`：**先说要删什么、再说后果**
+（目录报"里面还有 N 个文件，会一起删除"，N 从已有的树里数、不额外读盘）。取消 = 零副作用。
+> 取舍：**不做回收站**（真删除 + 明确确认）。需求写的是"垃圾桶按钮 + 二次提示"，而"能撤销"会削弱
+> 确认弹窗的必要性；改成进系统回收站要引入 `trash` 这类依赖，属另一个决策。
+
+**㊽ 改**：右键菜单第三项「✏️ 重命名」→ **行内输入框**（打开即聚焦并**只选中主名**，不含扩展名 ——
+改名的常见意图是改名字不是改后缀）；`Enter` 提交、`Esc`/失焦取消（与新建行的取消语义一致）。
+v1 **只支持同目录改名**（跨目录移动是另一个功能点），目标已存在时明确报错**不覆盖**。
+
+**㊾ 查**：树上方一个输入框 + `src/services/fuzzy.ts`（纯函数、6 例单测）：**子串命中优先**（忽略大小写），
+**子序列兜底**（`cit` → `chapters/intro.tex`，这才是"模糊"）。命中项与它们的**祖先目录**一起显示
+（保留上下文），**目录命中时保留整棵子树**（搜 `chapters` 想看的是"里面有什么"）；搜索期间树强制展开
+（`forceExpand`）。命中数实时显示，0 命中给一块空状态卡。刻意不做拼音/编辑距离：规模是"一个项目几百个
+文件"，按命中位置排序就够，别为一个输入框引入匹配引擎。
+
+**真机验收（2026-09-21，`test_file/e2e/crudlab` 临时工程，跑完即删）**：
+
+| 点 | 场景 | 结果 |
+|---|---|---|
+| ㊾ | 输入 `cit` | ✅ 只剩 `chapters → intro.tex`（子序列命中），「命中 1 个文件」 |
+| ㊾ | 输入 `chap` / `chapters` | ✅ 命中 2 个文件，目录命中**保留整棵子树**（intro.tex + notes.txt 都在） |
+| ㊾ | 输入 `zzz` / 清空 | ✅ 「命中 0 个文件（换个词试试）」+ 空状态卡；清空 ⇒ 完整树回来 |
+| ㊽ | 右键 `chapters/notes.txt` → 重命名 | ✅ 行内输入框打开、聚焦、**只选中 `notes`**（不含 `.txt`）；改成 `memo.txt` ⇒ 磁盘与树都变 |
+| ㊽ | 改**根文件**名 `main.tex` → `thesis.tex` | ✅ 日志：改名 →（watch 用旧根编一次，失败）→ `打开项目…根文件 Some(thesis.tex)` → `手动编译` → `编译成功`；状态栏回到「就绪」、当前标签跟着变成 `thesis.tex` |
+| ㊼ | 悬停行 | ✅ 规则 `.row:hover .trash{opacity:.7}` 在样式表里且作用域正确、按钮在行内（基础值 0）。⚠ **`webview_interact action=hover` 是合成事件，改不了浏览器真实的 `:hover` 状态**（`row.matches(':hover') === false`）⇒ 悬停显形按"规则 + 结构"验证，截图拍不到 |
+| ㊼ | 点垃圾桶（文件）| ✅ 弹窗「文件：README.md / 删除后不可撤销（项目里没有回收站）」；**取消 ⇒ 什么也没删** |
+| ㊼ | 点垃圾桶（目录 `chapters`，内含 2 个文件）| ✅ 弹窗「文件夹：chapters / 它里面还有 2 个文件，会一起删除（不可撤销）」；确认后**递归删掉** |
+| ㊼ | 删**根文件** | ✅ 磁盘删除、树刷新、编辑器标签**被关掉**（`tabs: []`）、状态栏回到「未确定根文件 · 点击选择」、无崩溃 |
+| 旁证 | 删掉被 `\input` 的章节文件 | ✅ 编译失败但给出**可行动诊断**：「找不到文件 chapters/intro.tex → 确认该文件确实在项目内，且路径/大小写与 `\input` 里写的一致」（④ 错误诊断的既有能力，不是新问题）|
+
+**两处真机看出来的瑕疵（当场修）**：① 根文件改名后 `root_file` 仍指旧路径 ⇒ 之后每次编译都失败
+（比对用错了新路径，改成用旧路径比）；② 确认弹窗里的 `**一起删除**` 是 Markdown 星号，界面上原样显示 ⇒ 去掉。
+
+
 #### 6.13.2 新建目录 + 右键菜单（2026-09-18 产品负责人点名）
 
 **需求原文**：「完成目录新建的功能点，在**新建弹窗**中和**右键菜单**均增加功能入口」。
@@ -1012,6 +1068,7 @@ XDV 逐字节对比显示原因：重导言区里有 `pdf:pagesize width 614.295
 | ㊹ 导言区固化为 format | 本文件 §6.11.10（由来：㊸ 的最小包定量）+ `mylatexformat` 上游文档（`kpsewhich mylatexformat.ltx` 命中 TeX Live 2026）+ 现有 format 缓存机制（modules.md §2.7 的 `format_cache_path` / bundle digest 键） |
 | ㊺ 软件内新建文件 + 新手向导 | 本文件 §6.13/§6.13.1（设计、细化、五条判据与真机证据）；`crates/latteset-core/src/newfile.rs`（骨架表 + 6 例单测）、`src-tauri/src/commands.rs` 的 `new_file_skeleton`、`src/components/{FileTree,NewFileWizard,SettingsPanel}.vue`、`src/stores/project.ts` 的 `rescanRoot`、`src/composables/useAutoSave.ts`；契约见 modules.md §6/§8/§9.2/§9.3/§9.4/§12.2 |
 | ㊻ 引擎清单动态化 + 默认引擎 | 本文件 §6.14；`crates/latteset-core/src/engine.rs`（清单 + 6 例单测）、`crates/latteset-infra/src/probe.rs`（PATH 探测 + 4 例单测）、`src-tauri/src/commands.rs` 的 `list_engines`、`src/services/engines.ts`、`SettingsPanel` / `StatusBar`；决策见 [ADR-0014 修订 1](../adr/0014-tectonic-first.md)；契约见 modules.md §6/§8/§12.2 |
+| ㊼㊽㊾ 文件管理补齐（删 / 改名 / 搜索） | 本文件 §6.15；`crates/latteset-core/src/project/fs.rs`（三个新 trait 方法）、`crates/latteset-infra/src/fs.rs`（实现 + 单测）、`src-tauri/src/commands.rs` 的 `delete_path` / `rename_path`、`src/components/{ConfirmDialog,FileTree,FileTreeItem}.vue`、`src/services/fuzzy.ts`（+ 6 例单测）、`src/stores/editor.ts` 的 `closeTabsUnder` / `remapPaths`；契约见 modules.md §8/§9.2/§9.4 |
 | ⑥ CLI + MCP（**已完成**） | [cli-mcp-plan.md](../cli-mcp-plan.md) + modules.md §8.1 + `crates/latteset-server` |
 | ⑦a 大纲增量（**已完成**） | modules.md §3.5（缓存三不变量）/ §12.2 + `core::outline::{load_cached, OutlineCache}` + `src/stores/outline.ts` |
 | ⑦c / ⑦b（**已完成 / 缓做**） | [p1-large-doc-editor-analysis.md](./p1-large-doc-editor-analysis.md)（拆分依据）+ [p1c-multifile-large-project.md](./p1c-multifile-large-project.md)（夹具/口径/数据）+ `scripts/{gen-large-project,editor-report}.mjs` |

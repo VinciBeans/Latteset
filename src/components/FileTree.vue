@@ -5,9 +5,11 @@ import { useProjectStore } from "../stores/project";
 import { useEditorStore } from "../stores/editor";
 import { useSettingsStore } from "../stores/settings";
 import { ipc } from "../services/ipc";
+import { fuzzyMatch } from "../services/fuzzy";
 import type { DirEntryInfo, DocKind, DocLanguage } from "../bindings";
 import FileTreeItem from "./FileTreeItem.vue";
 import NewFileWizard from "./NewFileWizard.vue";
+import ConfirmDialog from "./ConfirmDialog.vue";
 
 const project = useProjectStore();
 const editor = useEditorStore();
@@ -36,8 +38,15 @@ const wizard = ref<{ target: string; name: string; title: string } | null>(null)
 const wizardBusy = ref(false);
 const wizardError = ref("");
 
-/** 右键菜单（位置 + 目标节点）；菜单项由本组件渲染 —— 只有它知道项目根与创建流程。 */
-const menu = ref<{ x: number; y: number; dirPath: string; label: string } | null>(null);
+/** 右键菜单（位置 + 落点 + 目标节点）；菜单项由本组件渲染 —— 只有它知道项目根与创建流程。 */
+const menu = ref<{
+  x: number;
+  y: number;
+  dirPath: string;
+  label: string;
+  /** 被右键的节点本身（改名用；"落点目录"是另一回事）。 */
+  nodePath: string;
+} | null>(null);
 
 /** 右键：目录 ⇒ 建在它里面；文件 ⇒ 建在它所在的目录里。 */
 function openMenu(payload: { x: number; y: number; path: string; isDir: boolean; name: string }) {
@@ -47,9 +56,10 @@ function openMenu(payload: { x: number; y: number; path: string; isDir: boolean;
   menu.value = {
     // 贴着视口右下边时往回收一点，菜单不出屏
     x: Math.min(payload.x, window.innerWidth - 190),
-    y: Math.min(payload.y, window.innerHeight - 110),
+    y: Math.min(payload.y, window.innerHeight - 140),
     dirPath,
     label: payload.isDir ? payload.name : `${payload.name} 所在目录`,
+    nodePath: payload.path,
   };
 }
 
@@ -214,6 +224,145 @@ function errorText(e: unknown): string {
   return typeof e === "string" ? e : ((e as { message?: string })?.message ?? String(e));
 }
 
+// ---- ㊼ 删除：悬停垃圾桶 → 二次确认 → 递归删除 + 编辑器收口 ----
+
+/** 待确认的删除目标（非空 = 弹窗开着）。 */
+const pendingDelete = ref<{ path: string; isDir: boolean; name: string; count: number } | null>(null);
+const deleteBusy = ref(false);
+const deleteError = ref("");
+
+/** 目录里有多少个文件（从**已有的树**里数，不额外读盘）：确认弹窗要把后果讲清楚。 */
+function countFilesUnder(path: string): number {
+  const base = path.replace(/\\/g, "/");
+  return project.tree.filter((e) => {
+    const p = e.path.replace(/\\/g, "/");
+    return !e.is_dir && p.startsWith(`${base}/`);
+  }).length;
+}
+
+function askDelete(payload: { path: string; isDir: boolean; name: string }) {
+  if (!project.project) return;
+  deleteError.value = "";
+  pendingDelete.value = {
+    ...payload,
+    count: payload.isDir ? countFilesUnder(payload.path) : 0,
+  };
+}
+
+/** 确认弹窗的行文案：**先说要删什么，再说后果**（目录要报里面有多少个文件）。 */
+const deleteLines = computed(() => {
+  const d = pendingDelete.value;
+  if (!d) return [];
+  const lines = [`${d.isDir ? "文件夹" : "文件"}：${d.name}`];
+  if (d.isDir) {
+    lines.push(
+      d.count > 0
+        ? `它里面还有 ${d.count} 个文件，会一起删除（不可撤销）。`
+        : "该文件夹是空的（删除不可撤销）。"
+    );
+  } else {
+    lines.push("删除后不可撤销（项目里没有回收站）。");
+  }
+  return lines;
+});
+
+async function confirmDelete() {
+  const d = pendingDelete.value;
+  const root = project.project?.root;
+  if (!d || !root) return;
+  deleteBusy.value = true;
+  deleteError.value = "";
+  try {
+    await ipc.deletePath(d.path);
+    // 编辑器收口：先关标签（目录要连子文件一起关）——文件已经没了，留着标签点进去只会报错
+    editor.closeTabsUnder(d.path);
+    pendingDelete.value = null;
+    await project.refreshTree();
+    await afterTreeMutation(d.path, null);
+  } catch (e) {
+    // 留窗给重试：把后端那句人话摆在弹窗里（路径被占用、权限不足等）
+    deleteError.value = errorText(e);
+  } finally {
+    deleteBusy.value = false;
+  }
+}
+
+// ---- ㊽ 改名：右键 → 行内输入 → 同目录改名 + 路径重映射 ----
+
+const renamingPath = ref("");
+const renameError = ref("");
+
+function startRename(path: string) {
+  menu.value = null;
+  createError.value = "";
+  renameError.value = "";
+  renamingPath.value = path;
+}
+
+async function submitRename(payload: { path: string; name: string }) {
+  const root = project.project?.root;
+  if (!root) return;
+  renamingPath.value = "";
+  const parent = payload.path.slice(0, Math.max(0, payload.path.lastIndexOf("/")));
+  const target = `${parent}/${payload.name}`;
+  try {
+    const newPath = await ipc.renamePath(payload.path, target);
+    // 打开着的标签/缓冲/脏标记整体搬到新路径（漏掉的话：改名后编辑被当成外部修改、保存写回旧路径）
+    editor.remapPaths(payload.path, newPath);
+    await project.refreshTree();
+    await afterTreeMutation(payload.path, newPath);
+  } catch (e) {
+    createError.value = errorText(e);
+    renameError.value = errorText(e);
+  }
+}
+
+/**
+ * 删 / 改名之后的项目状态收口（两条路共用）。
+ *
+ * 只有一件事要做，但**漏了就静默坏掉**：被动过的如果正是**根文件**，内存里的 `root_file`
+ * 会指向一个不存在（或改名前）的路径 ⇒ 之后每次编译都失败，而且用户看不出为什么。
+ * - 有手动覆盖（`settings.root_file` 非空）⇒ 走 `update_settings`：删 ⇒ 清覆盖（回到自动探测）；
+ *   改名 ⇒ 覆盖改成新名字。后端在这一支里本来就会重算并同步内存 root_file。
+ * - 没有覆盖（自动探测出来的根）⇒ 重开项目重探一次。
+ *
+ * 最后**补一次编译**：watch 在改名/删除那一刻已经触发过一次编译，而那次用的还是旧根（必然失败）
+ * ⇒ 不补的话状态栏会一直停在「失败」，直到用户再敲一个字。
+ *
+ * ⚠ 比对用的是 `oldPath`（被动过之前的路径）：`root_file` 此刻还指向它。用新路径比会永远不成立
+ * —— 真机验过，症状就是"改了根文件名之后编译一直失败"。
+ */
+async function afterTreeMutation(oldPath: string, newPath: string | null) {
+  const p = project.project;
+  if (!p || !p.root_file) return;
+  const same = (a: string, b: string) => a.replace(/\\/g, "/") === b.replace(/\\/g, "/");
+  if (!same(p.root_file, oldPath)) return;
+  if (settings.settings?.root_file) {
+    await settings.update({ root_file: newPath ? relativeToRoot(newPath) : null });
+    await project.syncProject();
+  } else {
+    await project.openProject(p.root);
+  }
+  try {
+    await ipc.compileNow();
+  } catch (e) {
+    // 删掉的若是唯一的根候选，此刻已经没有根文档了 —— 那是正常状态（状态栏会提示），不是错误
+    console.debug("根文件变动后的补编译没跑起来：", e);
+  }
+}
+
+/** 项目内绝对路径 → 相对路径（`update_settings` 只接受相对形态）。 */
+function relativeToRoot(abs: string): string {
+  const root = (project.project?.root ?? "").replace(/\\/g, "/").replace(/\/+$/, "");
+  const a = abs.replace(/\\/g, "/");
+  return a.startsWith(`${root}/`) ? a.slice(root.length + 1) : a;
+}
+
+// ---- ㊾ 搜索：树上方一个输入框，模糊匹配后只留命中项与它们的祖先 ----
+
+const query = ref("");
+const searching = computed(() => query.value.trim().length > 0);
+
 interface Node {
   entry: DirEntryInfo;
   children: Node[];
@@ -251,7 +400,50 @@ function buildTree(): Node[] {
   return roots;
 }
 
-const tree = computed(buildTree);
+/**
+ * 搜索过滤（roadmap ㊾）：只留**命中项**与它们的**祖先目录**（祖先靠 structure 保住上下文——
+ * 只给一串扁平结果，用户不知道文件在哪）。
+ *
+ * 目录本身命中时，把它的整棵子树留下：搜 `chapters` 想看的是"这个目录里有什么"，
+ * 而不是一个空壳目录。
+ */
+function filterTree(nodes: Node[], q: string): Node[] {
+  const out: Node[] = [];
+  for (const n of nodes) {
+    const hit = fuzzyMatch(relativeToRoot(n.entry.path), q);
+    const kids = filterTree(n.children, q);
+    if (hit) {
+      out.push(n); // 命中 ⇒ 整棵子树留着（不动 children）
+    } else if (kids.length > 0) {
+      out.push({ entry: n.entry, children: kids }); // 只是"路过" ⇒ 只留下有命中的分支
+    }
+  }
+  return out;
+}
+
+const tree = computed(() => {
+  const base = buildTree();
+  const q = query.value.trim();
+  return q ? filterTree(base, q) : base;
+});
+
+/** 搜索结果计数（给搜索栏右侧显示"命中 N 项"，空结果要能一眼看出来）。 */
+const hitCount = computed(() => {
+  if (!searching.value) return project.tree.length;
+  let n = 0;
+  const walk = (ns: Node[]) => {
+    for (const x of ns) {
+      if (!x.entry.is_dir) n++;
+      walk(x.children);
+    }
+  };
+  walk(tree.value);
+  return n;
+});
+
+function clearSearch() {
+  query.value = "";
+}
 </script>
 
 <template>
@@ -303,6 +495,25 @@ const tree = computed(buildTree);
         </div>
       </div>
       <div v-if="createError" class="new-error" data-testid="new-file-error">{{ createError }}</div>
+
+      <!-- 搜索栏（roadmap ㊾）：树上方一个输入框，模糊匹配文件名/路径 -->
+      <div class="search-row">
+        <span class="search-icon">🔍</span>
+        <input
+          v-model="query"
+          class="search-input"
+          type="text"
+          spellcheck="false"
+          placeholder="搜索文件（支持模糊，如 cit → chapters/intro.tex）"
+          data-testid="tree-search"
+          @keydown.esc.prevent="clearSearch"
+        />
+        <button v-if="searching" class="search-clear" title="清空搜索" data-testid="tree-search-clear" @click="clearSearch">×</button>
+      </div>
+      <div v-if="searching" class="search-count" data-testid="tree-search-count">
+        命中 {{ hitCount }} 个文件{{ hitCount === 0 ? "（换个词试试）" : "" }}
+      </div>
+
       <div class="tree-scroll">
         <div v-if="!project.project" class="empty">
           <span class="empty-card">
@@ -311,17 +522,29 @@ const tree = computed(buildTree);
             <span class="empty-hint">点左上角「打开项目」开始</span>
           </span>
         </div>
+        <div v-else-if="searching && hitCount === 0" class="empty">
+          <span class="empty-card">
+            <span class="empty-icon">🔍</span>
+            <span class="empty-title">没有匹配的文件</span>
+            <span class="empty-hint">搜索按名字或路径模糊匹配</span>
+          </span>
+        </div>
         <FileTreeItem
           v-for="n in tree"
           :key="n.entry.path"
           :node="n"
           :expand-path="expandPath"
+          :renaming-path="renamingPath"
+          :force-expand="searching"
           @menu="openMenu"
+          @remove="askDelete"
+          @rename="submitRename"
+          @rename-cancel="renamingPath = ''"
         />
       </div>
     </div>
 
-    <!-- 节点右键菜单（roadmap ㊺）：目录 ⇒ 建在它里面；文件 ⇒ 建在它所在的目录里 -->
+    <!-- 节点右键菜单（roadmap ㊺/㊽）：目录 ⇒ 建在它里面；文件 ⇒ 建在它所在的目录里；改名对两者都可用 -->
     <div
       v-if="menu"
       class="ctx-backdrop"
@@ -337,8 +560,23 @@ const tree = computed(buildTree);
         <button class="ctx-item" data-testid="ctx-new-dir" @click="startCreate('dir', menu.dirPath)">
           📁 新建文件夹
         </button>
+        <button class="ctx-item" data-testid="ctx-rename" @click="startRename(menu.nodePath)">
+          ✏️ 重命名
+        </button>
       </div>
     </div>
+
+    <!-- 删除二次确认（roadmap ㊼）：把"删什么、里面有多少东西"讲清楚再动手 -->
+    <ConfirmDialog
+      v-if="pendingDelete"
+      title="删除确认"
+      :lines="deleteLines"
+      confirm-label="删除"
+      :busy="deleteBusy"
+      :error="deleteError"
+      @confirm="confirmDelete"
+      @cancel="pendingDelete = null"
+    />
 
     <!-- 新建向导（roadmap ㊺ §6.13.1-A）：只在"空项目里的第一个 .tex + 开关为开"时出现 -->
     <NewFileWizard
@@ -440,6 +678,48 @@ const tree = computed(buildTree);
   font-size: 11px;
   color: var(--rose, #d1547e);
   white-space: pre-wrap;
+}
+
+/* 搜索栏（㊾）：树上方一条窄输入框；命中数只在搜索时出现（不占平时的地方） */
+.search-row {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  flex: 0 0 auto;
+  margin: 6px 8px 0;
+  padding: 0 6px;
+  height: 25px;
+  border: 1px solid var(--line-soft);
+  border-radius: var(--radius-sm);
+  background: var(--surface, #fff);
+}
+.search-row:focus-within { border-color: var(--blueberry); }
+.search-icon { font-size: 10px; opacity: 0.55; }
+.search-input {
+  flex: 1 1 auto;
+  min-width: 0;
+  border: none;
+  outline: none;
+  background: transparent;
+  font: inherit;
+  font-size: 11.5px;
+  color: var(--ink);
+}
+.search-clear {
+  border: none;
+  background: transparent;
+  color: var(--ink-faint);
+  font-size: 14px;
+  line-height: 1;
+  padding: 0 2px;
+  cursor: pointer;
+}
+.search-clear:hover { color: var(--ink); }
+.search-count {
+  flex: 0 0 auto;
+  padding: 4px 10px 0;
+  font-size: 10.5px;
+  color: var(--ink-faint);
 }
 
 /* 右键菜单（㊺）：透明蒙层接住"点别处关掉"，菜单本体固定定位在光标处 */

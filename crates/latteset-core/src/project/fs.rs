@@ -65,6 +65,22 @@ pub trait FileSystem: Send + Sync {
     /// **不静默成功**——静默成功会让用户以为新建了一个其实没有的目录）。
     async fn create_dir(&self, path: &std::path::Path) -> io::Result<()>;
 
+    /// 删除**文件**（roadmap ㊼）。目录走 [`Self::remove_dir_all`]。
+    ///
+    /// 契约：目标不存在 → `NotFound`。"哪个能删"是上层策略（命令面挡项目根与根外路径），
+    /// trait 只负责这一下系统调用——与 `write` 同一条分工。
+    async fn remove_file(&self, path: &std::path::Path) -> io::Result<()>;
+
+    /// **递归**删除目录（roadmap ㊼）：用户确认弹窗已经把"里面有多少东西"讲清楚了，
+    /// 到这里就是执行。目标不是目录 → 报错（不猜、不静默当文件删）。
+    async fn remove_dir_all(&self, path: &std::path::Path) -> io::Result<()>;
+
+    /// 改名（roadmap ㊽）。
+    ///
+    /// 契约：`to` 已存在 → `AlreadyExists`（**不覆盖**——覆盖式改名会静默毁掉一个文件）；
+    /// 能不能跨目录由上层决定（命令面 v1 只允许同目录改名）。
+    async fn rename(&self, from: &std::path::Path, to: &std::path::Path) -> io::Result<()>;
+
     /// **从 `offset` 起**读新增内容（容错解码），返回新文本与新的偏移量（字节）。
     ///
     /// 用途（roadmap「阶段 2 · 流式输出」）：编译期间**尾随 `tmp/<stem>.log`**。

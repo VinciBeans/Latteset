@@ -98,6 +98,22 @@ impl FileSystem for TokioFs {
     async fn create_dir(&self, path: &Path) -> io::Result<()> {
         tokio::fs::create_dir(path).await
     }
+
+    /// 删文件（roadmap ㊼）。目录走 `remove_dir_all`——用错了只会报错，不会删掉一棵树。
+    async fn remove_file(&self, path: &Path) -> io::Result<()> {
+        tokio::fs::remove_file(path).await
+    }
+
+    /// 递归删目录（roadmap ㊼）：确认弹窗已把内容讲清楚，这里就是执行。
+    async fn remove_dir_all(&self, path: &Path) -> io::Result<()> {
+        tokio::fs::remove_dir_all(path).await
+    }
+
+    /// 改名（roadmap ㊽）：`tokio::fs::rename` 在同盘上**会覆盖**已存在的目标
+    /// ⇒ 命令面必须先查"目标在不在"，这里不替它决定要不要覆盖。
+    async fn rename(&self, from: &Path, to: &Path) -> io::Result<()> {
+        tokio::fs::rename(from, to).await
+    }
 }
 
 #[cfg(test)]
