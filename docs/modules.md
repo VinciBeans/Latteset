@@ -851,7 +851,7 @@ useAutoSave 依赖 editorStore.dirty + settingsStore（读）
 |---|---|---|---|
 | EditorPane | model(路径)、内容、语言 | 变更事件 → useAutoSave | Monaco 实例、worker、IME 组合状态；**无活动文件 → 显示"还没有打开文件"占位提示**（覆盖 Monaco）+ `readOnly`，打开文件才可编辑 |
 | PreviewPane | pdfPath、highlight、syncNote、**livePreview（编译中的部分 PDF）** | 点击坐标 → useSyncTex | pdf.js 文档句柄、滚动位置缓存、canvas 代次与页高（见下方渲染契约，含"编译中预览 = 换字节不换身份"） |
-| FileTree | 树数据、激活路径 | 打开文件/目录展开 | 展开状态（只在前端本地）+ `expandPath`（**一次性展开请求**，递归透传：在收起的目录里建完东西要把它展开，否则新内容看不见）；**新建文件 / 新建文件夹**（㊺）：标题栏两个入口 + 行内命名 → `save_all` / `create_dir`（目标可不存在，D8 校验在项目内）→ 刷新树 +（文件）打开；**节点右键菜单**（目录 ⇒ 建在它里面；文件 ⇒ 建在其所在目录）；**新建向导**只在「无根文件 ∧ 无候选 ∧ 扩展名 `.tex` ∧ 设置开关为开」时拦一次 |
+| FileTree | 树数据、激活路径 | 打开文件/目录展开 | 展开状态（只在前端本地）+ `expandPath`（**一次性展开请求**，递归透传：在收起的目录里建完东西要把它展开，否则新内容看不见）；**新建（文件 / 文件夹）**（㊺）：标题栏**一个** `＋` → 行内输入 + 类型小切换（📄 默认 / 📁，点它不会收掉输入行）→ `save_all` / `create_dir`（目标可不存在，D8 校验在项目内）→ 刷新树 +（文件）打开；**节点右键菜单**（目录 ⇒ 建在它里面；文件 ⇒ 建在其所在目录）；**新建向导**只在「无根文件 ∧ 无候选 ∧ 扩展名 `.tex` ∧ 设置开关为开」时拦一次 |
 | FileTreeItem | node、expandPath | `menu`（右键：坐标 + 节点）| 展开状态（组件内，信息局部性）；右键只上报，菜单与创建流程在 FileTree（它才知道项目根）|
 | NewFileWizard | fileName、initialTitle、busy、error | `confirm({lang,kind,title})` / `cancel` | 语言 / 类型 / 标题三项本地状态 + **骨架实时预览**（每次改动调 `new_file_skeleton` 拿 core 的产物 ⇒ 预览与落盘不可能不一致）。Esc / 点蒙层 / 取消 = **不产生任何文件** |
 | RootFilePicker | root、candidates（探测候选）、fallbackFiles（零候选时全部 .tex）、busy、error | `select`（**项目内相对路径**）、`close` | 无（纯展示；相对路径由 `relativizePath` 计算） |

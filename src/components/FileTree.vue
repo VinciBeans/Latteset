@@ -260,17 +260,12 @@ const tree = computed(buildTree);
       <div class="panel-title">
         <span class="panel-icon">🗂</span>
         <span>资源管理器</span>
-        <!-- 两个入口贴这一列右缘（roadmap ㊺）：新建文件 / 新建文件夹。
-             新建文件夹在树节点上右键也能用（且能直接落在那个目录里）。 -->
+        <!-- **一个**新建入口贴这一列右缘（roadmap ㊺）：建文件还是建文件夹在下面那行的
+             小切换里选（默认文件）—— 两个"＋"并排既占地方又让人先做一次无谓的选择。
+             右键菜单那条路仍然直接给两项（菜单里罗列本来就自然，而且能指定落在哪个目录）。 -->
         <button
           class="new-file"
-          title="新建文件夹（项目根；也可在树节点上右键建到某个目录里）"
-          data-testid="new-dir-button"
-          @click="startCreate('dir')"
-        >🗀＋</button>
-        <button
-          class="new-file"
-          title="新建文件（项目根；可写 chapters/ch1.tex 落到已有子目录）"
+          title="新建（文件 / 文件夹；也可在树节点上右键建到某个目录里）"
           data-testid="new-file-button"
           @click="startCreate('file')"
         >＋</button>
@@ -287,6 +282,25 @@ const tree = computed(buildTree);
           @keydown.esc.prevent="cancelCreate"
           @blur="cancelCreate"
         />
+        <!-- 类型切换（同一个入口里的"建什么"）：挨着输入框，占位文案跟着变 -->
+        <div class="new-kind" role="group" aria-label="要建的类型">
+          <button
+            class="kind-btn"
+            :class="{ on: createKind === 'file' }"
+            title="新建文件"
+            data-testid="new-kind-file"
+            @mousedown.prevent
+            @click="createKind = 'file'"
+          >📄</button>
+          <button
+            class="kind-btn"
+            :class="{ on: createKind === 'dir' }"
+            title="新建文件夹"
+            data-testid="new-kind-dir"
+            @mousedown.prevent
+            @click="createKind = 'dir'"
+          >📁</button>
+        </div>
       </div>
       <div v-if="createError" class="new-error" data-testid="new-file-error">{{ createError }}</div>
       <div class="tree-scroll">
@@ -374,22 +388,23 @@ const tree = computed(buildTree);
 
 /* 新建入口（㊺）：**贴资源管理器这一列的右缘**，不跟着标题文字走
    —— `margin-left:auto` 把它推到面板右侧（`.panel-title` 是 flex 行）。
-   两个入口（文件夹 / 文件）连续排布：只有**第一个**吃 `margin-left:auto`。 */
+   只有**一个**入口：建文件还是建文件夹在下面那行的小切换里选。 */
 .new-file {
+  margin-left: auto;
   border: none;
   background: transparent;
   color: inherit;
   cursor: pointer;
-  font-size: 13px;
+  font-size: 14px;
   line-height: 1;
   padding: 0 4px;
   opacity: 0.75;
 }
-.new-file[data-testid="new-dir-button"] { margin-left: auto; }
 .new-file:hover { opacity: 1; }
-.new-row { padding: 4px 8px; }
+.new-row { display: flex; align-items: center; gap: 6px; padding: 4px 8px; }
 .new-input {
-  width: 100%;
+  flex: 1 1 auto;
+  min-width: 0;
   box-sizing: border-box;
   font: inherit;
   font-size: 12px;
@@ -398,6 +413,27 @@ const tree = computed(buildTree);
   border-radius: 4px;
   background: var(--surface, #fff);
   color: inherit;
+}
+/* 类型切换：两个小图标按钮（`mousedown.prevent` 保住输入框焦点，点它不会当成"失焦取消"） */
+.new-kind { display: flex; flex: 0 0 auto; gap: 2px; }
+.kind-btn {
+  width: 24px;
+  height: 23px;
+  padding: 0;
+  font-size: 11px;
+  line-height: 1;
+  border: 1px solid var(--border, #d8d8e0);
+  border-radius: 4px;
+  background: var(--surface, #fff);
+  cursor: pointer;
+  opacity: 0.55;
+}
+.kind-btn:hover { opacity: 0.85; }
+.kind-btn.on {
+  opacity: 1;
+  border-color: var(--blueberry);
+  background: var(--card-2);
+  box-shadow: inset 0 0 0 1px var(--blueberry);
 }
 .new-error {
   padding: 2px 8px 6px;
