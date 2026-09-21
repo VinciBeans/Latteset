@@ -224,6 +224,34 @@
 
 > **§6 逐项详报见 [roadmap-item-specs.md](./roadmap-item-specs.md)（编号不变）**：§6.1–§6.15 原文整体搬移（2026-09，正文一字未改）；本文中出现的 `§6.x` 指针一律指该文件。
 
+### 6.16 代码库与文档重整（㊿：2026-09-21 全面审计）
+
+**由来**：产品负责人反馈"代码库非常混乱，不便于管理"，要求全面 review + 重整结构 + 文档该合并的合并、该拆分的拆分。做法是**四个并行只读审计**（Rust 工作区 / 前端与命令面 / 文档体系 / 仓库与脚本），再按"收益 ÷ 风险"分批落地。
+
+**审计结论（反直觉的两条，先记下）**：
+1. **分层纪律是好的，不用大动**：ADR-0006/0010 零违规（`src-tauri` 无 `std::fs`/`std::process`，core 无真实 IO，起进程只有 `infra/proc.rs` 一个入口）；前端也无绕过 `services/` 直连命令的地方（21 条命令与 `ipc.ts` 一一对应）。**"乱"不在架构，在重复与体量**。
+2. **文档的问题不是"文件太多"，而是"分不清哪份是现状"**：真正会伤人的是**与现状冲突的表述**（如四处仍写"默认 XeLaTeX"、ADR 说超时重试而实现早已不重试），不是文件数量。
+
+**本批落地**（两笔提交）：
+- **仓库卫生**：删误入的 pnpm lockfile ×2、根目录 `texput.log`、一次性转储（687 KB）与孤儿配置；`.gitignore` 收口 e2e 实验产物（docs 一直声明"未提交"却缺规则）；夹具产物 `git rm --cached`。
+- **文档**：P0 陈旧表述 8 项（默认引擎 / 超时不重试 / Tectonic `-r 1` / SyncTeX 进程内 / design 前提失效 / ADR 计数）+ 3 处坏链；**新建 `docs/research/README.md` 状态表**（26 份调研：状态 · 一句话结论 · 被谁引用）；roadmap §6 详报拆到 `roadmap-item-specs.md`（文件名不改 ⇒ 19 条入链零成本）；`docs/archive/` 收纳已被收编的分册；落盘悬空引用 `tectonic-lib-evidence.md`；troubleshooting 加「现象 → 行号」速查表。
+- **代码**：前端 `services/paths.ts`（分隔符归一与"在项目内"判定的唯一口径）+ `services/errors.ts`；**顺带修掉一处隐患**（相对路径实现在项目外返回绝对路径 ⇒ 会把绝对路径当相对路径发给 `update_settings`）；`.tex` 判定统一不区分大小写；后端 `CompileKind::as_str()` 收进 core、删死代码 `effective_settings`。
+
+**真机冒烟**（2026-09-21）：新建文件 / 改名子文件 / 删含文件目录（确认弹窗报"里面还有 1 个文件"）/ 搜索与清空 —— 四条全过；`cargo test` 267+45+10、`npm run test` 16 文件 153 例、`npm run build` 全绿。
+
+**留档未做**（各是独立功能点，按收益排序；动它们之前先读本节）：
+| # | 项 | 为什么缓 |
+|---|---|---|
+| 1 | **CI 补 `cargo test -p latteset-infra` / `-p latteset-server`** | 这两条命令下共 **64 个用例从未在 CI 执行**（含第二入口 ⑥ 的全部单测）。收益最大、代价最小，风险是 ubuntu 上可能有平台假设需先本地验 |
+| 2 | `infra/runner.rs`（**2016 行**，7 件事：命令构造/流式反馈/页哈希与转换/pages 缓存/超时证据/树杀）拆 `runner/{mod,cmd,feedback,products}.rs` | 纯移动 + `pub(crate)`，风险低但改动面大；收益是"改超时文案与改页哈希不再互相干扰" |
+| 3 | `tectonic/runner.rs` 的 `run_engines`（**499 行 / 16 参数**）拆趟 + `RunCtx` | 逻辑密集且**库形态缺真机基线**（本机无可用 bundle），动完必须走 `lib:*` 全套复核 |
+| 4 | **ADR-0012 的 X-5 边界与代码不符**：`TectonicLibRunner` 持 `fs` 字段却只用 1 处，其余 ~15 处生产路径直接 `std::fs` | 二选一：async 侧收口回 `self.fs`，或在 ADR 里把这些点**登记进 X-5** —— 现在文档与代码相反，属纪律问题 |
+| 5 | 前端大组件：`PreviewPane.vue` 1080 行（草案层可抽 `useDraftLayer`）、`SettingsPanel.vue` 851、`FileTree.vue` 759（新建/删除/改名/搜索 5 条流程，可抽 `fileOps`） | 只在"要改它们时"顺手拆；为拆而拆会把 5 条已真机验过的流程再冒一次险 |
+| 6 | 五份复制粘贴的模态样式（backdrop/panel/foot + 各自的 `.btn`）→ `ModalShell.vue` + `controls.css` | 同上；且四处 z-index 不统一（100/110/120/130）值得一并收 |
+| 7 | 前端新功能缺单测：FileTree 的"新建→落盘→打开→展开"顺序、改名/删除后的根收口、`engines.ts` 缓存 | 这三条正是第 1 项修掉的那个隐患的回归面 |
+| 8 | `infra/runner.rs` 里 `\include`/`\input` 字面量解析（LaTeX 语义）在 infra 而非 core，且绕过 `FileSystem` | 属"归位"；下沉后能用 FakeFS 测 |
+| 9 | `tmp/` 目录名 7 处硬编码（其中 `core/project/scan.rs` 大小写敏感、`synctex/classify.rs` 小写比对） | 建议 core 出 `OUT_DIR` 常量；两处口径不一致本身就是隐患 |
+
 ## 7. 明确不做（否决项）
 
 | 项 | 理由 |
