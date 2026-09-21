@@ -23,3 +23,14 @@ export function loadEngines(): Promise<EngineInfo[]> {
 export function labelOf(engines: EngineInfo[], id: string): string {
   return engines.find((e) => e.id === id)?.label ?? id;
 }
+
+/**
+ * **测试用**：清掉会话缓存。
+ *
+ * 真实运行不需要它——清单只在"装了/卸了引擎、改了 `LATTESET_TEX_ENGINES`"之后才会变，而那两件事
+ * 都要求重启应用（PATH 是进程启动时读的）。单测要在同一个进程里换几套清单（可用/不可用/被收窄），
+ * 所以留一个显式的清缓存口子，而不是把缓存去掉。
+ */
+export function __resetEngineCatalogForTest() {
+  cached = null;
+}

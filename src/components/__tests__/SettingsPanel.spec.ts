@@ -3,11 +3,12 @@
 // ② Tectonic 形态段只出现在**引擎页**、且引擎真的选了 Tectonic 时（引擎不是它时摆着只会让人以为"改了没生效"）；
 // ③ bundle 在磁盘上存的是上游认的 `file:///…`，界面上要显示成普通目录路径（用户不该看 URL 前缀）。
 // 路径的**归一化**（`E:\…` → `file:///E:/…`）在 core，由 `latteset-core` 的单测覆盖，不在这里重复。
-import { describe, it, expect, vi } from "vitest";
+import { describe, it, expect, vi, beforeEach } from "vitest";
 import { mount, flushPromises } from "@vue/test-utils";
 import { createPinia, setActivePinia } from "pinia";
 import SettingsPanel from "../SettingsPanel.vue";
 import { useSettingsStore } from "../../stores/settings";
+import { __resetEngineCatalogForTest } from "../../services/engines";
 import type { Settings } from "../../bindings";
 
 /** 后端 settings.json 的当前值（mock 自己的状态；每个用例前重置）。
@@ -30,10 +31,19 @@ function freshSettings(
 }
 
 // 桩，不是后端复刻：只把本文件用到的键写回（engine / bundle），其余原样返回。
+// `listEngines`（roadmap ㊻）必须给：**引擎选项现在由后端清单渲染**，桩里缺它 ⇒ 面板退化成
+// "只有当前引擎那一个选项" ⇒ 连 `setValue("tectonic")` 都选不动（CI 就是这么红过一次的）。
 vi.mock("../../services/ipc", () => ({
   ipc: {
     getSettings: vi.fn(async () => structuredClone(stored)),
     libFormAvailable: vi.fn(async () => false),
+    listEngines: vi.fn(async () =>
+      (catalogOverride ?? ENGINE_CATALOG).map((e) => ({
+        ...e,
+        available: engineUnavailable !== e.id,
+        reason: engineUnavailable === e.id ? `桩：本机没有 ${e.label}` : null,
+      }))
+    ),
     updateSettings: vi.fn(async (patch: Record<string, unknown>) => {
       if (patch.engine !== undefined) {
         stored.compile.engine = patch.engine as Settings["compile"]["engine"];
@@ -45,6 +55,25 @@ vi.mock("../../services/ipc", () => ({
     }),
   },
 }));
+
+/** 后端清单的桩（顺序与后端 `ENGINE_ORDER` 一致：Tectonic 第一）。 */
+const ENGINE_CATALOG = [
+  { id: "tectonic", label: "Tectonic", hint: "免装 TeX Live" },
+  { id: "xelatex", label: "XeLaTeX", hint: "需要 TeX Live" },
+  { id: "lualatex", label: "LuaLaTeX", hint: "Lua 脚本" },
+  { id: "pdflatex", label: "pdfLaTeX", hint: "传统引擎" },
+] as const;
+
+/** 把某个引擎标成不可用（`null` = 都可用）；`catalogOverride` 可整套替换清单（模拟 env 收窄）。 */
+let engineUnavailable: string | null = null;
+let catalogOverride: { id: string; label: string; hint: string }[] | null = null;
+
+// 清单在 `services/engines.ts` 里按会话缓存 ⇒ 每个用例前清一次，否则第一个用例的清单会串到后面
+beforeEach(() => {
+  engineUnavailable = null;
+  catalogOverride = null;
+  __resetEngineCatalogForTest();
+});
 
 /** 点某个标签（标签栏是唯一入口，测试也走这条路，不直接改内部状态）。 */
 async function openTab(w: ReturnType<typeof mount>, label: string) {
@@ -129,6 +158,57 @@ describe("SettingsPanel：标签栏分页", () => {
     expect(engineTab.find(".tab-dot").exists()).toBe(true);
     const appearanceTab = w.findAll(".tab-btn").find((b) => b.text().startsWith("外观"))!;
     expect(appearanceTab.find(".tab-dot").exists()).toBe(false);
+    w.unmount();
+  });
+});
+
+// 引擎清单（roadmap ㊻）：**选项由后端给**（顺序 / 名字 / 可用性），前端不许自己写一份。
+// 这三条都是真机上出过的现场的回归锁 —— 尤其最后一条：清单里没有当前引擎时下拉会**显示空白**。
+describe("SettingsPanel：引擎清单来自后端", () => {
+  const options = (w: ReturnType<typeof mount>) =>
+    w.findAll<HTMLOptionElement>("#set-engine option").map((o) => ({
+      text: o.text().trim(),
+      value: (o.element as HTMLOptionElement).value,
+      disabled: (o.element as HTMLOptionElement).disabled,
+    }));
+
+  it("选项 = 后端清单，顺序照给（Tectonic 第一）", async () => {
+    const w = await mountPanel("tectonic");
+    expect(options(w).map((o) => o.value)).toEqual(["tectonic", "xelatex", "lualatex", "pdflatex"]);
+    // 名字只放名字，不带说明（原生下拉的弹层按最长选项撑宽，塞说明会冲出面板）
+    expect(options(w).map((o) => o.text)).toEqual(["Tectonic", "XeLaTeX", "LuaLaTeX", "pdfLaTeX"]);
+    w.unmount();
+  });
+
+  it("不可用的引擎禁用并给出原因（不是悄悄藏掉）", async () => {
+    engineUnavailable = "xelatex";
+    const w = await mountPanel("tectonic");
+    const xe = options(w).find((o) => o.value === "xelatex")!;
+    expect(xe.disabled, "不可用要禁用").toBe(true);
+    expect(xe.text).toContain("不可用");
+    // 当前选中的是可用的 Tectonic ⇒ 说明行是它的说明，不是那条原因
+    expect(w.find(".field-hint.err").exists()).toBe(false);
+    w.unmount();
+  });
+
+  it("当前引擎不可用 ⇒ 说明行改为原因（带 err 样式）", async () => {
+    engineUnavailable = "tectonic";
+    const w = await mountPanel("tectonic");
+    expect(w.find(".field-hint.err").text()).toContain("本机没有 Tectonic");
+    w.unmount();
+  });
+
+  it("当前引擎不在清单里（被 LATTESET_TEX_ENGINES 收窄）⇒ 补只读项，下拉不空白", async () => {
+    catalogOverride = [{ id: "pdflatex", label: "pdfLaTeX", hint: "传统引擎" }];
+    const w = await mountPanel("xelatex");
+    const opts = options(w);
+    expect(opts.map((o) => o.value)).toEqual(["xelatex", "pdflatex"]);
+    const current = opts[0];
+    expect(current.disabled, "补出来的那条不可选").toBe(true);
+    expect(current.text).toContain("不可用");
+    // 关键：`<select>` 的值必须是 xelatex（没有它浏览器会显示空白，用户看不出现在用的是什么）
+    expect((w.find<HTMLSelectElement>("#set-engine").element as HTMLSelectElement).value).toBe("xelatex");
+    expect(w.find(".field-hint.err").text()).toContain("不在本次构建开放的清单里");
     w.unmount();
   });
 });
