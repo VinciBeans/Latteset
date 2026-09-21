@@ -19,7 +19,7 @@
   | 环境变量 | `TEXPRESSO_CONFIG_DIR` | `LATTESET_CONFIG_DIR` |
   | 前端自动打开钩子 | `VITE_TEXPRESSO_PROJECT` | `VITE_LATTESET_PROJECT` |
   | MCP `serverInfo.name` | `texpresso` | `latteset` |
-- **纪律：区分「本项目名」与「上游项目名」**。文档中描述上游 TeXPresso 的内容**必须保持原拼写**，不得随更名一起替换——否则会写出不存在的 URL（`github.com/let-def/latteset`）与错误的源码符号名（`texpresso_protocol.c` / `texpresso_fork_with_channel` 是上游 C 源码里的真实符号，小写）。同理，上游方案通读文档 [`texpresso-live-rendering-roadmap.md`](./texpresso-live-rendering-roadmap.md) **保留原文件名**（它是「对上游的通读」，不是本项目文档）。
+- **纪律：区分「本项目名」与「上游项目名」**。文档中描述上游 TeXPresso 的内容**必须保持原拼写**，不得随更名一起替换——否则会写出不存在的 URL（`github.com/let-def/latteset`）与错误的源码符号名（`texpresso_protocol.c` / `texpresso_fork_with_channel` 是上游 C 源码里的真实符号，小写）。同理，上游方案通读文档 [`texpresso-live-rendering-roadmap.md`](../texpresso-live-rendering-roadmap.md) **保留原文件名**（它是「对上游的通读」，不是本项目文档）。
 - **破坏性变更（已接受）**：`identifier` 变更导致应用配置目录从 `%APPDATA%\com.texpresso.app` 变为 `%APPDATA%\com.latteset.app`，项目内设置目录名同步变更。当前为 0.1.0、无发布用户，故不提供自动迁移；旧目录残留可手动删除或改名复用。
 - **生成产物已核对/待补**：`docs/diagrams/01-layers.svg` 经**逐处核对自洽**（4 处 `crates/latteset-*` 分类名、`bin/latteset-{cli,mcp}`、`.latteset/settings.json`、项目目录），且图内**不含模块路径**（无 `latteset_core::` 之类），因此不会出现「新 crate 名 + 旧模块路径」混搭，无需重渲染。唯一遗留是 `.github/assets/Latteset运行主界面.png`——其**文件名已随更名改**，但**图片内容里的界面文字仍是旧名**，需在有真实窗口的环境重截（暂无 mermaid 打包产物+无头浏览器，故 `scripts/render-diagrams.mjs` 在本机跑不通，与本次更名无关）。
 

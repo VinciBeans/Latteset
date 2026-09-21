@@ -1,5 +1,6 @@
 # 上游「阶段 2」在当前项目上的可行性（引擎子进程 + 流式输出 + 时间片）
 
+> **状态（2026-09 回写）**：**部分已落地**。① 流式输出 ✅ **已落地并真机验证**（状态栏「已排版 N 页」+ 编译中报致命错误，见 [roadmap §1 基线](./tex-ide-roadmap-priority.md)）；② "部分 PDF / 渐进刷新"从"仅可行性"变为**可落地未接线**（㉞ 流式出图，见 [dvi-preview-feasibility.md](./dvi-preview-feasibility.md) §10）；③ 时间片：**结构上不需要**。
 > 状态：**实测快照（2026-09）**，本机 Windows / TeX Live 2026。
 > 评估对象：[texpresso-live-rendering-roadmap.md](../texpresso-live-rendering-roadmap.md) 阶段 2（该文把这一步称为"**单独就能拿到大约一半的体感收益**"）。
 > 姊妹篇：[G2 字节偏移重同步](./g2-byte-offset-resync.md)（页索引这一半）、[DVI/XDV 预览可行性](./dvi-preview-feasibility.md)（渲染那一半，已否决）、[P1-⑦ 大文档编辑器侧性能](./p1-large-doc-editor-analysis.md)（真机探针方法）。

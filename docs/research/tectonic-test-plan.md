@@ -2,21 +2,21 @@
 
 > 团队 `tectonic-test-plan` · **T5 汇总与红队评审** · 2026-09-14 · **本文只出方案，不改产品代码。**
 >
-> **四份分册（逐条明细附录，已复制入库）**：引擎层 [`engine.md`](./tectonic-plan-parts/engine.md)（E1–E7，**56 条** / G1–G6 六个门禁）、集成层 [`integration.md`](./tectonic-plan-parts/integration.md)（**Rev.10**，INT-10..INT-96，**88 条**）、测量 [`perf.md`](./tectonic-plan-parts/perf.md)（Rev.4，R*/M*/H_*/U1–U12）、分发与许可 [`dist.md`](./tectonic-plan-parts/dist.md)（DIST-*/MB-*/G-L*/F1–F8）。
+> **四份分册（逐条明细附录，已复制入库；2026-09 归档到 `docs/archive/tectonic-plan-parts/`）**：引擎层 [`engine.md`](../archive/tectonic-plan-parts/engine.md)（E1–E7，**56 条** / G1–G6 六个门禁）、集成层 [`integration.md`](../archive/tectonic-plan-parts/integration.md)（**Rev.10**，INT-10..INT-96，**88 条**）、测量 [`perf.md`](../archive/tectonic-plan-parts/perf.md)（Rev.4，R*/M*/H_*/U1–U12）、分发与许可 [`dist.md`](../archive/tectonic-plan-parts/dist.md)（DIST-*/MB-*/G-L*/F1–F8）。
 > **版本冻结（合并基线 = 最终值，引用前请核对）**
 > **复制时刻：2026-09-14 16:47:28**（`test_file/tectonic-plan-parts/` → `docs/research/tectonic-plan-parts/`；该时刻**四对文件已逐一复核 SHA-256 相等**）。**入库物以 docs 侧为准**（lab 源 `test_file/**` 被 gitignore，不进仓库）。
 >
 > | 分册 | 行 | 字节 | SHA-256（全量） |
 > |---|---:|---:|---|
-> | [`engine.md`](./tectonic-plan-parts/engine.md) | **285** | **77,491** | `B13CCA1006A2BE9666D940CA1212CEB6E23514EEAA18FE873C249B9D0F83852D` |
-> | [`integration.md`](./tectonic-plan-parts/integration.md) | **460** | **105,367** | `5A67A5241BD3CD0546992922155E9544E7B07A8F3757C35F10F53CB276C4DF74` |
-> | [`perf.md`](./tectonic-plan-parts/perf.md) | 383 | 63,356 | `F68A711E6278ABCAF9862591B66B06DE80C444DC93D44D0BAEE93320CAD35F3D` |
-> | [`dist.md`](./tectonic-plan-parts/dist.md) | 340 | 51,550 | `816EC45673CA520F5BB55B900E17BB70C79FF44B41D03C39660198BAD040158B` |
+> | [`engine.md`](../archive/tectonic-plan-parts/engine.md) | **285** | **77,491** | `B13CCA1006A2BE9666D940CA1212CEB6E23514EEAA18FE873C249B9D0F83852D` |
+> | [`integration.md`](../archive/tectonic-plan-parts/integration.md) | **460** | **105,367** | `5A67A5241BD3CD0546992922155E9544E7B07A8F3757C35F10F53CB276C4DF74` |
+> | [`perf.md`](../archive/tectonic-plan-parts/perf.md) | 383 | 63,356 | `F68A711E6278ABCAF9862591B66B06DE80C444DC93D44D0BAEE93320CAD35F3D` |
+> | [`dist.md`](../archive/tectonic-plan-parts/dist.md) | 340 | 51,550 | `816EC45673CA520F5BB55B900E17BB70C79FF44B41D03C39660198BAD040158B` |
 >
 > 分册内容：engine = E1–E7（**56 条**）+ G1–G6（含 E3.7–E3.10）；integration = **Rev.10**（88 条，反例 27，含 INT-54b）；perf = Rev.4；dist = 分发/缓存/许可。**分册可能继续修订**；本文与分册冲突处一律以本文 §8 裁决台账为准。
-> **冲突处理**：分册之间、以及分册与 `docs/research/tectonic-integration-plan.md` 之间的冲突，**一律以本文 §8 裁决台账为准**；附录原文保留（它们是逐条证据与出处，不重写）。
+> **冲突处理**：分册之间、以及分册与 `docs/archive/tectonic-integration-plan.md`（2026-09 归档）之间的冲突，**一律以本文 §8 裁决台账为准**；附录原文保留（它们是逐条证据与出处，不重写）。
 >
-> **已有实测数字的来源**：`docs/research/modern-engines-zh.md` §2/§7.4/§7.7/§8.2/§8.3/§8.4、`docs/design.md`（基准表、延迟预算、失败语义）、`docs/research/incremental-edit-x-dvi.md` §2.1–2.3、`docs/research/tectonic-integration-plan.md`、`docs/modules.md` §12，以及四份分册本轮实读的工件（`test_file/projects/bench/_zhcmp/**`）与队长 2026-09-14 的干净目录落盘实测。
+> **已有实测数字的来源**：`docs/research/modern-engines-zh.md` §2/§7.4/§7.7/§8.2/§8.3/§8.4、`docs/design.md`（基准表、延迟预算、失败语义）、`docs/research/incremental-edit-x-dvi.md` §2.1–2.3、`docs/archive/tectonic-integration-plan.md`（2026-09 归档）、`docs/modules.md` §12，以及四份分册本轮实读的工件（`test_file/projects/bench/_zhcmp/**`）与队长 2026-09-14 的干净目录落盘实测。
 >
 > **标记约定**：`[实测]` 有命令与输出/工件；`[源码]` `file:line`；`[推断]` 由源码或机制外推、**未跑**；`[未测]` 无任何证据。**本文不虚构任何未实测的数字**——凡无实测来源者一律标 `[推断]`/`[未测]` 并进 §6.2。
 
@@ -66,7 +66,7 @@
 | N3 | **不真实建包** | 不下载 TL tarball、不跑 `bundle create`、不做 CI 接线；只给流水线步骤与门禁判据（MB-1..MB-8） |
 | N4 | **不做形态 A（crate 内嵌 / vcpkg 静态构建）** | 只登记风险与触发条件（DIST-1.6）；Windows 官方构建链 = `vcpkg` + harfbuzz 子模块 + 30+ C 依赖 `[源码]` |
 | N5 | **不覆盖不稳定 CLI 面** | `--outfmt html`（`.spx`）、`-X/nextonic` V2 子命令（**没有** `--synctex/--outfmt/-r`，不要走）、`-Z search-path`/`shell-escape` 等 `-Z` 项 |
-| N6 | **不重测既有引擎的行为面** | XeLaTeX/LuaLaTeX/pdfLaTeX 只测"回归面"（默认引擎仍是 XeLaTeX、`npm run build`、`cargo test` 不回归） |
+| N6 | **不重测既有引擎的行为面** | XeLaTeX/LuaLaTeX/pdfLaTeX 只测"回归面"（默认引擎仍是 XeLaTeX、`npm run build`、`cargo test` 不回归）。**⚠ 默认已改 Tectonic（2026-09-17，ADR-0014 修订 1）**：本行的"默认引擎仍是 XeLaTeX"按 §7 修订版读作"默认引擎是 Tectonic" |
 | N7 | **不决定产品决策本身** | 是否随包分发 exe/bundle/TL 工具、缓存目录归谁、首跑超时策略等 → 本文给**仍待决的槽位 D5–D9**（§5.4）与判据，不替产品选；D1–D4 **均已裁决** |
 | N8 | **不承诺真实学位论文模板（hithesis 档）的数字** | 该档当前受阻（`I can't write on file 'body/introduction.aux'` → Emergency stop → latexmk 挂住，`modules.md §12.1 #6`），**排除在阈值判定之外**（§3.1.3） |
 | N9 | **不覆盖 Windows 之外的平台** | 本机与全部实测都是 Windows x64（官方 exe 只有 MSVC 构建）；macOS/Linux 不在本轮 |
@@ -137,7 +137,7 @@
 
 | 路线 | 形态 | 得到 | 放弃 | 前提 | 优先级 |
 |---|---|---|---|---|---|
-| **① PDF 档（默认，本迭代落地）** | `tectonic -C -o tmp --synctex --keep-logs -k -p <rel>`（Quick 追加 `-r 0`） | PDF + `.aux`/`.log`/`.bbl`/`.synctex.gz` 齐全；Quick 判定（`.aux` 存在）可用；runner 侧形态**与 LuaLaTeX 完全同类**（引擎自己出 PDF、不算页哈希、不调 `xdvipdfmx`） | **页级复用 B/C**（`page_hashes` 恒空 ⇒ 每次全量刷新）、A 标「该引擎不支持」 | 无（TL-less 也成立） | **P0** |
+| **① PDF 档（默认，本迭代落地）** | `tectonic -C -o tmp --synctex --keep-logs -k -p <rel>`（Quick 追加 `-r 0`。**⚠ 产品侧已改判为 `-r 1` 两趟（2026-09）**：`-r 0` 单趟产物**整段没有目录**，`crates/latteset-infra/src/runner.rs:401-403` 现为 `-r 1`；见 [troubleshooting.md:51](../troubleshooting.md)。本行其余内容为引擎层事实记录） | PDF + `.aux`/`.log`/`.bbl`/`.synctex.gz` 齐全；Quick 判定（`.aux` 存在）可用；runner 侧形态**与 LuaLaTeX 完全同类**（引擎自己出 PDF、不算页哈希、不调 `xdvipdfmx`） | **页级复用 B/C**（`page_hashes` 恒空 ⇒ 每次全量刷新）、A 标「该引擎不支持」 | 无（TL-less 也成立） | **P0** |
 | **② XDV 档 + 外部转换（独立分支，P1）** | 收敛档 `tectonic -o tmp --outfmt xdv --keep-logs -k <rel>`（3 趟 + 9 BibTeX，**28 页**）→ **外部 `xdvipdfmx`（TL 自带）** → PDF + 页哈希 | 恢复 B/C（页级复用） | ① 的"免装 TeX Live"——**② 既需要 `xdvipdfmx.exe`、又需要 TL 的字体树（见下）**，与 G2（synctex 要 TL）同类；且该档仍 3 趟 + 9 次 BibTeX，**不是 Quick** | 本机装有 TeX Live（转换器与字体树都在 TL 里）；字体可被 kpathsea/TL 树解析 | **P1** |
 
 **路线 ② 的定位（Rev.6 更正，勿再写成"免装 TL 的出路"）**：Tectonic 的 XDV 里字体记的是**裸名**（`FandolSong-Regular.otf`、`lmroman12-regular` —— 无路径，`lmroman` 连扩展名都没有），而 XeLaTeX 侧是**绝对路径** ⇒ 外部转换成功靠的是 **TeX Live 的字体树 + kpathsea**（实测三类字体名 + `kpsewhich` 全命中 TL 路径），且 **`xdvipdfmx.exe` 本身也来自 TL**。⇒ **② =「有 TL 机器上的可选转换路径」**，与 G2 同类；**不得**用它论证免装 TL（T1 E2.12/E2.13，P0）。
@@ -926,7 +926,7 @@
 | **原始样本 / JSON 报告** | `test_file/research/bench-tectonic.json`（每次运行的 ms、exit、passes、页数、缺字数、**bib 产物判据**、无效样本、控制组值、机器指纹） | 不入库（同 `bench-report.json` 律） | 体积与机器相关 |
 | **精炼基线（权威）** | ① `docs/design.md` 基准表**加一列 Tectonic**（同一张表里才可比）；② 本文 §3.4/§3.7 | **入库** | 唯一能跨机器/跨清仓存活的基线 |
 | **现场证据（日志/产物）** | `_zhcmp/logs/`、`_zhcmp/tect*/`、`test_file/projects/_t2-probe/`（T2 探针） | 不入库 | 已在 gitignore 覆盖面内 |
-| **四份分册明细（附录）** | `docs/research/tectonic-plan-parts/{engine,integration,perf,dist}.md`（**已复制**，原 `test_file/tectonic-plan-parts/` 保留） | **入库** | 本文是"合并 + 裁决"，逐条证据与出处仍在分册；清仓后明细不丢 |
+| **四份分册明细（附录）** | `docs/archive/tectonic-plan-parts/{engine,integration,perf,dist}.md`（**2026-09 已从 `docs/research/` 归档**；原 `test_file/tectonic-plan-parts/` 保留） | **入库** | 本文是"合并 + 裁决"，逐条证据与出处仍在分册；清仓后明细不丢 |
 | **许可审计产物** | `docs/research/tectonic-bundle-licensing.md` + 发行物 `THIRD-PARTY-NOTICES` | **入库** | §4.3 门禁 G-L1/G-L3 |
 
 **harness 入口约定（建议）**
@@ -947,7 +947,7 @@ scripts/bench-tectonic-report.mjs --input <本次 json> --baseline <固化 json>
 |---|---|
 | 引擎命令构造 / `Engine::Tectonic` 分支 / 收尾逻辑 | ① `scripts/bench-tectonic.ps1 -Rounds 3 -Tiers min-zh,thesis`（含控制组）② `node scripts/check-determinism.mjs` ③ `node scripts/xdv-report.mjs <tmp/*.xdv> --diff=<基线.xdv>`（**必须见到差分行**） |
 | 页级复用 / 预览 | `multifile` 的 §3.5 三组判据 + 真机 `window.__previewLastReload`（`skippedReloads`/`changedPages`/`pagesReused`/`render`） |
-| 默认引擎仍是 XeLaTeX（回归保护） | `node scripts/bench.mjs`（超预算退出码 1） |
+| **默认引擎是 Tectonic**（2026-09-17 起，ADR-0014 修订 1；本条原判据为"默认引擎仍是 XeLaTeX"，已修订） | `node scripts/bench.mjs`（超预算退出码 1）；默认值断言：`cargo test -p latteset-core` 的 `settings::model::defaults_match_design`（断言 `Engine::Tectonic`） |
 | 分发 / bundle / 缓存 | §3.6 M1–M4 + §4 门禁（首跑档单独一批） |
 | 任何改动（提交前） | `npm run build`、`cargo test -p latteset-core`、`cargo test -p latteset-infra -- --ignored` |
 
@@ -999,7 +999,7 @@ scripts/bench-tectonic-report.mjs --input <本次 json> --baseline <固化 json>
 | GAP-4 | 没有"**引擎自述日志不完整**"这一测试类别 | 新增类别：`.blg` 尾部丢失（E6.2/U-26）、`main.log` 无 `This is XeTeX` 抬头（E5.1 附注）、`.log` 结束才落盘（E5.2）、`Skipped writing N intermediate files` 的语义（E2.8） |
 | GAP-5 | 没有**产品决策槽位** | 本文新增 §5.4：**D1–D4 已裁决**（含 D4 = (b) 分步 epoch），**D5–D9 仍待决**（是否随包分发 TL 工具、缓存目录归属、首跑超时策略、bundle 落地形态、`-p` 通道形态） |
 | GAP-6 | 没有**环境矩阵**（区域/代理/沙箱/TL-less） | §1.3 ENV-A..ENV-E + 环境纪律（不在沙箱里测性能、测量期不跑 GUI） |
-| GAP-7 | 分册明细在清仓后可能丢 | 四份分册已**复制**入 `docs/research/tectonic-plan-parts/` 并在 `docs/README.md` 补链接（附录） |
+| GAP-7 | 分册明细在清仓后可能丢 | 四份分册已**复制**入 `docs/archive/tectonic-plan-parts/`（2026-09 归档）并在 `docs/README.md`/`docs/research/README.md` 补链接（附录） |
 
 ---
 
@@ -1021,6 +1021,7 @@ scripts/bench-tectonic-report.mjs --input <本次 json> --baseline <固化 json>
 
 | 分册 | 章节 | 状态 |
 |---|---|---|
+| **（位置变更）** | **四份分册原件已归档**：`docs/research/tectonic-plan-parts/` → **`docs/archive/tectonic-plan-parts/`**（2026-09） | 内容已被本文 **§2–§4 收编**（逐条判据压缩进矩阵），且下表已把这些分册章节列为**需修订**；分册保留为**逐条证据与出处**，引用时按本表核对。索引见 [docs/research/README.md](./README.md) 与 [docs/archive/README.md](../archive/README.md) |
 | engine.md | §0 G5 的**旧版**"机制"段（`driver.rs:1615` 的 `!keep_intermediates &&` 决定项、"`-k` 会得到假是"） | **已被实测证伪**（C-1）；**Rev.2 已自行改为 `driver.rs:1985` 的内存移除机制**（正确）；"默认档不落 `.xdv`"的结论成立 |
 | engine.md | E6.1 / E6.2（旧版判 bibtex 中止、bundle 版本落后为根因） | **Rev.2 已更正**为"主调用成功 + `.blg` 无统计块"（G6）；本文采用 Rev.2（C-2），并新增 E6.2b/E6.2c |
 | engine.md | §4 未验证清单 A-1（"探针禁止用 `-k`"） | 表述需改：`-k` 与 `.xdv` **无关**；纪律改为"默认档探针不得加 `--outfmt`"（§1.2 纪律 4） |
@@ -1030,7 +1031,7 @@ scripts/bench-tectonic-report.mjs --input <本次 json> --baseline <固化 json>
 | integration.md | §2 映射表（未含 `-p`）、§3（旧版"B/C 生效判据"）、§8（"选择 A/B"） | **Rev.2/Rev.3/Rev.4 已修订**（含 D1 的 INT-95/96、D2 的 INT-35/38/39、E6.2d 的 `.bbl` 定位规则）；本文以 Rev.4 为准（C-9/C-10/C-13） |
 | dist.md | §0 F1（`-b` 本地 tar）、§0 F2（`-C` 语义） | 与集成方案原文冲突处，**以 dist.md 实测为准**（C-6/C-7） |
 | `docs/research/modern-engines-zh.md` | §8.4「XDV 就是我们的格式、A/B/C 无需改代码」、§8.5 结论 1 | **必须加限定**（C-3）：只对 xdv 档 + 页哈希解析代码成立 |
-| `docs/research/tectonic-integration-plan.md` | §1 路线②、§5 第 2 条（本地 tar）、§1 表格（"运行期完全不联网"） | **原文作废**（C-6/C-7）；建议按本文口径修订该文档 |
+| `docs/archive/tectonic-integration-plan.md` | §1 路线②、§5 第 2 条（本地 tar）、§1 表格（"运行期完全不联网"） | **原文作废**（C-6/C-7）；建议按本文口径修订该文档。**2026-09 已归档到 `docs/archive/`**（本文 §9.2 另见归档说明行） |
 
 > 本方案只出方案，不改产品代码；上述"需修订"只标注状态，实际修订留给对应文档的维护任务。
 

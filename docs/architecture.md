@@ -62,7 +62,7 @@ Cargo workspace 四 crate：ADR-0006 拆出 core，ADR-0010 再拆出 infra（�
 |---|---|
 | `fs` | `tokio::fs` 实现 `FileSystem`（含 canonicalize / is_dir / write）；Windows `\\?\` verbatim 前缀剥离 |
 | `runner` | latexmk 执行（tokio::process、超时、Windows `taskkill /T /F` 树杀、PDF 原子拷贝、.log 容错解码） |
-| `synctex` | synctex CLI 调用（实现 SyncTexProvider，见 ADR-0008） |
+| `synctex` | SyncTeX 输出解析（实现 SyncTexProvider）：**默认进程内自解析**（ADR-0013）；系统 CLI 仅在 `LATTESET_SYNCTEX=cli` 时作 A/B 复核备选（ADR-0008 的预留替换路径） |
 | `storage` | 设置存储：全局/项目文件原子写 + 自写盘 hash 过滤 |
 | `watch` | notify 8.2 直连（不用 tauri-plugin-fs 的 JS watch）：事件分类 → 调度器输入 / 设置热更新；结果经 `WatchSink` 回调（本层不认识 Tauri） |
 
@@ -151,7 +151,7 @@ Cargo workspace 四 crate：ADR-0006 拆出 core，ADR-0010 再拆出 infra（�
 
 ### 5.3 SyncTeX 双向
 
-Ctrl+点击 → `synctex_forward` → { page, x, y } → PDF 高亮；PDF 点击 → `synctex_inverse` → { file, line } → 编辑器跳转。CLI 指向 `tmp/<根名>.synctex.gz`。
+Ctrl+点击 → `synctex_forward` → { page, x, y } → PDF 高亮；PDF 点击 → `synctex_inverse` → { file, line } → 编辑器跳转。默认**进程内自解析** `tmp/<根名>.synctex.gz`（ADR-0013，不依赖系统 `synctex` 二进制）；`LATTESET_SYNCTEX=cli` 时才退回外部 synctex CLI（ADR-0008，A/B 复核用）。契约见 [modules.md](./modules.md) §5。
 
 ### 5.4 根文件探测
 

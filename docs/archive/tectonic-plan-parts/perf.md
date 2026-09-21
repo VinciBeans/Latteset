@@ -319,7 +319,7 @@
 |---|---|---|
 | 引擎命令构造 / `Engine::Tectonic` 分支 / 收尾逻辑 | ① `scripts/bench-tectonic.ps1 -Rounds 3 -Tiers min-zh,thesis`（含控制组）② `node scripts/check-determinism.mjs`（三档 × Full/Quick ×2）③ `node scripts/xdv-report.mjs <tmp/*.xdv>` 页数对拍（必须解出 28 页；**U1 定论后，这条只在产 XDV 的档上成立，PDF 档要用 `pdfinfo` 的页数代替**） | ①②③ 分别覆盖"变慢了 / 变得不可复现 / 页索引不再认识产物"三类回归，且都是秒级到十几秒级 |
 | 页级复用 A/B/C 与预览 | `multifile` 的 §4.2 三条命中率 + 真机 `window.__previewLastReload`（`skippedReloads`/`changedPages`/`pagesReused`/`render`） | 命中的是"下游重复工作"，脚本量不出体感，必须真机插桩（口径见 design.md §预览重载实测） |
-| 默认引擎仍是 XeLaTeX（回归保护） | `node scripts/bench.mjs`（超预算退出码 1） | 防止"为 Tectonic 改了命令构造，把默认路径弄坏" |
+| 默认引擎仍是 XeLaTeX（回归保护）—— **⚠ 默认已改 Tectonic（2026-09-17，ADR-0014 修订 1）**，本条改读为"默认引擎是 Tectonic" | `node scripts/bench.mjs`（超预算退出码 1） | 防止"为 Tectonic 改了命令构造，把默认路径弄坏" |
 | 分发 / bundle / 缓存 | §4.3 的 M1–M4（首跑档单独一批）+ **V6b 的产物级判据（`.bbl` 的 `\bibitem` 条数 / PDF 参考文献节）** + T4 分册的门禁清单 | 首跑成本是分发形态的函数，不是产品代码的函数；**bundle 版本/来源一变，bib 的行为就可能变**（`--bundle` 可指任意 tar），所以 bundle 改动必须带 V6b |
 | **日志/可观测性（本轮新增，独立一行）** | ① `-k` 档下断言 `.bbl` 的 `\bibitem` 条数与 PDF 参考文献节；② **判定器负例**：喂一份"成功且日志形态不同（无 `You've used` 摘要段）"的 `.blg`（本仓 `main.blg` 537 B：0 error、无摘要行），判定器**必须判为 unknown，不得判为 fail** | **防的是"跨引擎日志契约差异"（`engine.md` G6「引擎自述 ≠ 事实」），不是数据损坏容错**：Tectonic 的 `.blg` 是**完整文件**（端口不实现收尾统计段），任何"按 `.blg` 判 bib 成败"的工具/脚本都错（摘要行 ⇒ 100% 假阴性；error 计数 ⇒ 8 假阳性 + 1 假阴性）。`run.log`/`.log` 侧另有更强的一条自述失真：见附录 `.log` 自述行 |
 | 提交前（任何改动） | `npm run build`、`cargo test -p latteset-core`、`cargo test -p latteset-infra -- --ignored`（含 streaming / live_errors 两条） | `docs/modules.md` §12.3 已固化的验证入口 |

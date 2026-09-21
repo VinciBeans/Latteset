@@ -99,7 +99,7 @@
 | INT-16 | 引擎未安装时的文案必须指对方向 | 把 `engine=tectonic` 指向不存在的可执行（用临时 PATH 或未安装机器） | 错误列表出现**可读中文**：「找不到 tectonic（Tectonic 未安装或路径不对）…」，并给出下一步；不得说"TeX Live 未安装？" | 真机：错误列表 1 条且 `message` 含 "tectonic"、**不含** "TeX Live"；同判据对 latexmk/xdvipdfmx 三条既有文案不回归 | P0 | 无 | B15 `runner.rs:321,322,538`、B16 `actor.rs:250` |
 | INT-17 | **必须有可见指示：当前引擎 + 编译强度**（D3 已裁决） | 真机：切到 Tectonic → 编译一次 Quick，再编译一次 Full；再切回 XeLaTeX 重复 | 状态栏**同处**显示引擎名，并体现本次强度（Quick/单趟 vs Full/完整） | ① 不打开设置面板也能在状态栏看到引擎名（切到 Tectonic 后文案含 `Tectonic`）；② 强度可见：Quick 成功后引擎名与「引用待更新」chip **同时**可见，Full 成功后 chip 消失；③ 切回 XeLaTeX 后文案随之变化。**反例**：现状 `StatusBar.vue` 无引擎字段 ⇒ `[推断]` 现状 FAIL | P0 | D3（已裁决） | B18 `StatusBar.vue:48-99`、`useIdleConvergence.ts:20-48`（draft 语义） |
 | INT-18 | headless 与 GUI 不漂移 | `latteset-cli --config-dir … compile` / `latteset-mcp` 在 Tectonic 配置下跑同一夹具 | 同一 runner 分支、同一产物路径、同一退出码语义（0=通过、1=未通过） | CLI 退出码 0 且 `pdf_path` 指向项目根 `<stem>.pdf`；`compile_get_errors` 与 GUI 错误列表条数一致 | P1 | INT-12 | `modules.md §8.1,§12.2`（CLI 退出码语义冻结） |
-| INT-19 | 恢复默认仍回到 XeLaTeX | 面板「恢复默认」 | 默认引擎仍是 `xelatex`（Tectonic 是**显式选择**，不得成为默认） | 单测 `Settings::default().compile.engine==XeLaTeX`；真机：恢复默认后面板选中 XeLaTeX | P1 | 无 | `settings/model.rs:32-45`、`SettingsPanel.vue:114` |
+| INT-19 | 恢复默认仍回到 XeLaTeX —— **⚠ 已被 ADR-0014 修订 1 覆盖（2026-09-17）：默认引擎已切 Tectonic**，"恢复默认"现在回到 Tectonic；本条改读为"恢复默认 → Tectonic" | 面板「恢复默认」 | 默认引擎是 `Tectonic`（可显式切成 XeLaTeX） | 单测 `Settings::default().compile.engine==Tectonic`（`settings/model.rs` 的 `defaults_match_design`）；真机：恢复默认后面板选中 Tectonic | P1 | 无 | `settings/model.rs:159-164`、`SettingsPanel.vue:114` |
 
 ---
 

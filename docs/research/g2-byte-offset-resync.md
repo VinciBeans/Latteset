@@ -1,5 +1,6 @@
 # G2「字节偏移重同步」深挖：在不改引擎的前提下能不能拿到，值多少
 
+> **状态（2026-09 回写）**：**索引已吸收、渲染已否决**。页索引 / 半成品可读 / 追加式解析均已实现（`scripts/xdv-report.mjs`、`scripts/xdv-inc.mjs`，结论进 [modules.md](../modules.md) §12.2 #19）；"换 DVI/XDV 显示"那一半见姊妹篇，**已否决**。
 > 状态：**实测快照（2026-09）**，本机 Windows / TeX Live 2026。工具：新增 `scripts/xdv-report.mjs`（页索引 + 页级差分 + 截断/监视）。
 > 上游依据：[texpresso-live-rendering-roadmap.md](../texpresso-live-rendering-roadmap.md) §1 前提表（G2）、§3 阶段 3（增量输出解析）、§6.2（`incdvi_update` / `incdvi_render_page`）。
 > 姊妹篇：[dvi-preview-feasibility.md](./dvi-preview-feasibility.md)（换显示格式的结论：不采用）——**本文只回答 G2 这一半：页索引/字节偏移重同步**。

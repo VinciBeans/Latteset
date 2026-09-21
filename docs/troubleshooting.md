@@ -1,5 +1,30 @@
 # Troubleshooting
 
+## 现象 → 行号（速查）
+
+| 现象 | 小节标题所在行 |
+|---|---|
+| 白屏 / 界面不渲染（dev 白屏、无 GPU、WSLg、HMR） | 28 / 122 / 130 / 144 |
+| 真机验收与 UI 驱动（MCP 清单、Monaco 输入、SyncTeX 精度、Bridge 0.13） | 166 / 180 / 216 / 275 / 393 |
+| Rust 单测 / CI（src-tauri 启动失败、Linux 路径语义） | 292 / 306 |
+| 中文文件名 / 路径 / 编码（含 GBK 源的真实缺陷） | 326 / 350 / 382 / 417 |
+| release 档点「编译」弹出终端黑框 | 423 |
+| `\include{子目录}` + `-output-directory` | 493 |
+| XeLaTeX 每次编译慢 4–5 秒（fontconfig 缓存失效） | 532 |
+| LuaLaTeX 切过去失败 / 第一次特别慢 | 549 |
+| 编译期实时反馈要尾随 `.log`（非 TTY 4KB 块缓冲） | 572 |
+| 错误列表文件名偶尔错一章（日志 `)`/`(` 同行，未修） | 582 |
+| 配置 / 设置文件异常（半截写入、更名后目录变化） | 594 / 633 |
+| `cargo build -p latteset-server` 报拒绝访问 | 610 |
+| 含中文的探针文档不能用 pdflatex | 663 |
+| 库内嵌档 SyncTeX 定位不可用（同步数据里没有真实源文件名） | 683 |
+| headless（CLI / MCP）怎么跑、怎么排障 | 722 |
+| 查「引擎到底读了什么 / 为什么找不到文件」 | 758 |
+| 脚本 / 前端杂项坑（WS 探针、PowerShell 自动变量、format 口令、`<select>` 宽度、死 CSS） | 782 / 799 / 817 / 827 |
+| 精简 bundle 不含 `beamer.cls` | 848 |
+| **子进程 Tectonic 的 Quick 产物整段没有目录**（已改 `-r 1`） | 76 |
+| 外部改文件「既重载又报外部修改」/ dev 档不收敛 | 96 / 108 |
+
 ## `npm run tauri dev` 前端全白：Vite dev server 被 15.8 万个被监视文件拖死（2026-09 已修）
 
 **现象**：`npm run tauri dev` 起来后窗口是**彻底空白**（不是首帧竞态——右键 Reload 也白）。日志看起来一切正常：

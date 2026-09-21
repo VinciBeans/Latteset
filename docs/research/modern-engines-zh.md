@@ -501,7 +501,7 @@ lualatex -fmt="<abs>\partial.fmt" -interaction=nonstopmode -output-directory=tmp
 3. ⇒ **值得试的方向不是"换引擎"，而是"把 Tectonic 当作免装 TeX Live 的备选后端"**：`-b <本地 bundle>` +
    `-C` 可离线化；`--outfmt xdv` 让现有页级机制原样复用。要落地还需回答：bundle 分发体积/许可、与用户 TL 的宏包差异
    （本机 `tex/luatex`、`context` 等被排除；`.lua` 文件也在 ignore 列表里）、以及首跑下载能不能接受。
-   **落地计划、摩擦点清单与明天的四件事见 [tectonic-integration-plan.md](./tectonic-integration-plan.md)。**
+   **落地计划、摩擦点清单与明天的四件事见 [tectonic-integration-plan.md](../archive/tectonic-integration-plan.md)**（2026-09 已归档；原文两处口径已被 test-plan §8 作废，见 [tectonic-test-plan.md](./tectonic-test-plan.md) §9.2）。
 4. **仍未测**：真实学位论文模板（图表/公式密集）上的表现；bibtex/biber 全链路；`--bundle` 指的本地 bundle 实测；
    与 Latteset 现有"打开项目 → 探测根文件 → SyncTeX"链路的端到端适配成本。
 

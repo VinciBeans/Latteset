@@ -771,6 +771,17 @@ crates/latteset-server
 
 ### 9.1 services（唯一碰 IPC 的层）
 
+**另有四份纯函数工具**（roadmap ㊿ 收敛，改前是各处手写一份；都是纯函数、可单测）：
+
+| 文件 | 职责 | 为什么独立出来 |
+|---|---|---|
+| `paths.ts` | `toSlashes` / `normalizePath` / `isUnder` / `samePath` / `basename` / `relativize` / `remapUnder` | 分隔符归一与"在项目内"判定原先手写 **10+ 处**，漏一处就是**静默错**（标签指向不存在的文件、改名后编辑被当外部修改、根文件覆盖写成绝对路径）。`relativize` 对项目根**外**的路径返回**空串**（返回绝对路径会被后端拒、用户看不懂原因）——调用方必须处理空串 |
+| `errors.ts` | `errorText(e)` | 原先三份不等价实现 ⇒ 同一类失败在不同位置显示成 `[object Object]` 或空串 |
+| `fuzzy.ts` | 文件树搜索的模糊匹配（子串优先、子序列兜底） | 纯函数 + 6 例单测（roadmap ㊾） |
+| `draftPatch.ts` | 草案层：LaTeX → 近似排版文本 | 纯函数（实时预览 v1） |
+
+`src/bindings.ts` 是**生成物**（调试构建启动时由 specta 覆盖，见 `src-tauri/src/lib.rs`），**禁止手改**。
+
 ```ts
 // ipc.ts —— specta 生成 + 薄封装（类型全自动，本文件不手写任何 DTO）
 export const ipc = { openProject, listDir, readFile, saveAll,
@@ -1017,6 +1028,7 @@ settings-changed: Settings
 - **新建 `.tex` 必须让根探测认得出来**（㊺）：向导骨架**一定**含 `\documentclass`（单测钉住）——根探测要求文件里有它，所以"空文件 + 建完就编"这条路本身不成立；落盘后必须重跑一次探测（`projectStore.rescanRoot`，与 `open_project` 同一口径），探到即补一次 `compile_now`——漏掉补编译的症状是「状态栏已显示就绪，预览却一直停在『PDF 在这里等你』」（watch 那条链在探到根文件**之前**就丢掉了这次变化）。
 - **新加的设置键必须可缺省**（㊺ `compile.new_file_wizard`）：`#[serde(default = ...)]` —— 旧 `settings.json` 没有这个键也要能读，否则升级那一刻整个配置文件解析失败、用户设置全丢（与 `ui` / `tectonic` 同一条理由）。
 - **引擎清单只有一个来源**（㊻）：顺序/名字/说明/可用性都由后端 `list_engines` 给，**前端不得再写一份引擎数组**（状态栏的显示名也走它，`src/services/engines.ts` 是唯一入口）。可用性只能来自探测（`probe::find_in_path` + `LIB_FORM_COMPILED_IN`），`LATTESET_TEX_ENGINES` **只能筛选与重排、不能伪造可用性**；清单里必须**始终含有当前设置的那个引擎**（被收窄掉时前端补一条不可选的只读项并说明原因，否则下拉会显示空白）。
+- **前端路径与错误只有一份口径**（㊿）：分隔符归一 / "在项目内"判定 / 项目内相对路径一律走 `services/paths.ts`，**不得再手写 `replace(/\\/g,"/")` 与前缀比较**（历史上有 10+ 处，且两处"相对路径"实现语义不同 —— 一处项目外返回绝对路径，会把绝对路径当相对路径发出去）；rejection 取人话一律走 `services/errors.ts`。大小写口径同样只许一份：`.tex` 判定一律 `/\.tex$/i`（Windows 上 `.TEX` 是同一个文件）。
 - **页哈希口径只有一个（V1）且缓存自带标记**（已知债 #26，2026-09 修）：`hash_page` 必须丢掉 `bop` 尾部的 4 B `prev`（保留 opcode + 10×i32 计数器）——改回"整页哈希"即复发"前面某页变长 ⇒ 第 3 页起全部判变化"（实测 25/26 页、Σ375 页假阳性）；`tmp/<stem>.<engine>.pages` 首行必须写 `PAGES_CACHE_VERSION`，读侧不匹配一律当 `None`。**且 A/B 的判据必须建在页级哈希（含页数）上，不得建在整篇 XDV 字节指纹上**——`pre` 注释在 TeX Live 的 `xelatex` 下是本地墙钟（跨分钟必失效，Tectonic 是固定串）。
 
 前端的三处异步守卫与 PreviewPane 渲染契约见 §9.2 / §9.4，SyncTeX 相关约束见 §5。
@@ -1035,6 +1047,7 @@ settings-changed: Settings
 | **引擎清单**（㊻：`core::engine::engine_list` + infra `probe::find_in_path`） | `cargo test -p latteset-core --lib engine`（6 例：Tectonic 排第一 / 名字短且不含句子 / 缺可执行文件即不可用且给原因 / 库形态让 Tectonic 免 exe / env 覆盖可筛可排且全不认识时忽略 / **覆盖不能伪造可用性**）+ `cargo test -p latteset-infra --lib probe`（4 例，含真机 PATH 探针）。真机：设置面板选项来自后端、`LATTESET_TEX_ENGINES='pdf, xelatex'` ⇒ 选项恰为 `pdfLaTeX, XeLaTeX`（顺序照写，且别名/大小写容错） |
 | **新建目录**（㊺ §6.13.2） | `cargo test -p latteset-infra --lib fs::`（`create_dir` 单层语义：成功建出 / 已存在 `AlreadyExists` / 父目录不存在报错 / 同名文件占位也报 `AlreadyExists` / 中文目录名）。真机：工具栏 `🗀＋`、右键菜单（目录/文件两种目标）、向导「或者先建个文件夹」三处入口，重名与带 `/` 的非法名都给提示、`Esc` 零产物（见 roadmap §6.13.2 的表） |
 | **删除 / 改名 / 搜索**（㊼㊽㊾ §6.15） | `cargo test -p latteset-infra --lib fs::`（`remove_file`/`remove_dir_all`/`rename` 的语义：删文件与递归删目录、改名的 `AlreadyExists` 不覆盖）+ `npm run test`（`src/services/__tests__/fuzzy.spec.ts` 6 例：空查询 / 子串忽略大小写 / 子序列 / 文件名优先 / 子串优先 / 全不命中为 `null`）。真机：悬停垃圾桶（规则 + 结构，见 §6.15 的 ⚠）、二次确认的取消与确认、递归删目录、**删/改根文件的状态收口**（标签关闭 / 根跟着走 + 补编译）、搜索的命中/0 命中/清空（见 roadmap §6.15 的表） |
+| **前端路径与错误口径**（㊿：`services/paths.ts` + `services/errors.ts`） | `npm run test`（`src/services/__tests__/paths.spec.ts` 10 例：分隔符归一 / `..` 合并 / 同路径判定 / `isUnder` 不被 `chapters-backup` 骗过 / **项目外路径 `relativize` 给空串** / 改名前缀重映射含混写分隔符）。真机冒烟：新建文件、改名子文件（`chapters/intro.tex`→`chapters/body.tex`）、删含文件的目录（确认弹窗报"里面还有 1 个文件"）、搜索 `notes`/清空 —— 四条全过（2026-09-21） |
 | **片段文档装配**（㊸ 切片 1：`core::snippet::build_snippet_document`） | `cargo test -p latteset-core --lib snippet`（5 例：导言区逐字照搬/两处路径注入与守卫/缺 `\begin{document}` 如实报错/空片段拒绝/末尾缺换行） |
 | 真实 latexmk / synctex 集成 | `cargo test -p latteset-infra -- --ignored`（含两条流式用例：`-- --ignored streaming` / `-- --ignored live_errors`，断言"进度/错误在编译结束前 ≥100ms 就到了"） |
 | 流式反馈真机时间线（页进度 / 实时错误 / 终态不被覆盖） | `node scripts/gen-stream-fixture.mjs test_file/projects/_stream-lab [--error]` 生成 400KB / 162 页夹具 → `VITE_LATTESET_PROJECT=<夹具> npm run tauri dev` → 用 tauri server 注入 `window.__TAURI__.event.listen` 记录四个编译事件的时间线（脚本见提交说明；夹具目录已被 .gitignore 覆盖） |

@@ -72,6 +72,27 @@ test_file/research/
 test_file/e2e/drivers/
 .npm-cache/
 
+# ============ e2e 实验产物（真机复核时现跑现生成的脚本与证据；政策见 test_file/e2e/README.md） ============
+# 这些是**一次性真机复核**的配套（`.ps1` 驱动 + 同名 `.json` 证据），docs 里统一注明
+# 「工作区产物，未提交」⇒ 这里把规则补上，别让它们继续出现在 `git status` 里。
+# 注：已经被跟踪的同名脚本不受影响（gitignore 只管未跟踪文件）。
+test_file/e2e/math-preview-*.ps1
+test_file/e2e/math-preview-*.json
+test_file/e2e/synctex-42-*.ps1
+test_file/e2e/synctex-42-*.json
+test_file/e2e/synctex-input-check.txt
+# 真机复核用的 scratch 工程（docs/troubleshooting.md 引用 `test_file/e2e/dedup-status`）
+test_file/e2e/dedup-status/
+test_file/e2e/preview-ab/
+test_file/e2e/anEmptyRoad/
+# ㉖ 夹具的**对比臂产物**（`latexmkrc-fixture/{main.pdf,c.err,c.out}`）：夹具本体是
+# `main.tex` + `latexmkrc` + `body/intro.tex`，产物每次跑对比都会重生成。
+test_file/e2e/latexmkrc-fixture/main.pdf
+test_file/e2e/latexmkrc-fixture/c.err
+test_file/e2e/latexmkrc-fixture/c.out
+# 一次性的 dev 预览配置（0 引用）
+test_file/tauri-dev-preview.json
+
 # ============ LuaJIT 实验构建副本（研究用，含嵌套 .git 与构建产物，勿上传） ============
 test_file/luajit-src/
 
@@ -119,7 +140,7 @@ test_file/tectonic-lib-run/
 test_file/t21-verify/
 test_file/t24-verify/
 
-# ============ 团队产出的中间 part（正式副本由 T5 落到 docs/research/tectonic-plan-parts/） ============
+# ============ 团队产出的中间 part（正式副本在 docs/archive/tectonic-plan-parts/，结论文档在 docs/research/） ============
 test_file/tectonic-plan-parts/
 
 # ============ 本地排查小工具（会话转录解压等一次性辅助脚本） ============

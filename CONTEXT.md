@@ -50,7 +50,7 @@ _Avoid_: 报错弹窗（提示不是错误对话框）、通知
 系统默认 PDF 程序作为预览目标，后续版本支持。
 
 **TeX 引擎 (TeX engine)**:
-执行编译的底层程序（xelatex / pdflatex / lualatex 等）。默认 xelatex；后续按系统语言自适应（中文→xelatex，其他→pdflatex）。
+执行编译的底层程序（Tectonic / xelatex / pdflatex / lualatex 等）。**默认 Tectonic**（2026-09-17 起，子进程档；见 [ADR-0014 修订 1](./docs/adr/0014-tectonic-first.md)）；老配置里已写 xelatex 的不变。原「按系统语言自适应（中文→xelatex，其他→pdflatex）」已否决（②-2 经实测砍掉，见 [roadmap §7](./docs/research/tex-ide-roadmap-priority.md)）。
 _Avoid_: 编译器（与通用编程语境混淆）
 
 ## Project

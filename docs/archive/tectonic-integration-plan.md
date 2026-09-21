@@ -1,6 +1,7 @@
 # Tectonic 集成落地方案（评估 + 明天要做的四件事）
 
-> 背景：本轮已把 Tectonic 0.17.0 装好并实测完（安装记录与数字见 [modern-engines-zh.md](./modern-engines-zh.md) §8）。
+> 背景：本轮已把 Tectonic 0.17.0 装好并实测完（安装记录与数字见 [modern-engines-zh.md](../research/modern-engines-zh.md) §8）。
+> **归档说明（2026-09）**：本文已从 `docs/research/` 移到 `docs/archive/`，正文一字未改（只修了本行与 §67 的跨目录链接）；两处口径已被实测作废（`-b <本地 tar>`、`-C` 语义，见 [tectonic-test-plan.md](../research/tectonic-test-plan.md) §8 的 C-6/C-7 与 §9.2）。
 > 本文是**集成可行性结论 + 可执行计划**，回答"能否把 Tectonic 集成进 Latteset、连缓存一起带上，让大多数情况下直接读缓存、用户开箱即用"。
 > 结论先行：**能，两半都成立**（Tectonic 官方自我定位就是 *embeddable*；缓存是普通文件、且可以指向本地 bundle 完全离线）。
 > 但**不能直接打包**——先过许可审计与三条未验证项（见 §4）。明天（2026-09-14）按 §5 的顺序做。
@@ -64,7 +65,7 @@
 | 缓存 | `%LOCALAPPDATA%\TectonicProject\Tectonic\cache\{bundles,formats}`（426 文件 / 62 MB） |
 | 中文夹具与产物 | `test_file/projects/bench/_zhcmp/tect/`（hello、min-zh）、`tect-thesis/`（thesis 副本 + `main.xdv`(264,736 B) + `main.synctex.gz`） |
 | 对比脚本 | `test_file/projects/bench/_zhcmp/tectonic-bench.ps1`（交错 3 轮、逐次校验产出） |
-| 实测数字 | [modern-engines-zh.md](./modern-engines-zh.md) §8.3（速度）/ §8.4（机制对接） |
+| 实测数字 | [modern-engines-zh.md](../research/modern-engines-zh.md) §8.3（速度）/ §8.4（机制对接） |
 
 > 以上 `test_file/**` 实验件均已 gitignore，不随仓库分发。
 

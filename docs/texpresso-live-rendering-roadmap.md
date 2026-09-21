@@ -1,5 +1,6 @@
 # 实时渲染实现路线图（参考 TeXpresso 架构）
 
+> **状态（2026-09 回写）**：本文是**对上游 [let-def/TeXpresso](https://github.com/let-def/TeXpresso) 的方案通读**，**其 8 阶段复刻路线本项目已否决**（理由见 [roadmap §5](./research/tex-ide-roadmap-priority.md)：G1/G4 前提在 Windows 不成立、VFS 与 ADR-0007 冲突；结论"自建/改造引擎"亦不做）。保留本文是为**吸收清单与前提记录**（已吸收项见 roadmap §5.4/§5.8 与 §1 基线）。文件名保留原样——它是"对上游的通读"，不是本项目文档（见 [ADR-0011](./adr/0011-rename-to-latteset.md)）。
 > 本文档是一份可直接参考的实施路线图，用于在**自己的项目**中复刻 TeXpresso 式的"边改边出图"能力。
 >
 > 分析对象：[TeXpresso](https://github.com/let-def/TeXpresso) —— 一个 LaTeX 实时预览器。

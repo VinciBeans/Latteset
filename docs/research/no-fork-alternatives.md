@@ -1,5 +1,6 @@
 # 没有 `fork()` 时，能不能实现上游阶段 6/7 的功能
 
+> **状态（2026-09 回写）**：**已否决 —— 降级为依赖记录**。`fork` 换来的"从检查点续跑"在 Windows **没有等价机制**（WSL 本机不可用）⇒ 上游阶段 6/7 不做；真正沉淀下来的是本文的成本结论（编辑期单趟里**导言区占 71–89.5%** ⇒ 砍固定开销才是大头）与 §3.1 的 fmt 化实测否决（中文文档禁 fmt）。引用见 [roadmap §5.5/§9](./tex-ide-roadmap-priority.md)。
 > 上游依据：[texpresso-live-rendering-roadmap.md](../texpresso-live-rendering-roadmap.md) §1（前提 G4）、§1.3（跨平台提醒）、§阶段 6（seen 水位 + trace）、§阶段 7（fork 快照 + fence）。
 > 姊妹篇：[g1-read-interception-feasibility.md](./g1-read-interception-feasibility.md)（读拦截）、[g2-byte-offset-resync.md](./g2-byte-offset-resync.md)（页索引）、[stage3-incremental-output-parsing.md](./stage3-incremental-output-parsing.md)（追加式解析）、[incremental-edit-x-dvi.md](./incremental-edit-x-dvi.md)（已落地的页级复用）。
 > **结论一句话**：`fork` 换来的"**从检查点续跑**"在 Windows 上**没有等价机制**（`PssCaptureSnapshot` 只读、CRIU 是 Linux 专属、Cygwin fork 要求 Cygwin 目标引擎），唯一真等价的是 **WSL**——而本机 WSL 不可用（服务拒绝访问）。但本轮实测给出了一个更要紧的事实：**编辑期单趟编译的成本里，导言区占 71%（28 页）～ 89.5%（74 页）**——也就是说 fork 能省的"重排"只占小头，**砍固定开销才是不需要 fork 的大头**。

@@ -1,5 +1,6 @@
 # 阶段 3「增量输出解析」深挖：验收标准达成，但没有消费方
 
+> **状态（2026-09 回写）**：**已落地（原型入库、不接线）**——追加式页索引达成上游验收标准但**无消费方**（`scripts/xdv-inc.mjs`）；副产品是两个静默错误的修复（1122 截断点 / 0 处不一致），已回写到 [g2-byte-offset-resync.md](./g2-byte-offset-resync.md) 与 [modules.md](../modules.md) §12.2 #19。
 > 上游依据：[texpresso-live-rendering-roadmap.md](../texpresso-live-rendering-roadmap.md) §阶段 3（"增量输出解析（字节级）"，对应上游 `src/frontend/incdvi.c:86` 的两阶段结构）。
 > 姊妹篇：[g2-byte-offset-resync.md](./g2-byte-offset-resync.md)（**全量**页索引这一半）、[dvi-preview-feasibility.md](./dvi-preview-feasibility.md)（渲染那一半，已否决）、[stage2-streaming-feasibility.md](./stage2-streaming-feasibility.md)（流式输出，已落地）。
 > **结论一句话**：阶段 3 的技术要件——追加式页索引 + 缓冲区变短的回滚 + **成本 ∝ 新增字节**——已在当前项目**实现并验证通过**（4 种喂入序列对拍全绿，141 轮成本实测增量累计恒定），上游的验收标准「每轮解析耗时常数级」**达成**。但它在当前架构里**没有消费方**：编译期页进度已由阶段 2 的 `[N]` 标记满足、编译后索引只需一次全量（5.4ms）、页级差分的消费方（⑪）尚未开工。故：**原型入库、不接线**（判据见 §8）。副产品更有价值——实现增量时被迫把"页完整"的判据写明确，从而**暴露并修复了全量解析器的两个静默错误**，并把 G2 的"半成品可读"从 6 个采样点加强到 **1122 个截断点 / 71993 页 / 0 处不一致**。

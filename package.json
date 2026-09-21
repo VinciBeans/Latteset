@@ -3,6 +3,10 @@
   "private": true,
   "version": "0.1.0",
   "type": "module",
+  "//packageManager": "本仓库用 npm（有 package-lock.json，CI 全走 npm ci）。刻意**不写** packageManager 字段：corepack 会按它强制切 npm 版本（离线时直接失败）。写上这行只是提醒别再混进 pnpm/yarn 的 lockfile —— 2026-09 清掉过一份误入的 pnpm-lock.yaml。",
+  "engines": {
+    "node": ">=18"
+  },
   "scripts": {
     "copy:pdf-worker": "node scripts/copy-pdf-worker.mjs",
     "dev": "npm run copy:pdf-worker && vite",

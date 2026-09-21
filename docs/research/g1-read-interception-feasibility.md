@@ -1,5 +1,6 @@
 # G1「拦截每一次 I/O」深挖：当前项目里有没有廉价等价物
 
+> **状态（2026-09 回写）**：**降级为依赖记录**——字节级 I/O 拦截**不做**（[modules.md](../modules.md) §12.1 #24）；可用部分已落地为**依赖记录通道**：`.fls` + `.fdb_latexmk`（`scripts/fls-report.mjs`），供 ㉝ 精确失效使用（**仍未接线**）。
 > 上游依据：[texpresso-live-rendering-roadmap.md](../texpresso-live-rendering-roadmap.md) §1 前提表（G1）、§阶段 6（seen 水位 + trace + `rollback_add_change`）。
 > 姊妹篇：[g2-byte-offset-resync.md](./g2-byte-offset-resync.md)（输出侧的字节偏移重同步）、[dvi-preview-feasibility.md](./dvi-preview-feasibility.md)（渲染那一半）、[stage2-streaming-feasibility.md](./stage2-streaming-feasibility.md)（流式输出，已落地）。
 > **结论一句话**：G1 的**原义**（拦到每一次读**且拿到字节偏移**）在当前项目里既**拿不到**、也**无处兑现**——它唯一的消费方是 seen 水位回滚，而那要求"引擎进程活着且状态可回退"（G4 fork 快照，Windows 无 `fork()`）。但 G1 的**信息内容**（读了什么）**已经免费躺在磁盘上**：`.fls`（引擎实际打开的文件，编译中增量可尾随）+ `.fdb_latexmk`（latexmk 依赖图，含 bibtex 步骤与 md5），两者互补、**零新增依赖**。它们能换来两件真事：**精确失效**（现在两个方向都是错的，已实测）与**缺失文件的查找轨迹**（kpathsea 调试位，时间开销不可测）。
