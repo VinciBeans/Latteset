@@ -2,6 +2,8 @@
 import { defineStore } from "pinia";
 import { computed, ref } from "vue";
 import { ipc } from "../services/ipc";
+import { isUnder, remapUnder } from "../services/paths";
+import { errorText } from "../services/errors";
 import { useProjectStore } from "./project";
 
 export interface OpenFile {
@@ -55,11 +57,9 @@ export const useEditorStore = defineStore("editor", () => {
     }
   }
 
-  /** CmdError（`{code, message}`）取人话；未知形状退化为文本。 */
-  function cmdErrorMessage(e: unknown): string {
-    if (typeof e === "object" && e && "message" in e) return String((e as { message: unknown }).message);
-    return String(e);
-  }
+  /** CmdError（`{code, message}`）取人话；未知形状退化为文本。
+   *  实现集中在 `services/errors.ts`（roadmap ㊿：前端只留一份）。 */
+  const cmdErrorMessage = errorText;
 
   function closeTab(path: string) {
     const i = tabs.value.findIndex((t) => t.path === path);
@@ -166,14 +166,11 @@ export const useEditorStore = defineStore("editor", () => {
    * 关掉某个路径（含它**下面**的全部路径）的标签 —— roadmap ㊼ 删除后的收口。
    *
    * 删目录时子文件的标签也必须关：文件已经不存在了，留着标签点进去只会得到"读取失败"。
-   * 归一化分隔符后再比前缀，避免 `a\b` 与 `a/b` 两种拼法漏判。
+   * 前缀判定用 `services/paths` 的 `isUnder`（分隔符无关，避免 `a\b` 与 `a/b` 漏判）。
    */
   function closeTabsUnder(target: string) {
-    const norm = (p: string) => p.replace(/\\/g, "/");
-    const base = norm(target);
     for (const t of [...tabs.value]) {
-      const p = norm(t.path);
-      if (p === base || p.startsWith(`${base}/`)) closeTab(t.path);
+      if (isUnder(t.path, target)) closeTab(t.path);
     }
   }
 
@@ -182,18 +179,10 @@ export const useEditorStore = defineStore("editor", () => {
    *
    * 标签 / 活动路径 / 脏集合 / 缓冲 / 自保存时刻 / 冲突标记**都要跟着走**：漏掉任何一个，
    * 症状分别是"标签指向不存在的文件"、"保存写回旧路径"、"改名后刚才的编辑被当成外部修改"。
-   * 内容不动（改名不改内容），所以只搬 key。
+   * 内容不动（改名不改内容），所以只搬 key。前缀替换用 `services/paths` 的 `remapUnder`。
    */
   function remapPaths(from: string, to: string) {
-    const norm = (p: string) => p.replace(/\\/g, "/");
-    const base = norm(from);
-    const next = norm(to);
-    const remap = (p: string): string => {
-      const n = norm(p);
-      if (n === base) return next;
-      if (n.startsWith(`${base}/`)) return next + n.slice(base.length);
-      return p;
-    };
+    const remap = (p: string): string => remapUnder(p, from, to);
 
     for (const t of tabs.value) {
       const mapped = remap(t.path);

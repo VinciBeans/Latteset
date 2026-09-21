@@ -21,7 +21,8 @@ pub enum Engine {
     PdfLaTeX,
     #[serde(rename = "lualatex")]
     LuaLaTeX,
-    /// Tectonic（2026-09 引入；方案见 [tectonic-integration-plan.md](../../../docs/research/tectonic-integration-plan.md)）。
+    /// Tectonic（2026-09 引入；方案见 [tectonic-library-plan.md](../../../docs/tectonic-library-plan.md)；
+    /// 计划期的一次性集成方案已归档到 `docs/archive/tectonic-integration-plan.md`）。
     ///
     /// 形态 = **子进程驱动官方 `tectonic.exe`**（路线①，`docs/research/tectonic-test-plan.md` §1.2 的 D2 裁决）：
     /// 它自带 bundle、**不读用户 TeX Live**，自己出 PDF（`writes_xdv() == false`）⇒ 页级复用 A/B/C
@@ -86,6 +87,17 @@ pub enum CompileKind {
     Quick,
     /// 完整 latexmk：多趟收敛 + bibtex/biber/索引。首编、手动编译、空闲收敛使用。
     Full,
+}
+
+impl CompileKind {
+    /// 日志/JSON 里的字面量（`quick` / `full`）——**唯一副本**：两个入口（GUI 与 headless）
+    /// 各写一遍 match 的话，日志字段迟早对不上。
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            CompileKind::Quick => "quick",
+            CompileKind::Full => "full",
+        }
+    }
 }
 
 /// 编译模式（CONTEXT.md：连续编译 / 保存触发编译）。
@@ -324,6 +336,13 @@ mod tests {
         assert_eq!(Engine::PdfLaTeX.binary_name(), "pdflatex");
         assert_eq!(Engine::LuaLaTeX.binary_name(), "lualatex");
         assert_eq!(Engine::Tectonic.binary_name(), "tectonic");
+    }
+
+    /// `CompileKind::as_str` = 日志/JSON 字段的**唯一副本**（headless 曾手写一份同值的 match）。
+    #[test]
+    fn compile_kind_has_one_literal_source() {
+        assert_eq!(CompileKind::Quick.as_str(), "quick");
+        assert_eq!(CompileKind::Full.as_str(), "full");
     }
 
     #[test]

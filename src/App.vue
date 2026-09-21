@@ -19,6 +19,7 @@ import { useAutoSave } from "./composables/useAutoSave";
 import { useIdleConvergence } from "./composables/useIdleConvergence";
 import { ipc } from "./services/ipc";
 import { subscribeEvents } from "./services/events";
+import { errorText } from "./services/errors";
 import { useTheme } from "./composables/useTheme";
 import SettingsPanel from "./components/SettingsPanel.vue";
 import RootFilePicker from "./components/RootFilePicker.vue";
@@ -151,8 +152,7 @@ async function onRootPicked(relPath: string) {
     await outline.refresh();
     rootPickerOpen.value = false;
   } catch (e) {
-    const msg = typeof e === "object" && e && "message" in e ? String((e as { message: unknown }).message) : String(e);
-    rootPickerError.value = `设置根文件失败：${msg}`;
+    rootPickerError.value = `设置根文件失败：${errorText(e)}`;
     console.error("设置根文件失败：", e);
   } finally {
     rootPickerBusy.value = false;

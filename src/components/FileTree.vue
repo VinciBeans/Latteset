@@ -5,6 +5,8 @@ import { useProjectStore } from "../stores/project";
 import { useEditorStore } from "../stores/editor";
 import { useSettingsStore } from "../stores/settings";
 import { ipc } from "../services/ipc";
+import { isUnder, relativize, samePath, toSlashes } from "../services/paths";
+import { errorText } from "../services/errors";
 import { fuzzyMatch } from "../services/fuzzy";
 import type { DirEntryInfo, DocKind, DocLanguage } from "../bindings";
 import FileTreeItem from "./FileTreeItem.vue";
@@ -120,7 +122,7 @@ async function submitCreate() {
   }
   const root = project.project?.root;
   if (!root) return;
-  const rel = name.replace(/\\/g, "/");
+  const rel = toSlashes(name);
   if (rel.startsWith("/") || rel.includes("..")) {
     createError.value = "只能建在项目内（不要以 / 开头、不要出现 ..）";
     return;
@@ -220,10 +222,6 @@ async function onWizardFolder() {
   await startCreate("dir");
 }
 
-function errorText(e: unknown): string {
-  return typeof e === "string" ? e : ((e as { message?: string })?.message ?? String(e));
-}
-
 // ---- ㊼ 删除：悬停垃圾桶 → 二次确认 → 递归删除 + 编辑器收口 ----
 
 /** 待确认的删除目标（非空 = 弹窗开着）。 */
@@ -233,11 +231,7 @@ const deleteError = ref("");
 
 /** 目录里有多少个文件（从**已有的树**里数，不额外读盘）：确认弹窗要把后果讲清楚。 */
 function countFilesUnder(path: string): number {
-  const base = path.replace(/\\/g, "/");
-  return project.tree.filter((e) => {
-    const p = e.path.replace(/\\/g, "/");
-    return !e.is_dir && p.startsWith(`${base}/`);
-  }).length;
+  return project.tree.filter((e) => !e.is_dir && isUnder(e.path, path)).length;
 }
 
 function askDelete(payload: { path: string; isDir: boolean; name: string }) {
@@ -335,10 +329,20 @@ async function submitRename(payload: { path: string; name: string }) {
 async function afterTreeMutation(oldPath: string, newPath: string | null) {
   const p = project.project;
   if (!p || !p.root_file) return;
-  const same = (a: string, b: string) => a.replace(/\\/g, "/") === b.replace(/\\/g, "/");
-  if (!same(p.root_file, oldPath)) return;
+  if (!samePath(p.root_file, oldPath)) return;
   if (settings.settings?.root_file) {
-    await settings.update({ root_file: newPath ? relativeToRoot(newPath) : null });
+    // 改覆盖：删 ⇒ 清（回到自动探测）、改名 ⇒ 换成新名字。`relativeToRoot` 失败会给空串，
+    // 那一刻**什么都不发**比发一个绝对路径更安全（后者会被后端拒，用户看不懂为什么）。
+    if (newPath) {
+      const rel = relativeToRoot(newPath);
+      if (!rel) {
+        createError.value = "改名成功，但新路径不在项目内，根文件覆盖未更新——请在「设置 → 项目」里手动指定";
+      } else {
+        await settings.update({ root_file: rel });
+      }
+    } else {
+      await settings.update({ root_file: null });
+    }
     await project.syncProject();
   } else {
     await project.openProject(p.root);
@@ -351,11 +355,12 @@ async function afterTreeMutation(oldPath: string, newPath: string | null) {
   }
 }
 
-/** 项目内绝对路径 → 相对路径（`update_settings` 只接受相对形态）。 */
+/** 项目内绝对路径 → 相对路径（`update_settings` 只接受相对形态）。
+ *
+ *  用 `services/paths` 的**唯一实现**：不在根内时返回**空串**（而不是原样返回绝对路径 —— 那会把
+ *  绝对路径当相对路径发给后端，用户只看到一句莫名其妙的"root_file 指向的文件不存在"）。 */
 function relativeToRoot(abs: string): string {
-  const root = (project.project?.root ?? "").replace(/\\/g, "/").replace(/\/+$/, "");
-  const a = abs.replace(/\\/g, "/");
-  return a.startsWith(`${root}/`) ? a.slice(root.length + 1) : a;
+  return relativize(abs, project.project?.root ?? "");
 }
 
 // ---- ㊾ 搜索：树上方一个输入框，模糊匹配后只留命中项与它们的祖先 ----
@@ -369,7 +374,7 @@ interface Node {
 }
 
 function buildTree(): Node[] {
-  const norm = (p: string) => p.replace(/\\/g, "/");
+  const norm = toSlashes;
   const map = new Map<string, Node>();
   const roots: Node[] = [];
   for (const e of project.tree) {

@@ -29,7 +29,7 @@ use latteset_core::project::{
     FileSystem, ProjectState,
 };
 use latteset_core::scheduler::CompileRunner;
-use latteset_core::settings::{ProjectOverrides, Settings};
+use latteset_core::settings::Settings;
 use latteset_core::synctex::{pdf_path_for_root, resolve_inverse, synctex_data_path, SourcePosition,
     SyncTexPosition, SyncTexProvider};
 use latteset_core::types::{
@@ -621,22 +621,14 @@ fn build_runner(
     Arc::new(LatexmkRunner::new(fs, progress))
 }
 
+/// 引擎名 = core 的 [`Engine::binary_name`]（**唯一副本**；这里曾手写一份同值的 match）。
 fn engine_name(s: &Settings) -> String {
-    match s.compile.engine {
-        latteset_core::types::Engine::XeLaTeX => "xelatex",
-        latteset_core::types::Engine::PdfLaTeX => "pdflatex",
-        latteset_core::types::Engine::LuaLaTeX => "lualatex",
-        latteset_core::types::Engine::Tectonic => "tectonic",
-    }
-    .to_string()
+    s.compile.engine.binary_name().to_string()
 }
 
+/// 编译强度字面量 = core 的 [`CompileKind::as_str`]（同上：别两处各写一遍）。
 fn kind_name(k: CompileKind) -> String {
-    match k {
-        CompileKind::Quick => "quick",
-        CompileKind::Full => "full",
-    }
-    .to_string()
+    k.as_str().to_string()
 }
 
 fn path_err(e: latteset_core::project::PathError, path: &Path, what: &str) -> ServerError {
@@ -707,11 +699,6 @@ pub async fn ensure_open(session: &mut Session, project: Option<&Path>) -> Resul
             session.open_project(&cwd).await
         }
     }
-}
-
-/// `ProjectOverrides` 只是转出给 CLI 的 `settings` 子命令（保持与 GUI 同源的类型）。
-pub fn effective_settings(global: &Settings, overrides: &ProjectOverrides) -> Settings {
-    SettingsStorage::effective(global, overrides)
 }
 
 #[cfg(test)]

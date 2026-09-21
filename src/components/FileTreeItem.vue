@@ -35,7 +35,9 @@ const expanded = ref(false);
 
 const isDir = computed(() => props.node.entry.is_dir);
 const isActive = computed(() => editor.activePath === props.node.entry.path);
-const isTex = computed(() => props.node.entry.name.endsWith(".tex"));
+// 大小写不敏感：`.TEX` 在 Windows 上是同一个文件，按 `.tex` 严格比对会让它显示成普通文件、点不开
+// （建文件那条路用的是 `/\.tex$/i`，两边口径必须一致）
+const isTex = computed(() => /\.tex$/i.test(props.node.entry.name));
 const renaming = computed(() => props.renamingPath === props.node.entry.path);
 const open = computed(() => expanded.value || !!props.forceExpand);
 
