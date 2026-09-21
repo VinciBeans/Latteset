@@ -60,6 +60,27 @@ ADR-0010 的纪律是「**infra 是文件系统与进程的唯一落点**；上�
   - ~~X-4（环境变量是进程级、无法分步施加）~~ **已证伪**：TeX 步与转换步都有非 env 的显式注入点，该「三选一」撤回，改为两条纪律——库内**禁止** `build_date_from_env`、**必须**显式 `build_date(SystemTime::now())`（默认值是 `UNIX_EPOCH`，忘写即把「`\today` 印 1970」变成默认行为）。
 - **未做决策的小节（HL-4）**：PDF **加密**路径的 C 层 `getenv("SOURCE_DATE_EPOCH")` 无 API 可注入/屏蔽 ⇒ 可选「① 不支持加密 PDF 并报错/警告 ② 该路径回子进程 ③ 接受非确定性并登记」。**此项未定，不是结论。**
 
+### X-5 补充登记：`latteset-tectonic` 生产路径里的 `std::fs`（2026-09-21 审计补）
+
+**背景（审计发现文档与代码相反）**：上面那条边界写着「文件读写仍经 core 的 `FileSystem` trait」，但 `crates/latteset-tectonic/src/runner.rs` 的生产路径里有 **12 处**直接 `std::fs`。逐处核对之后的分类如下 —— **本登记把事实写进 ADR，而不是让文档继续说反话**：
+
+| 位置（`runner.rs`） | 语义 | 为什么不能走 trait |
+|---|---|---|
+| `:216` `read_dir` / `:237` `read` | `seed_previous_intermediates`：预热上一轮的中间产物 | 该函数是**同步**的（且刻意"读盘在锁外做完再入库"），而 `FileSystem` 是 `async_trait` ⇒ 这里 await 不了 |
+| `:444` `metadata` | 判断 `\bibdata` 引用的 `.bib` 是否变化 | 同上（同步签名） |
+| `:717` `create_dir_all` | 建 format 缓存目录（**多层**） | trait 的 `create_dir` 是**单层**语义（㊺ 刻意如此：已存在要报 `AlreadyExists`） |
+| `:801` `read_to_string` / `:822` `write` | bib 指纹缓存 | 同步路径 |
+| `:904` `read_to_string` / `:983` `write` | `pages` 页哈希缓存 | 同步路径 |
+| `:967` `write` + `:970` `remove_file` | 输出 PDF 的**原子替换**（写 `.tmp` → `rename`） | 同步 + 原子性：与子进程档 `infra/runner.rs` 同一口径 |
+| `:1064` `create_dir_all` | 自建 `tmp/`（Tectonic 不会建 `-o` 目录） | 虽然在 async 函数里，但要的是**创建多层**语义 |
+
+**边界因此重述为**（这才是代码的实际约束，也是后续改动的判据）：
+1. X-5 覆盖的范围包括：**本 crate 的输出层**（写 PDF / 建 `tmp/` / 写缓存 / 预热中间产物）——它们与"文件系统实现"这件事无关，是"自驱引擎必须自己落盘"的必然结果；
+2. **`IoProvider` 那条读写路径仍必须代理到 `FileSystem`**（引擎向我们要文件时不许直读盘）——这条没有被放宽；
+3. 其它 crate 照旧：`src-tauri` 不出现 `std::fs`/`std::process`，`latteset-infra` 仍是默认依赖图里文件系统与进程的唯一落点；
+4. **同步上下文是这条例外的根因**（`FileSystem` 只有 async 形态）。若将来出现第二个消费者需要"同步或建多层的文件操作"，正确做法是**给 trait 补方法**（如 `create_dir_all`）而不是继续扩散 `std::fs` —— 现在只有一个消费者，为它加 trait 方法不划算。
+
+
 ## 后果
 
 **正向**：

@@ -1,9 +1,9 @@
 name: CI
 
 # 按 architecture.md §8 / ADR-0003 落地：
-#   cargo test + vue-tsc --noEmit + Windows runner tauri build 冒烟（验证 NSIS 打包链路）。
-# 注意：本仓库当前 origin 是 Gitee；GitHub Actions 需要镜像到 GitHub 才会触发。
-# 若只用 Gitee，请改用 Gitee Go（语法相近，见 docs 说明）。
+#   cargo test（core + infra + headless）+ vue-tsc --noEmit + Windows runner tauri build 冒烟（验证 NSIS 打包链路）。
+# 仓库真源：**GitHub 为 truth、Gitee 为镜像**（见 .github/workflows/sync-gitee.yml 与 docs/README.md）；
+# 早前这里写的"origin 是 Gitee"已过期（2026-09 审计核对 `git remote -v`）。
 on:
   push:
     branches: [master]
@@ -45,6 +45,18 @@ jobs:
       # 无 Tauri/无 GUI 依赖，Linux 可跑；不运行 #[ignore] 的真实 TeX 集成测试。
       - name: Core tests
         run: cargo test -p latteset-core
+
+      # infra（文件系统实现 / 监视 / 设置存储 / synctex 提供者 / 引擎 PATH 探测 / runner 的命令构造）。
+      # 2026-09 审计补：这条命令下 45 个用例此前**从未在 CI 执行**（AGENTS.md §5 却把它列为标准命令）。
+      # 真实 latexmk/synctex 的集成用例都带 #[ignore]，默认不跑；平台相关的断言已用 #[cfg(windows)] 隔离。
+      - name: Infra tests
+        run: cargo test -p latteset-infra
+
+      # headless 第二入口（⑥）：Session + CLI 参数解析 + MCP stdio 全链路（含 test/mcp_stdio.rs）。
+      # 2026-09 审计补：此前同样零 CI 覆盖 —— 而**补上当天就跑红**：默认引擎改成 Tectonic 之后，
+      # mcp_stdio 里 `settings_get` 仍断言 "xelatex"（这条断言空了两个月没人发现）。
+      - name: Headless (CLI/MCP) tests
+        run: cargo test -p latteset-server
 
   build-windows:
     name: Windows build (NSIS smoke)

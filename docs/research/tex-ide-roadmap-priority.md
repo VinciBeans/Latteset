@@ -239,13 +239,18 @@
 
 **真机冒烟**（2026-09-21）：新建文件 / 改名子文件 / 删含文件目录（确认弹窗报"里面还有 1 个文件"）/ 搜索与清空 —— 四条全过；`cargo test` 267+45+10、`npm run test` 16 文件 153 例、`npm run build` 全绿。
 
+**第二批落地（同日，紧接）**：审计列的前两项当场做完 ——
+- **CI 补 `cargo test -p latteset-infra` / `-p latteset-server`**（下表第 1 项）：这两条命令下 64 个用例此前从未执行，**补上当天就跑红**——`crates/latteset-server/tests/mcp_stdio.rs` 里 `settings_get` 仍断言 `engine == "xelatex"`，是默认引擎改 Tectonic 时漏改的（空了两个月没人发现）。已修断言并补了超时断言；同时把 `ci.yml:5` 里"origin 是 Gitee"的过期注释改对（实为 GitHub 为 truth）。
+- **ADR-0012 的 X-5 边界**（下表第 4 项）：文档说"文件读写仍经 `FileSystem` trait"，而 `latteset-tectonic/src/runner.rs` 生产路径有 12 处 `std::fs`。逐处核对后**把事实登记进 ADR**（同步上下文 await 不了 async trait；trait 的 `create_dir` 是单层语义）而不是让文档继续说反话；边界重述为"X-5 覆盖本 crate 的输出层，但 `IoProvider` 那条路径仍必须代理到 trait"。
+- 另：新增 `scripts/README.md`（22 个脚本的分组索引 + 两个"本机跑不通/缺依赖"的标注）——审计建议**不搬子目录**（约 50 处文档逐字引用 `node scripts/<name>.mjs`），补索引即可。
+
 **留档未做**（各是独立功能点，按收益排序；动它们之前先读本节）：
 | # | 项 | 为什么缓 |
 |---|---|---|
-| 1 | **CI 补 `cargo test -p latteset-infra` / `-p latteset-server`** | 这两条命令下共 **64 个用例从未在 CI 执行**（含第二入口 ⑥ 的全部单测）。收益最大、代价最小，风险是 ubuntu 上可能有平台假设需先本地验 |
+| 1 | ~~**CI 补 `cargo test -p latteset-infra` / `-p latteset-server`**~~ ✅ **已完成（2026-09-21）**，并因此抓出一条陈旧断言（见上） | — |
 | 2 | `infra/runner.rs`（**2016 行**，7 件事：命令构造/流式反馈/页哈希与转换/pages 缓存/超时证据/树杀）拆 `runner/{mod,cmd,feedback,products}.rs` | 纯移动 + `pub(crate)`，风险低但改动面大；收益是"改超时文案与改页哈希不再互相干扰" |
 | 3 | `tectonic/runner.rs` 的 `run_engines`（**499 行 / 16 参数**）拆趟 + `RunCtx` | 逻辑密集且**库形态缺真机基线**（本机无可用 bundle），动完必须走 `lib:*` 全套复核 |
-| 4 | **ADR-0012 的 X-5 边界与代码不符**：`TectonicLibRunner` 持 `fs` 字段却只用 1 处，其余 ~15 处生产路径直接 `std::fs` | 二选一：async 侧收口回 `self.fs`，或在 ADR 里把这些点**登记进 X-5** —— 现在文档与代码相反，属纪律问题 |
+| 4 | ~~**ADR-0012 的 X-5 边界与代码不符**~~ ✅ **已登记（2026-09-21）**：12 处 `std::fs` 逐处核对并写进 ADR，边界重述 | 剩余可选项：给 `FileSystem` 补 `create_dir_all`（目前只有一个消费者，不划算） |
 | 5 | 前端大组件：`PreviewPane.vue` 1080 行（草案层可抽 `useDraftLayer`）、`SettingsPanel.vue` 851、`FileTree.vue` 759（新建/删除/改名/搜索 5 条流程，可抽 `fileOps`） | 只在"要改它们时"顺手拆；为拆而拆会把 5 条已真机验过的流程再冒一次险 |
 | 6 | 五份复制粘贴的模态样式（backdrop/panel/foot + 各自的 `.btn`）→ `ModalShell.vue` + `controls.css` | 同上；且四处 z-index 不统一（100/110/120/130）值得一并收 |
 | 7 | 前端新功能缺单测：FileTree 的"新建→落盘→打开→展开"顺序、改名/删除后的根收口、`engines.ts` 缓存 | 这三条正是第 1 项修掉的那个隐患的回归面 |

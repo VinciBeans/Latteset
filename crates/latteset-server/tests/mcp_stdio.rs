@@ -208,8 +208,11 @@ fn tool_calls_round_trip_over_stdio() {
     assert_eq!(status["structuredContent"]["status"], "none");
 
     // 5) settings：Agent 可以确认引擎/超时/模式
+    //    默认引擎 = Tectonic（ADR-0014 修订 1，2026-09-17；只影响没有 settings.json 的新装，
+    //    这个夹具用的就是隔离配置目录 ⇒ 拿到的是出厂默认）
     let settings = c.call_tool("settings_get", json!({}));
-    assert_eq!(settings["structuredContent"]["compile"]["engine"], "xelatex");
+    assert_eq!(settings["structuredContent"]["compile"]["engine"], "tectonic");
+    assert_eq!(settings["structuredContent"]["compile"]["timeout_secs"], 120);
 
     // 6) 工具内错误按 isError 回（不是协议错误），并带 {code,message}
     let bad = c.call_tool("file_read", json!({ "path": "../../etc/passwd" }));
