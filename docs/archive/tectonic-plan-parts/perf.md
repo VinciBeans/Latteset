@@ -1,8 +1,8 @@
 # T3 分册：测量与性能回归方案（夹具 · 协议 · 控制组 · 阈值 · 对拍口径）
 
-> 用途：供 **T5** 收录进 `docs/research/tectonic-test-plan.md` 的「3 测量协议与阈值 / 7 复现资产清单」两节，并与 T1（引擎层）、T2（集成层）、T4（分发/缓存/许可）的分册对齐。
+> 用途：供 **T5** 收录进 `docs/archive/research/tectonic-test-plan.md` 的「3 测量协议与阈值 / 7 复现资产清单」两节，并与 T1（引擎层）、T2（集成层）、T4（分发/缓存/许可）的分册对齐。
 > 本册只出**方案**，不改产品代码，也不在编写期跑长测量。
-> 证据来源全部为**已有实测/已有产物**：`docs/research/modern-engines-zh.md` §2 / §7.4 / §7.7 / §8、`docs/design.md`（延迟预算与基准表）、`docs/troubleshooting.md`（fontconfig / LuaLaTeX 两条）、`docs/research/incremental-edit-x-dvi.md`、`docs/research/tectonic-integration-plan.md`、`docs/modules.md` §12、`scripts/bench.mjs`、`scripts/bench-single-pass.mjs`、`scripts/check-determinism.mjs`、`test_file/projects/bench/_zhcmp/*.ps1`、`test_file/projects/bench/_zhcmp/_sec8.md`。
+> 证据来源全部为**已有实测/已有产物**：`docs/archive/research/modern-engines-zh.md` §2 / §7.4 / §7.7 / §8、`docs/design.md`（延迟预算与基准表）、`docs/troubleshooting.md`（fontconfig / LuaLaTeX 两条）、`docs/archive/research/incremental-edit-x-dvi.md`、`docs/archive/research/tectonic-integration-plan.md`、`docs/dev/modules.md` §12、`scripts/bench.mjs`、`scripts/bench-single-pass.mjs`、`scripts/check-determinism.mjs`、`test_file/projects/bench/_zhcmp/*.ps1`、`test_file/projects/bench/_zhcmp/_sec8.md`。
 > 标记约定：**[实测]** = 有已记录数字或本轮已复核的现场证据；**[推断]** = 由源码/日志机制推出、未实跑；**[未测]** = 无任何证据，必须在 T5 的「未验证清单」里保留。
 
 ---
@@ -58,8 +58,8 @@
 | 项 | 内容 | 出处 |
 |---|---|---|
 | 夹具 | `test_file/projects/bench/thesis-real-hithesis`（hithesis 样例，自带 `latexmkrc`：`--shell-escape` + 自建 cp） | `test_file/projects/bench/bench-manifest.json`（`external: true`） |
-| 阻塞点 | 用产品相同命令重跑，~4 分钟后报 `! I can't write on file 'body/introduction.aux'`（`\include{body/...}` 需要 `tmp/body/` 存在）→ `Emergency stop` → **latexmk/perl 进程挂住（10 分钟零 CPU）** | `docs/design.md` §基准脚本（>240 s 未收敛）、`docs/modules.md` §12.1 #6 |
-| 结论 | 阻塞点是**模板自带 latexmkrc × 本产品 `-outdir=tmp` 约定**（roadmap ㉖），**调高超时也编不过** | `docs/modules.md` §12.1 #6 |
+| 阻塞点 | 用产品相同命令重跑，~4 分钟后报 `! I can't write on file 'body/introduction.aux'`（`\include{body/...}` 需要 `tmp/body/` 存在）→ `Emergency stop` → **latexmk/perl 进程挂住（10 分钟零 CPU）** | `docs/design.md` §基准脚本（>240 s 未收敛）、`docs/dev/modules.md` §12.1 #6 |
+| 结论 | 阻塞点是**模板自带 latexmkrc × 本产品 `-outdir=tmp` 约定**（roadmap ㉖），**调高超时也编不过** | `docs/dev/modules.md` §12.1 #6 |
 | 本方案处置 | ① 在 ㉖ 修好前**排除在阈值判定之外**（保留为"已知不可测档"记录）；② Tectonic 上要单独回答"bundle 里有没有 `hithesis.cls` / 能否按 bundle 解析"——**这是 [未测] 的 P0 前置**（Tectonic 不读本机 TL，见 `tectonic-integration-plan.md` §3 摩擦点 1） | — |
 | 可测的那一半 | 表格/公式/图密集度**可以由 `thesis`（28 页，8 章各 1 图 1 式）代表下界**；真实模板是上界，上界在 ㉖/许可审计前**不承诺任何数字** | — |
 
@@ -310,7 +310,7 @@
 | **夹具生成** | 扩展 `scripts/gen-bench-projects.mjs`，让它顺带产出 Tectonic 用的夹具副本（`_zhcmp/tect`、`_zhcmp/tect-thesis`、`_zhcmp/thesis`、`_zhcmp/multifile`） | 入库 | 现在这几份副本是**手抄**的（`_zhcmp/min-zh.tex` 与 `_zhcmp/tect/min-zh.tex` 同为 1007 B，但没有任何生成器保证它们与主夹具同步），手抄迟早与主夹具漂移；夹具漂移会直接变成"阈值漂移" |
 | **控制组探针** | `_zhcmp/bench-lua.lua`（CPU）、`_zhcmp/io-control.lua`（磁盘）**提升到 `scripts/`** 或由 harness 内联 | 入库 | 同上 |
 | **原始样本 / JSON 报告** | `test_file/research/bench-tectonic.json`（含每次运行的 ms、exit、passes、页数、缺字数、无效样本、控制组值、机器指纹） | **不入库**（同 `bench-report.json` 律） | 体积与机器相关 |
-| **精炼基线表（权威）** | ① `docs/design.md` 基准表**加一列 Tectonic**（同一张表里才可比）；② `docs/research/tectonic-test-plan.md`（T5）的「测量与阈值」节 | **入库** | 这是唯一能跨机器/跨清仓存活的基线 |
+| **精炼基线表（权威）** | ① `docs/design.md` 基准表**加一列 Tectonic**（同一张表里才可比）；② `docs/archive/research/tectonic-test-plan.md`（T5）的「测量与阈值」节 | **入库** | 这是唯一能跨机器/跨清仓存活的基线 |
 | **现场证据（日志/产物）** | `_zhcmp/logs/`、`_zhcmp/tect*/` | 不入库 | 已在 gitignore 覆盖面内 |
 
 ### 6.2 每次改动后跑什么（按改动面分层，避免每次全跑）
@@ -322,7 +322,7 @@
 | 默认引擎仍是 XeLaTeX（回归保护）—— **⚠ 默认已改 Tectonic（2026-09-17，ADR-0014 修订 1）**，本条改读为"默认引擎是 Tectonic" | `node scripts/bench.mjs`（超预算退出码 1） | 防止"为 Tectonic 改了命令构造，把默认路径弄坏" |
 | 分发 / bundle / 缓存 | §4.3 的 M1–M4（首跑档单独一批）+ **V6b 的产物级判据（`.bbl` 的 `\bibitem` 条数 / PDF 参考文献节）** + T4 分册的门禁清单 | 首跑成本是分发形态的函数，不是产品代码的函数；**bundle 版本/来源一变，bib 的行为就可能变**（`--bundle` 可指任意 tar），所以 bundle 改动必须带 V6b |
 | **日志/可观测性（本轮新增，独立一行）** | ① `-k` 档下断言 `.bbl` 的 `\bibitem` 条数与 PDF 参考文献节；② **判定器负例**：喂一份"成功且日志形态不同（无 `You've used` 摘要段）"的 `.blg`（本仓 `main.blg` 537 B：0 error、无摘要行），判定器**必须判为 unknown，不得判为 fail** | **防的是"跨引擎日志契约差异"（`engine.md` G6「引擎自述 ≠ 事实」），不是数据损坏容错**：Tectonic 的 `.blg` 是**完整文件**（端口不实现收尾统计段），任何"按 `.blg` 判 bib 成败"的工具/脚本都错（摘要行 ⇒ 100% 假阴性；error 计数 ⇒ 8 假阳性 + 1 假阴性）。`run.log`/`.log` 侧另有更强的一条自述失真：见附录 `.log` 自述行 |
-| 提交前（任何改动） | `npm run build`、`cargo test -p latteset-core`、`cargo test -p latteset-infra -- --ignored`（含 streaming / live_errors 两条） | `docs/modules.md` §12.3 已固化的验证入口 |
+| 提交前（任何改动） | `npm run build`、`cargo test -p latteset-core`、`cargo test -p latteset-infra -- --ignored`（含 streaming / live_errors 两条） | `docs/dev/modules.md` §12.3 已固化的验证入口 |
 
 ### 6.3 基线固化形态（建议写进 T5 的「复现资产清单」）
 
@@ -353,7 +353,7 @@ docs/design.md                        # 精炼基线表（加 Tectonic 列）—
 | **U9** | **首次 `fc-list` 冷启动**对判据的影响（本轮实测 3.9 s vs 热态 0.45 s） | 已在本册 §3.2 给出规则（三连测取后两次），但**只有本轮一次现场观测**，没有多机样本 | 在 2–3 台机器上重复三连测，确认冷启动量级 | P1 | T3 |
 | **U10** | `xelatex --version` 819 ms（本轮）vs 文献 495–690 ms | 可能是冷启动，也可能是 fontconfig 边缘劣化的前兆；本轮只有 1 次观测 | 正式批次里三连测，并在控制组里固化 | P1 | T3 |
 | ~~**U11**~~ ✅ | ~~biber/bibtex 全链路~~ **已定论：bib 链路好的，是被测的"日志判据"坏了** | 产物级证据：`.bbl` 680 B / 9 条 `\bibitem`，与两条 XeLaTeX 基线 **SHA-256 相同**；PDF 文本含 `参考文献`+`[1]`…`[9]`；`main.blg` 537 B **只含该端口实现的段**（banner/Capacity/aux 轨迹），**确定不含 `You've used` 摘要段**（非丢尾）⇒ 摘要行判据 100% 假阴性、error 计数 8 假阳性 + 1 假阴性 | 已闭环；判据按 §2.2 **V6b（产物级）** 执行，`V6c` 把 8 次章级空跑单列 | P1（仅剩观测性） | T3（判据）+ T1/T2（`engine.md` G6：别把"引擎自述/日志形态"当事实） |
-| **U12** | **Tectonic 模式下 `.aux`/`.toc` 的存在性依赖 `-k`** | 干净实测：`with-k` 目录有 `main.aux`(443 B)、`main.toc`(1623 B)、`main.bbl`(680 B)、`chapters/ch0N.aux`；`no-k` 目录**只有** `.log/.blg/.pdf`。这直接影响既有不变量「无 `tmp/<stem>.aux` 时 Quick 自动升级 Full」（`docs/modules.md` §12.2）在 Tectonic 模式下该怎么映射——Tectonic 自己内部收敛 3 趟，"Quick/Full"的语义需要重新定义 | 集成后：分别在 `-k`/无 `-k` 下跑一次，记录 `.aux` 存在性与 `Success{kind}` 的实际取值 | P1 | T2 |
+| **U12** | **Tectonic 模式下 `.aux`/`.toc` 的存在性依赖 `-k`** | 干净实测：`with-k` 目录有 `main.aux`(443 B)、`main.toc`(1623 B)、`main.bbl`(680 B)、`chapters/ch0N.aux`；`no-k` 目录**只有** `.log/.blg/.pdf`。这直接影响既有不变量「无 `tmp/<stem>.aux` 时 Quick 自动升级 Full」（`docs/dev/modules.md` §12.2）在 Tectonic 模式下该怎么映射——Tectonic 自己内部收敛 3 趟，"Quick/Full"的语义需要重新定义 | 集成后：分别在 `-k`/无 `-k` 下跑一次，记录 `.aux` 存在性与 `Success{kind}` 的实际取值 | P1 | T2 |
 
 ---
 

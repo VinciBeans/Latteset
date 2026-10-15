@@ -29,7 +29,7 @@ pub const SYNCTEX_IMPL_ENV: &str = "LATTESET_SYNCTEX";
 /// `synctex` CLI）依赖 **TeX Live**；只装 Tectonic 时那个二进制不存在，正反向定位全废。
 /// 而 Tectonic 只**生成** `.synctex.gz`、没有查询子命令 ⇒ 查询只能自己解（`core::synctex::parse`）。
 ///
-/// 保留 CLI 实现是给**复核**用的：`docs/modules.md` 的同步精度基线（`scripts/synctex-report.mjs`）
+/// 保留 CLI 实现是给**复核**用的：`docs/dev/modules.md` 的同步精度基线（`scripts/synctex-report.mjs`）
 /// 是在 CLI 上量的，自解析必须能与它逐点对拍。两套实现并存是**过渡**，不是长期形态。
 pub fn default_provider() -> Arc<dyn SyncTexProvider> {
     match std::env::var(SYNCTEX_IMPL_ENV).ok().as_deref() {
@@ -158,7 +158,7 @@ impl SyncTexProvider for SyncTexCli {
 /// - `column` 恒为 `-1` —— `.synctex` 的盒子记录里没有列号（CLI 实测也基本恒为 -1）。
 ///
 /// 这三条不是"差不多就行"：验收标准是 `scripts/synctex-report.mjs` 的三组样本上**不劣于** CLI
-/// （正反向成功率与往返跳到位率），见 `docs/modules.md` §5。
+/// （正反向成功率与往返跳到位率），见 `docs/dev/modules.md` §5。
 pub struct SyncTexSelf;
 
 impl SyncTexSelf {

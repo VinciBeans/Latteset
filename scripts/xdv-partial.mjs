@@ -6,8 +6,8 @@
 //
 //   pre … 各页（bop…eop）  ‖  post(248)+28B（改 last_bop / 页数 t）  字体定义  post_post(249)+指针+id
 //
-// 三条必须照做的（当年实测踩过的坑，见 docs/research/stage2-streaming-feasibility.md §3 与
-// docs/research/tex-ide-roadmap-priority.md:193）：
+// 三条必须照做的（当年实测踩过的坑，见 docs/archive/research/stage2-streaming-feasibility.md §3 与
+// docs/archive/research/tex-ide-roadmap-priority.md:193）：
 //   ① 字体定义要**同时收** `define_native_font`(252) 与经典 `fnt_def`(243–246)，放在 post 头之后；
 //   ② `post.last_bop` 必须指前缀里**最后一个** bop；`t` 必须是**前缀页数**；
 //   ③ `post_post` 的指针要指本文件里的 post 偏移；id 是**1 字节**（XDV=7），尾部补 `0xDF` 到 4 字节对齐。

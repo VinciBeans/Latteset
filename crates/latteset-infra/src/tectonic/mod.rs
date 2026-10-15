@@ -1,6 +1,6 @@
 //! Tectonic 子进程形态的 bundle 获取策略与缓存判定（P0，2026-09）。
 //!
-//! 要修的现状缺陷（`docs/tectonic-library-plan.md` §6 P0 / 表 E-1）：`tectonic_command` 原来
+//! 要修的现状缺陷（`docs/archive/tectonic-library-plan.md` §6 P0 / 表 E-1）：`tectonic_command` 原来
 //! **无条件**给命令加 `-C`（== `--only-cached`），于是全新机器 + 空缓存时它拒绝联网取 bundle、
 //! 首编必失败，上游原文 `this bundle isn't cached, and we couldn't get it from the internet`
 //! （`test_file/tectonic-src/crates/bundles/src/cache.rs:181`）。

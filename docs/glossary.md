@@ -1,6 +1,7 @@
-# Latteset
+# Latteset 术语表
 
-本地运行的 TeX 完整 IDE（桌面 GUI 应用），核心设计因素是实时编译。
+本表是 Latteset（本地运行的 TeX 完整 IDE，桌面 GUI，核心设计因素是实时编译）的 **ubiquitous language**：产品、设计与代码里出现的这些词只有一个含义，讨论与文档一律照此用；每条末尾的 `_Avoid_` 是被淘汰的说法。
+括号里的 ㉘ 一类是 [roadmap.md](./roadmap.md) 的条目编号（全仓检索键，编号含义以该文为准）。
 
 ## Language
 
@@ -50,7 +51,7 @@ _Avoid_: 报错弹窗（提示不是错误对话框）、通知
 系统默认 PDF 程序作为预览目标，后续版本支持。
 
 **TeX 引擎 (TeX engine)**:
-执行编译的底层程序（Tectonic / xelatex / pdflatex / lualatex 等）。**默认 Tectonic**（2026-09-17 起，子进程档；见 [ADR-0014 修订 1](./docs/adr/0014-tectonic-first.md)）；老配置里已写 xelatex 的不变。原「按系统语言自适应（中文→xelatex，其他→pdflatex）」已否决（②-2 经实测砍掉，见 [roadmap §7](./docs/research/tex-ide-roadmap-priority.md)）。
+执行编译的底层程序（Tectonic / xelatex / pdflatex / lualatex 等）。**默认 Tectonic**（子进程档，见 [ADR-0014 修订 1](./adr/0014-tectonic-first.md)）；老配置里已写 xelatex 的不变。
 _Avoid_: 编译器（与通用编程语境混淆）
 
 ## Project
@@ -97,7 +98,7 @@ _Avoid_: 取消（含义过宽）
 从停止输入到 PDF 刷新：小文档 1s 优秀 / 2s 及格；大文档 3s 优秀 / 5s 及格。**注**（㉘）：编辑期由草稿编译（单趟）出图，判预算看的是这一趟；紧随其后的空闲收敛不占"编辑→出图"的路径。
 
 **增量编译 (Incremental compilation)**:
-只重编受影响部分的策略。最小可运行版本完成后的首要任务。**注意**：㉘ 的"草稿 + 收敛"不是增量编译——它不减少单趟工作量，只是把"编辑期那一趟"从 latexmk 的外层机制（perl 启动 + `.fdb_latexmk` 依赖库 + 收敛趟）里解放出来（见 [ADR-0005](./docs/adr/0005-latexmk-first-incremental-next.md)）。
+只重编受影响部分的策略。**注意**：㉘ 的"草稿 + 收敛"不是增量编译——它不减少单趟工作量，只是把"编辑期那一趟"从 latexmk 的外层机制（perl 启动 + `.fdb_latexmk` 依赖库 + 收敛趟）里解放出来（见 [ADR-0005](./adr/0005-latexmk-first-incremental-next.md)）。此路已否决：latexmk 的"增量"＝对整份文档单遍重排，属引擎上限，见 [roadmap.md](./roadmap.md) §4。
 
 ## Compile intensity
 

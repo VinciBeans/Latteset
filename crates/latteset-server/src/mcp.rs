@@ -32,9 +32,10 @@ pub struct Tool {
     pub input_schema: Value,
 }
 
-/// 工具表：与 [cli-mcp-plan.md] §2 的第一/第二梯队一致（第三梯队的订阅类一期不做，用快照代替）。
+/// 工具表：工具清单见 [cli.md]（与 [cli-mcp-plan.md] §2 的第一/第二梯队一致；第三梯队的订阅类一期不做，用快照代替）。
 ///
-/// [cli-mcp-plan.md]: ../../docs/cli-mcp-plan.md
+/// [cli-mcp-plan.md]: ../../docs/archive/cli-mcp-plan.md
+/// [cli.md]: ../../docs/cli.md
 pub fn tools() -> Vec<Tool> {
     vec![
         Tool {

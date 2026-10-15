@@ -23,19 +23,12 @@ Latteset 主界面：左侧文件树、中间编辑区、右侧 PDF 预览。
 **TeX 环境**：默认引擎是 **Tectonic**，**不需要预装 TeX Live** —— 它自带宏包集（首次编译联网下载约 60 MB，之后离线复用缓存），有「子进程」与「库内嵌」两种形态，在设置里选。想用 TeX Live 的话切到 **XeLaTeX / LuaLaTeX / pdfLaTeX**（需要 **TeX Live 或 MiKTeX** 提供 `latexmk` 与对应引擎）。设置面板会把每个引擎在**本机是否可用**标出来（缺什么就写缺什么），环境变量 `LATTESET_TEX_ENGINES` 可以收窄可选项（CI / 裁剪发布用）。
 
 ```bash
-npm install && npm run tauri dev
+npm install && npm run tauri dev   # 开发构建；发布打包用 npm run tauri build
 ```
 
-首次启动会编译 Rust（约几分钟），随后自动打开应用窗口。
+首次启动要编译 Rust（约几分钟），随后自动打开应用窗口。
 
-> **开发者：带「库内嵌」形态的构建**。库形态把 Tectonic 引擎嵌进产品进程（`crates/latteset-tectonic/`，见 [ADR-0012](./docs/adr/0012-tectonic-library-form-engine.md)），它拉一条 C 依赖链（freetype2 / harfbuzz / graphite2 / ICU / fontconfig / libpng），所以**默认构建不含它**（主产物保持零原生依赖，不需要 vcpkg）。要构建这个变体用 —— 前置校验、环境变量、命令都在一处：
-
-```bash
-npm run lib:check     # 先校验 vcpkg 与 triplet 是否就位（缺项会给可执行的修复命令）
-npm run lib:dev       # 开发运行（带库形态）
-npm run lib:build     # 发布打包（带库形态；两种形态都会进产物）
-npm run lib:test      # 库形态自身的单测
-```
+另有带 **Tectonic 库内嵌**形态的构建变体（引擎嵌进产品进程，拉一条 C 依赖链、需要 vcpkg；默认构建不含它以保证主产物零原生依赖）——入口、前置与环境变量见 [docs/dev/tectonic-library.md](./docs/dev/tectonic-library.md)，决策见 [ADR-0012](./docs/adr/0012-tectonic-library-form-engine.md)。
 
 ## 快速开始
 
@@ -63,7 +56,7 @@ npm run lib:test      # 库形态自身的单测
 ## 项目与设置
 
 - **文件夹即项目**：打开文件夹 → 文件树 → 多标签页；自动保存（防抖）+ 外部修改检测与冲突提示。
-- **在软件内新建文档**：文件树 `＋` 直接建文件（**空目录也能开工**）。空项目里建第一份 `.tex` 时会问一次「文档语言 / 类型 / 标题」（中文 ctex 类或标准类，短文/报告/书/幻灯片），直接生成一份**能编译的最小骨架**；不想要这一步可在「设置 → 编译」里关掉。
+- **在软件内管理文档**：文件树支持新建文件/目录、删除（二次确认 + 目录递归）、改名、搜索；空项目里建第一份 `.tex` 时会问一次「文档语言 / 类型 / 标题」（中文 ctex 类或标准类，短文/报告/书/幻灯片），直接生成一份**能编译的最小骨架**，不想要这一步可在「设置 → 编译」里关掉。
 - **根文件**：正则启发式自动探测（含 `\documentclass` 的顶层 .tex），可手动覆盖；**还没有根文档**时状态栏给出可点提示，并且每次保存都会静默重探一次——补上 `\documentclass` 保存即成主文件并自动出图。
 - **设置**：引擎（**Tectonic 默认**，可切 XeLaTeX / LuaLaTeX / pdfLaTeX；选项由后端给，本机不可用的会禁用并说明缺什么）、编译模式、防抖、超时、根文件覆盖；全局 + 项目（`.latteset/settings.json`）两层，改即生效。选 Tectonic 后可再选**子进程**或**库内嵌**形态、宏包集来源与缓存目录。
 
@@ -77,13 +70,15 @@ latteset-cli --project <项目目录> compile # 退出码 0=编译通过，1=编
 latteset-mcp --project <项目目录>         # 供 harness / Agent 拉起（stdio）
 ```
 
-用法、工具清单与限制见 [docs/cli-mcp-plan.md](./docs/cli-mcp-plan.md)；注意同一项目**不要**同时用 GUI 和 CLI 编译（会抢 `tmp/`）。
+用法、工具清单与限制见 [docs/cli.md](./docs/cli.md)。
 
-> 开发与设计细节（构建、测试、Roadmap 等）见 [docs/](./docs/) 与 [CONTEXT.md](./CONTEXT.md)。
+- **同一项目不要同时用 GUI 和 CLI 编译**：两路 latexmk 会抢同一个 `tmp/`；约定 headless 独占。
+
+> 开发、设计与路线见 [docs/](./docs/)（导航）、[glossary.md](./docs/glossary.md) 与 [roadmap.md](./docs/roadmap.md)。
 
 ## 致谢与思路来源
 
-**Latteset 的若干设计思路，学习自 [TeXPresso](https://github.com/let-def/texpresso) 项目**（作者 [let-def](https://github.com/let-def)，OCaml 实现，改造 XeTeX 做 LaTeX live rendering）——它把"边改边出图"从概念做到了工程级，是本项目立项时最重要的参考对象。
+**Latteset 的若干设计思路，学习自 [TeXPresso](https://github.com/let-def/texpresso) 项目**（作者 [let-def](https://github.com/let-def)，OCaml 实现，改造 XeTeX 做 LaTeX live rendering）——它把"边改边出图"从概念做到了工程级，是本项目最重要的参考对象。
 
 > **更名的起因也是一次善意的提醒**：GitHub 用户 [@mathlab08](https://github.com/mathlab08) 指出了本项目与上游 TeXPresso 的重名问题。**特此感谢**——正因这条提醒才有了 TeXPresso → Latteset 的更名（见 [ADR-0011](./docs/adr/0011-rename-to-latteset.md)）。同名是误会，致敬是本意。
 

@@ -227,10 +227,10 @@ const v2  = sha(buf.subarray(b + 45, e + 1));
 
 | 锚点 | 值 | 标签 | 来源 |
 |---|---|---|---|
-| pdf.js `render` / 可视窗口（74 页档改末章） | **102 ms / 7 页 = 14.57 ms/页** | 102 ms **实测**；除以 7 是**推算** | `docs/research/incremental-edit-x-dvi.md` §2.3（`pagesRendered 7→0`、`render 102ms → 7ms`，行 56/100） |
+| pdf.js `render` / 可视窗口（74 页档改末章） | **102 ms / 7 页 = 14.57 ms/页** | 102 ms **实测**；除以 7 是**推算** | `docs/archive/research/incremental-edit-x-dvi.md` §2.3（`pagesRendered 7→0`、`render 102ms → 7ms`，行 56/100） |
 | pdf.js `render` / 可视窗口（46 页档） | **64 ms / 7 页 = 9.14 ms/页** | 64 ms **实测**；除以 7 是**推算** | `docs/design.md` 行 103（`fetch 11ms / parse 39ms / render 64ms / pagesRendered=7`） |
 | 本机 `pdftoppm -r 120` 整篇光栅化 | 中位 **192.24** ms/页（119.61–230.89） | **实测**，但属**离线口径**（不是 pdf.js，不作产品每页成本） | `[D] hashes.json.timings.renderEditMs / N`（42 例，`[q].perPage.t2Raster*`） |
-| `xdvipdfmx` 转换 | **0.65–0.94 s/次** | **实测**（A 面用；`runner.rs:241` 记 0.65–0.94 s、`:246` 记 0.65–1.4 s） | `docs/research/dvi-preview-feasibility.md` §3；t2 本机实测 635–1305 ms（`[t2] §10`） |
+| `xdvipdfmx` 转换 | **0.65–0.94 s/次** | **实测**（A 面用；`runner.rs:241` 记 0.65–0.94 s、`:246` 记 0.65–1.4 s） | `docs/archive/research/dvi-preview-feasibility.md` §3；t2 本机实测 635–1305 ms（`[t2] §10`） |
 | Quick 单趟编译（编辑趟，中位） | **2081 ms**（min 1056 / max 8404） | **实测** | `[t3] §9`；t4 重算 42 次编辑趟中位 = 2081（`[t4] §6`）；`[t2] §10` |
 
 ### 5.2 换算 A（**全量口径**：假设所有误判页同时可见 —— 上界，**推算**）
@@ -297,7 +297,7 @@ const v2  = sha(buf.subarray(b + 45, e + 1));
 
 | 场景 | 量化代价 | 频率 |
 |---|---|---|
-| 老缓存（raw 行）被新代码（V1 比较）读到 | 首轮逐页皆不等 ⇒ A 面白跑 `xdvipdfmx` **0.65–0.94 s**（`docs/research/dvi-preview-feasibility.md` §3；`runner.rs:241` 记 0.65–0.94 s）；C 面视窗全量重绘 **64.0–102.0 ms**（**推算**） | 每个项目**一次性**；该轮写回新口径缓存即**自愈** |
+| 老缓存（raw 行）被新代码（V1 比较）读到 | 首轮逐页皆不等 ⇒ A 面白跑 `xdvipdfmx` **0.65–0.94 s**（`docs/archive/research/dvi-preview-feasibility.md` §3；`runner.rs:241` 记 0.65–0.94 s）；C 面视窗全量重绘 **64.0–102.0 ms**（**推算**） | 每个项目**一次性**；该轮写回新口径缓存即**自愈** |
 | 新老二进制交替（灰度/回滚） | 每交替一轮再付一次同样代价 | 方案 A（文件名带口径）可降到 **0**；方案 B 仍是每交替一轮，但可解释、可人工核验 |
 | 完全不迁移（只改哈希区间） | 与老缓存场景同量级，之后写回新格式；**回滚**时老二进制读新行再付一轮 | 无"永久零命中"风险 |
 | 永久零命中（方案 A 的 token 漏写 / 方案 C "每次启动删缓存"） | A 面**每轮**白跑 0.65–0.94 s ≈ Quick 单趟编译中位 2081 ms 的 **31–45%** | **必须避免**；方案 A 需保证口径 token 只有一个落点 |
@@ -308,7 +308,7 @@ const v2  = sha(buf.subarray(b + 45, e + 1));
 
 * 缓存只按 **engine** 分档，**没有**按编译强度分档（`runner.rs:199-211` 注释明确"故意让 Quick 与 Full 共享"，否则两者交替会把对方产物当"变了"）。
 * 跨档实测（t1 §4 + t4 独立复核）：`full1` vs `full2`、`quick1` vs `quick2`、`quick2` vs `full3-after-quick` **逐字节相同**；`full1` vs `quick1` **只差 1 字节 @偏移 43**（`pre` 注释的分钟位，preLen = 44 ⇒ **该字节落在页切片之外**）⇒ 页级三口径双向 **0/28** 变化 ⇒ **页哈希基线可跨档复用，换口径不影响这一结论**。
-* **整篇 XDV 指纹跨分钟不稳（作用域必须写准 —— 任务必写项 8）**：TeX Live 的 `xelatex` 把**本地墙钟到分钟**写进 `pre` 注释（` XeTeX output YYYY.MM.DD:HHMM`，注释长 **29 B**；原始字节样例见 `docs/research/tectonic-test-plan.md` 行 52），**`SOURCE_DATE_EPOCH=0` 管不住它**；而 **Tectonic 的 `pre` 注释是固定串 `tectonic`（8 B），无时钟派生字节（epoch 互换实验逐字节相同）** ⇒ **不得把该现象推广到 Tectonic**（出处同上，行 51/52；本报告独立复现的是 XeLaTeX 侧）。
+* **整篇 XDV 指纹跨分钟不稳（作用域必须写准 —— 任务必写项 8）**：TeX Live 的 `xelatex` 把**本地墙钟到分钟**写进 `pre` 注释（` XeTeX output YYYY.MM.DD:HHMM`，注释长 **29 B**；原始字节样例见 `docs/archive/research/tectonic-test-plan.md` 行 52），**`SOURCE_DATE_EPOCH=0` 管不住它**；而 **Tectonic 的 `pre` 注释是固定串 `tectonic`（8 B），无时钟派生字节（epoch 互换实验逐字节相同）** ⇒ **不得把该现象推广到 Tectonic**（出处同上，行 51/52；本报告独立复现的是 XeLaTeX 侧）。
 * **产品 A 的判据必须建在页级哈希（含页数）或「首 BOP→EOF」上，不能建在整篇字节指纹上**：实测「整篇 XDV 逐字节」A 命中只有 **10/42**，其中 2 例（`thesis-last-c7`、`multifile-first-c4`）仅因 `pre` 注释分钟位差 1 B @43 被判不等，**凭空掉 4.76 pp 且不确定**（取决于两次编译是否跨分钟）；而「首 BOP→EOF」= **12/42** 且与「逐页全等」**42/42 同真同假**。现实现用的是页级哈希列表比较（`runner.rs:474` 的 `prev == page_hashes`），**本矩阵证明这是正确选择**（`[t3] §6`、`[q].wholeFile`：`byteEqCases` 10 个、`zeroChangeButByteDiff` 2 个、`changedButByteEqCases` 0 个）。
 
 ### 6.4 迁移方案（4 选 1）与推荐（口径改造的**完整**方案，`[t1] §3.3`）
@@ -347,7 +347,7 @@ const v2  = sha(buf.subarray(b + 45, e + 1));
 | 4 | 真实编辑的**假阳性归零** | 用 `test_file/research-26/` 的 42 用例基线做回归：`node recompute.mjs` + `node quant-analyze.mjs` | V1 假阳性 0（0/42）、假阴性 0、且 V1 集合 = 渲染真值集合（当前数字：§3.3） |
 | 5 | 缓存迁移 **fail-closed + 自愈** | 单测：① 喂老格式（纯 16 进制行）⇒ 读侧当 `None` 或按标记拒绝，**不 panic**；② 连续两次同源 Quick ⇒ 第一次 `changed_pages` 非空、第二次为空 | 与 `runner.rs:554-580` 现有语义一致；「跳过转换」日志（`runner.rs:483`）在第二次出现 |
 | 6 | 跨档不互相打脏 | 真机/忽略型用例：Full → Quick → Full 交替，页哈希基线共享 | 第二次起 `changed_pages` 为空（0/28，`[t1] §4` / `[t4] §8.7`） |
-| 7 | 不变量入清单（防回归） | `docs/modules.md` §12.2 增一条：A 的判据建在页级哈希/首 BOP→EOF，**不得**建在整篇字节指纹；口径 token 只有一个落点 | 文档检查（人工） |
+| 7 | 不变量入清单（防回归） | `docs/dev/modules.md` §12.2 增一条：A 的判据建在页级哈希/首 BOP→EOF，**不得**建在整篇字节指纹；口径 token 只有一个落点 | 文档检查（人工） |
 
 > 判据「假阴性 = 0」的复核口径也一并固定：**`渲染真值 ⊆ V1`**（t1 给 t2 的校验器契约），真值用 `pdftoppm -r 120` 逐页 PNG + `pdftotext` 逐页文本，**不用 PDF 字节**。
 
@@ -359,10 +359,10 @@ const v2  = sha(buf.subarray(b + 45, e + 1));
 
 | 类别 | 路径 | 说明 |
 |---|---|---|
-| **入库（tracked）** | `docs/research/page-hash-prev-quant.md` | 本文件（本批唯一新增入库物） |
-| **入库（tracked，本次更新）** | `docs/modules.md` §12.1 #26 行、`docs/README.md` 的 research 行 | 数字替换 + 链接 |
+| **入库（tracked）** | `docs/archive/research/page-hash-prev-quant.md` | 本文件（本批唯一新增入库物） |
+| **入库（tracked，本次更新）** | `docs/dev/modules.md` §12.1 #26 行、`docs/README.md` 的 research 行 | 数字替换 + 链接 |
 | **gitignored（原始数据/脚本，未入库）** | `test_file/research-26/**` | 自带 `.gitignore` = `*`（`git check-ignore -v` 已验证整棵目录被忽略）；含 `data/`（579 文件 / 69.9 MB）、`work/`（569 文件 / 67.4 MB）（规模数字见 `[t2] §8`） |
-| **未改（明确声明）** | 产品代码（`crates/**`、`src/**`、`scripts/xdv-report.mjs`）、`docs/research/tectonic-test-plan.md`、t1/t2/t3/t4 的产物文件 | 本任务只写文档；`git status` 只有本批文档改动与他人既有的两项 research 文档改动 |
+| **未改（明确声明）** | 产品代码（`crates/**`、`src/**`、`scripts/xdv-report.mjs`）、`docs/archive/research/tectonic-test-plan.md`、t1/t2/t3/t4 的产物文件 | 本任务只写文档；`git status` 只有本批文档改动与他人既有的两项 research 文档改动 |
 
 ### 8.2 原始数据与脚本（`test_file/research-26/`，gitignored）
 
@@ -409,7 +409,7 @@ node inspect-case.mjs thesis thesis-first-c1 1 8
 5. **`k` 只是 synctex 代理量**：机制公式里的 `m` 是"字节上最早变长的页"；`k` 与 `m` 在 1/42 例（改章标题）不一致（§1.3）。
 6. 采集驱动内含断言：任一用例的自带基线（首 BOP→EOF）或基线渲染真值与夹具基线不一致就**立即抛错停止**（起点不干净不允许继续，`[t2] §9`）。
 
-### 8.5 与 `docs/research/tectonic-test-plan.md` 的关系（冲突与边界，**未改该文件**）
+### 8.5 与 `docs/archive/research/tectonic-test-plan.md` 的关系（冲突与边界，**未改该文件**）
 
 该文件在 2026-09-14 21:02 已吸收本批证据（其 §0.1 纪律 6、E3.8/E3.9/E3.10、V14、D4 节），以下边界以**本报告证据**为准并显式标注：
 

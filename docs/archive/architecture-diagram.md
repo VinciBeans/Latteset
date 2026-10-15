@@ -1,7 +1,7 @@
 # Latteset 架构图（Mermaid）
 
 > 本文件是 [architecture.md](./architecture.md) 的配套**图示**：把「分层与依赖 / 编译触发链路 / 调度器语义 / 编辑 ↔ 预览双向定位」四张图以 Mermaid 源码固化为事实来源。
-> 图形随代码同步维护：**模块或链路一变，本文件与 architecture.md 一起改**（渲染与校验方式见文末 §5）。
+> 图形随代码同步维护：**模块或链路一变，本文件与 docs/archive/architecture.md 一起改**（渲染与校验方式见文末 §5）。
 
 ## 1. 分层与依赖总览
 
@@ -129,7 +129,7 @@ flowchart TB
   class TEXLIVE,SXCLI,PROJ,PDFOUT,GSET ext
 ```
 
-![Latteset 分层与依赖总览](./diagrams/01-layers.png)
+![Latteset 分层与依赖总览](../diagrams/01-layers.png)
 
 **读图要点**
 
@@ -193,7 +193,7 @@ sequenceDiagram
   W-->>ST: files-changed（旁路：文件树刷新 / 外部修改判定）
 ```
 
-![编译触发与调度链路](./diagrams/02-compile-chain.png)
+![编译触发与调度链路](../diagrams/02-compile-chain.png)
 
 **读图要点**
 
@@ -238,7 +238,7 @@ stateDiagram-v2
   FAILT --> IDLE: 无等待
 ```
 
-![调度器状态与失败语义](./diagrams/03-scheduler-semantics.png)
+![调度器状态与失败语义](../diagrams/03-scheduler-semantics.png)
 
 **读图要点**：决策是纯函数（`scheduler/policy.rs`，输入只有 `attempt` + `outcome` + 是否有等待条目）；状态收容在 actor task 内，外部只有 `SchedulerHandle`，因此无共享可变状态、无锁。
 
@@ -282,18 +282,18 @@ flowchart LR
   class A4,A5,A6,B4,B5 rust
 ```
 
-![SyncTeX 双向定位与 PDF 刷新](./diagrams/04-synctex.png)
+![SyncTeX 双向定位与 PDF 刷新](../diagrams/04-synctex.png)
 
 **读图要点**：`SyncTexProvider` 是 core 中的接口，进程调用在 latteset-infra 的 `synctex` 模块（ADR-0008/0010）；CLI 指向 `tmp/<根名>.synctex.gz`。pdf.js 无增量渲染 API，故刷新用「重载 + 恢复位置」而非局部更新。
 
 ## 5. 渲染与校验
 
 - 图源即上文 Mermaid 代码块，可直接粘贴到 GitHub、VS Code（Markdown Preview Mermaid 插件）或 [Mermaid Live Editor](https://mermaid.live)。
-- 本仓库的渲染产物在 [diagrams/](./diagrams/)（每图一份 PNG + SVG，正文内嵌 PNG，SVG 可缩放查看），文件名由图源代码块前的 `<!-- mermaid: 名称 -->` 决定。
+- 本仓库的渲染产物在 [../diagrams/](../diagrams/)（每图一份 PNG + SVG，正文内嵌 PNG，SVG 可缩放查看），文件名由图源代码块前的 `<!-- mermaid: 名称 -->` 决定。
 - 校验门槛：**mermaid 12.0.0** 离线渲染（`mermaid.parse` + 无头 Edge 出 SVG），四图全部通过、无语法错误。
 - 重新生成（需要 node ≥ 18 与 Edge / Chrome）：
 
 ```bash
 npm i mermaid@12                                  # 本仓库未把 mermaid 列为依赖，按需临时安装
-node scripts/render-diagrams.mjs docs/architecture-diagram.md docs/diagrams --png
+node scripts/render-diagrams.mjs docs/archive/architecture-diagram.md docs/diagrams --png
 ```

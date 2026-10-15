@@ -1,7 +1,7 @@
 # Tectonic 集成落地方案（评估 + 明天要做的四件事）
 
-> 背景：本轮已把 Tectonic 0.17.0 装好并实测完（安装记录与数字见 [modern-engines-zh.md](../research/modern-engines-zh.md) §8）。
-> **归档说明（2026-09）**：本文已从 `docs/research/` 移到 `docs/archive/`，正文一字未改（只修了本行与 §67 的跨目录链接）；两处口径已被实测作废（`-b <本地 tar>`、`-C` 语义，见 [tectonic-test-plan.md](../research/tectonic-test-plan.md) §8 的 C-6/C-7 与 §9.2）。
+> 背景：本轮已把 Tectonic 0.17.0 装好并实测完（安装记录与数字见 [modern-engines-zh.md](research/modern-engines-zh.md) §8）。
+> **归档说明（2026-09）**：本文已从 `docs/research/` 移到 `docs/archive/`，正文一字未改（只修了本行与 §67 的跨目录链接）；两处口径已被实测作废（`-b <本地 tar>`、`-C` 语义，见 [tectonic-test-plan.md](research/tectonic-test-plan.md) §8 的 C-6/C-7 与 §9.2）。
 > 本文是**集成可行性结论 + 可执行计划**，回答"能否把 Tectonic 集成进 Latteset、连缓存一起带上，让大多数情况下直接读缓存、用户开箱即用"。
 > 结论先行：**能，两半都成立**（Tectonic 官方自我定位就是 *embeddable*；缓存是普通文件、且可以指向本地 bundle 完全离线）。
 > 但**不能直接打包**——先过许可审计与三条未验证项（见 §4）。明天（2026-09-14）按 §5 的顺序做。
@@ -41,11 +41,11 @@
 - **Tectonic 本体 MIT**（仓库 LICENSE，"Copyright 2016-2023 the Tectonic Project"）⇒ 嵌入 / 静态链接 / 闭源分发都可以。
 - **bundle 是 TeX Live 文件集合**：TL 整体不是单一许可证，**逐包**混着 LPPL / GPL / MIT / OFL…，且修改过的文件有"改名"之类条件（LPPL）。
 - **C 依赖里可能有 LGPL**（如 graphite2 一类）——静态链接到闭源产品时有"允许重新链接"的义务。
-- ⇒ **必须走一遍正式审计**（`cargo metadata` 全依赖 + bundle 内 TL 包清单），产出 `docs/research/tectonic-bundle-licensing.md`。**在审计完成前不要把 bundle 放进发行物。**
+- ⇒ **必须走一遍正式审计**（`cargo metadata` 全依赖 + bundle 内 TL 包清单），产出 `docs/archive/research/tectonic-bundle-licensing.md`。**在审计完成前不要把 bundle 放进发行物。**
 
 ## 5. 明天（2026-09-14）要做的四件事（按顺序，都可独立验证）
 
-1. **许可审计**：列全依赖与 bundle 内包清单 → `docs/research/tectonic-bundle-licensing.md`；标出 LGPL/GPL/OFL 风险项与结论（可否闭源分发、需要哪些声明）。
+1. **许可审计**：列全依赖与 bundle 内包清单 → `docs/archive/research/tectonic-bundle-licensing.md`；标出 LGPL/GPL/OFL 风险项与结论（可否闭源分发、需要哪些声明）。
 2. **本地 bundle 实测**：按 `bundles/README.md` 造一个"中文常用"bundle（需要 TeX Live tarball + GNU patch），用 `-b <本地tar> -C` **离线**编译 `bench/_zhcmp/thesis`，记录 bundle 体积与编译耗时。
 3. **SyncTeX 往返等价性**：用 `latteset-cli --project … forward/inverse` 在 Tectonic 产物上跑，与 XeLaTeX 基线对拍（页码/行号偏差），产出结论。
 4. **日志/流式适配调研**：确认 `--keep-logs` 产出的 `main.log` 是否仍能被现有 `parse_log`/`pages_typeset` 直接吃（XeTeX 同源，**可能零改动**）；不行就列出需要新增的解析规则。
@@ -65,7 +65,7 @@
 | 缓存 | `%LOCALAPPDATA%\TectonicProject\Tectonic\cache\{bundles,formats}`（426 文件 / 62 MB） |
 | 中文夹具与产物 | `test_file/projects/bench/_zhcmp/tect/`（hello、min-zh）、`tect-thesis/`（thesis 副本 + `main.xdv`(264,736 B) + `main.synctex.gz`） |
 | 对比脚本 | `test_file/projects/bench/_zhcmp/tectonic-bench.ps1`（交错 3 轮、逐次校验产出） |
-| 实测数字 | [modern-engines-zh.md](../research/modern-engines-zh.md) §8.3（速度）/ §8.4（机制对接） |
+| 实测数字 | [modern-engines-zh.md](research/modern-engines-zh.md) §8.3（速度）/ §8.4（机制对接） |
 
 > 以上 `test_file/**` 实验件均已 gitignore，不随仓库分发。
 

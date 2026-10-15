@@ -1,7 +1,7 @@
 # Tectonic 库形态实测证据（§6.1–§6.5 收口）
 
 > 本文是 [tectonic-library-plan.md](../tectonic-library-plan.md) **§6.1–§6.5 的原文搬移**（2026-09 拆分：正文一字未改，只加本页头）。
-> **落盘依据**：`.gitignore:124` 与 library-plan §6 P8 的「证据落点约定」要求结论文档放 **`docs/research/`**（即本文件）；`test_file/research-tectonic-lib/**` 只作开发期原始证据，不作可复核入口。
+> **落盘依据**：`.gitignore:124` 与 library-plan §6 P8 的「证据落点约定」要求结论文档放 **`docs/archive/research/`**（即本文件）；`test_file/research-tectonic-lib/**` 只作开发期原始证据，不作可复核入口。
 > **编号不变**（§6.1–§6.5）；文中出现的章节号（§3.2 / §5.4 / §7 / §12 …）指回 [tectonic-library-plan.md](../tectonic-library-plan.md)。
 
 ---
@@ -131,7 +131,7 @@ tauri server MCP 驱动：`npm run tauri dev -- --features tectonic-lib`（+ `VI
 相同的页面）。`LATTESET_TECTONIC_LIB=1` 是**显式覆盖**，不受该闸门约束（复核/CI 的逃生门），状态栏的形态
 chip 会注明它来自环境变量。
 
-**形态段只在选中 Tectonic 引擎时渲染**（见 [modules.md](../modules.md) §6）⇒ 存过 `lib_form` 却切到别的
+**形态段只在选中 Tectonic 引擎时渲染**（见 [modules.md](../../dev/modules.md) §6）⇒ 存过 `lib_form` 却切到别的
 引擎时它是不可见的。引擎那一栏为此点名提示「已保存 Tectonic 形态设置（库内嵌 / 宏包集 / 缓存目录）；
 仅在选择 Tectonic 引擎时生效」。
 
@@ -172,7 +172,7 @@ chip 会注明它来自环境变量。
 
 **④-a bib 跳过的落地实测（2026-09-15）**：判据 = 各 `.aux` 的 BibTeX 命令（含 `\@input` 闭包）+ 每个
 `.bib` 的 `(mtime, size)` 与产出当前 `.bbl` 那次一致；缓存 `tmp/<stem>.bibsig`。契约见
-[modules.md](../modules.md) §2.7「bib 输入未变时跳过」。
+[modules.md](../../dev/modules.md) §2.7「bib 输入未变时跳过」。
 
 | 档 | 冷（首编，跑 bibtex） | 热（内容未变，跳过） |
 |---|---|---|

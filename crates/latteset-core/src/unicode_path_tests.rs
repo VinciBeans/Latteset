@@ -1,7 +1,7 @@
 //! 中文 / 非 ASCII 路径兼容性回归（roadmap P0-①，2026-09）。
 //!
 //! 背景：Windows 中文用户的常见形态是「中文目录 + 中文文件名 + 中文子目录」，而 TeX 工具链
-//! 的日志与编码约定与系统代码页并不同源（见 docs/research/tex-ide-pain-points.md P7）。
+//! 的日志与编码约定与系统代码页并不同源（见 docs/archive/research/tex-ide-pain-points.md P7）。
 //! 本模块把**实测结论**锁成回归：路径归一化、根文件探测、大纲遍历、读集安全（D8 词法前缀）、
 //! 以及 .log 里的中文文件名能否带出行号。
 //!

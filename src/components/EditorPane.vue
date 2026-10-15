@@ -215,7 +215,7 @@ watch(
   }
 );
 
-// 外部重载（architecture.md §5.5）：buffer 变化 → model 同步；值相同跳过（防循环）
+// 外部重载（docs/archive/architecture.md §5.5）：buffer 变化 → model 同步；值相同跳过（防循环）
 watch(
   () => editor.buffers.get(editor.activePath ?? ""),
   (content) => {

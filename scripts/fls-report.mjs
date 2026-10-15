@@ -9,7 +9,7 @@
 //   ② `.fdb_latexmk`（latexmk 产出）：latexmk 认为产物**依赖**哪些文件，带 mtime/size/md5，且含 bibtex/biber 子步骤。
 //
 // 两者的差集很关键：`.bib` 只出现在后者（bibtex 是独立进程，不写进 xelatex 的 .fls）。
-// 结论与实测见 docs/research/g1-read-interception-feasibility.md。
+// 结论与实测见 docs/archive/research/g1-read-interception-feasibility.md。
 
 import { readFileSync } from "node:fs";
 

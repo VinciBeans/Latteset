@@ -1,7 +1,7 @@
 # Latteset 架构设计（分层、接口、模块、技术栈）
 
 > 项目状态：**已实现并迭代中**（Windows 首发 MVP）。
-> 上层设计见 [design.md](./design.md)，术语见根目录 [CONTEXT.md](../CONTEXT.md)，决策记录见 [adr/](./adr/)。
+> 上层设计见 [design.md](../design.md)，术语见根目录 [glossary.md](../glossary.md)，决策记录见 [../adr/](../adr/)。
 
 ## 1. 分层总览
 
@@ -83,7 +83,7 @@ Cargo workspace 四 crate：ADR-0006 拆出 core，ADR-0010 再拆出 infra（�
 | `bin/latteset-cli` | 一条命令一个 JSON（stdout 只有 JSON，日志走 stderr）；退出码：0 成功 / 1 编译未通过 / 2 用法·路径 / 3 内部 |
 | `bin/latteset-mcp` | 常驻 stdio server（harness 侧本地拉起） |
 
-契约与限制见 [modules.md](./modules.md) §8.1，用法与实测见 [cli-mcp-plan.md](./cli-mcp-plan.md)。
+契约与限制见 [modules.md](../dev/modules.md) §8.1，用法与实测见 [cli-mcp-plan.md](./cli-mcp-plan.md)。
 
 ## 3. 前端侧：模块划分
 
@@ -104,7 +104,7 @@ Cargo workspace 四 crate：ADR-0006 拆出 core，ADR-0010 再拆出 infra（�
 | list_dir | path | Vec\<DirEntryInfo\>（递归文件树，含目录；前端防抖） |
 | read_file | path | content |
 | save_all | files: Vec\<FileContent\> | 空（写盘：`save_content`；自动保存批量写盘用，唯一保存路径） |
-| get_outline | buffers, files | Vec\<OutlineNode\>（结构树，详见 modules.md） |
+| get_outline | buffers, files | Vec\<OutlineNode\>（结构树，详见 docs/dev/modules.md） |
 | compile_now | 空 | 空 |
 | abort_compile | 空 | 空 |
 | synctex_forward | file, line, col | { page, x, y } |
@@ -120,7 +120,7 @@ Cargo workspace 四 crate：ADR-0006 拆出 core，ADR-0010 再拆出 infra（�
 | compile-status | { phase: queued\|running\|success\|failed, kind: timeout\|content_error\|aborted\|null } |
 | errors-updated | ErrorEntry[]（失败时携带；编译中清空） |
 | pdf-updated | { path }（编译成功、PDF 新版本就绪） |
-| files-changed | { paths, structural }（监视旁路：文件树刷新/重载判定；`structural`=true 仅增/删/重命名，内容修改为 false——见 modules.md §7） |
+| files-changed | { paths, structural }（监视旁路：文件树刷新/重载判定；`structural`=true 仅增/删/重命名，内容修改为 false——见 docs/dev/modules.md §7） |
 | settings-changed | Settings |
 
 不做编译输出流式推送——.log 文件是权威，避免 IPC 风暴。
@@ -151,7 +151,7 @@ Cargo workspace 四 crate：ADR-0006 拆出 core，ADR-0010 再拆出 infra（�
 
 ### 5.3 SyncTeX 双向
 
-Ctrl+点击 → `synctex_forward` → { page, x, y } → PDF 高亮；PDF 点击 → `synctex_inverse` → { file, line } → 编辑器跳转。默认**进程内自解析** `tmp/<根名>.synctex.gz`（ADR-0013，不依赖系统 `synctex` 二进制）；`LATTESET_SYNCTEX=cli` 时才退回外部 synctex CLI（ADR-0008，A/B 复核用）。契约见 [modules.md](./modules.md) §5。
+Ctrl+点击 → `synctex_forward` → { page, x, y } → PDF 高亮；PDF 点击 → `synctex_inverse` → { file, line } → 编辑器跳转。默认**进程内自解析** `tmp/<根名>.synctex.gz`（ADR-0013，不依赖系统 `synctex` 二进制）；`LATTESET_SYNCTEX=cli` 时才退回外部 synctex CLI（ADR-0008，A/B 复核用）。契约见 [modules.md](../dev/modules.md) §5。
 
 ### 5.4 根文件探测
 
@@ -212,4 +212,4 @@ Ctrl+点击 → `synctex_forward` → { page, x, y } → PDF 高亮；PDF 点击
 ## 9. 与上层设计的关系
 
 - 本文件是 design.md 之下的第二层：design.md 定产品语义（延迟预算、失败语义、MVP 边界），本文件定实现结构（分层、模块、接口、技术栈）
-- 后置未决清单以 design.md 为准；函数级契约、已知债与验证入口见 [modules.md](./modules.md)（§12）。
+- 后置未决清单以 design.md 为准；函数级契约、已知债与验证入口见 [modules.md](../dev/modules.md)（§12）。

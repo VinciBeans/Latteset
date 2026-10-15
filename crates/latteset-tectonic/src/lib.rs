@@ -1,6 +1,6 @@
 //! Tectonic **库形态**引擎（路径 B：引擎 crate + 自持输出层）。
 //!
-//! 权威依据：[`docs/tectonic-library-plan.md`](../../../docs/tectonic-library-plan.md) §3.2（落点裁决）、
+//! 权威依据：[`docs/archive/tectonic-library-plan.md`](../../../docs/archive/tectonic-library-plan.md) §3.2（落点裁决）、
 //! §3.4（选定路径 B 的九步序列）、§4.2 的 X-5（本 crate 是外部依赖/C 链的**第二个落点**，
 //! 对 ADR-0010 的结构性偏离）与 `docs/adr/0012-tectonic-library-form-engine.md`。
 //!

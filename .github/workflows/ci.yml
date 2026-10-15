@@ -1,6 +1,6 @@
 name: CI
 
-# 按 architecture.md §8 / ADR-0003 落地：
+# 按 docs/archive/architecture.md §8 / ADR-0003 落地：
 #   cargo test（core + infra + headless）+ vue-tsc --noEmit + Windows runner tauri build 冒烟（验证 NSIS 打包链路）。
 # 仓库真源：**GitHub 为 truth、Gitee 为镜像**（见 .github/workflows/sync-gitee.yml 与 docs/README.md）；
 # 早前这里写的"origin 是 Gitee"已过期（2026-09 审计核对 `git remote -v`）。
@@ -37,7 +37,7 @@ jobs:
         run: npm run build
 
       # 前端单测（vitest）：stores 路径归一化、editor 自保存过滤/冲突、useAutoSave 防抖。
-      # architecture.md §8「MVP 后补 vitest + @vue/test-utils」。
+      # docs/archive/architecture.md §8「MVP 后补 vitest + @vue/test-utils」。
       - name: Frontend unit tests
         run: npm run test
 
@@ -117,7 +117,7 @@ jobs:
         run: npm ci
 
       # vcpkg 检出 + 六个直接端口（传递依赖由 vcpkg 自己拉：brotli / bzip2 / dirent / expat / zlib）。
-      # 端口清单与本机验证过的 triplet 口径见 docs/tectonic-library-plan.md §3.1.3。
+      # 端口清单与本机验证过的 triplet 口径见 docs/archive/tectonic-library-plan.md §3.1.3。
       - name: Setup vcpkg
         shell: pwsh
         run: |

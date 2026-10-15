@@ -17,8 +17,8 @@
 | **P4** 常驻进程与 format 复用（J1） | **已判决：不成立 ⇒ 按回退点不投入**（阶段结案） | §6.4：进程地板 9.3 ms；重档 **+31%** 且第 3 轮起退化 | 改投 §6.4 ④ 的两条杠杆（见下表） |
 | **P5** 编译中页事件（J2） | **未开工**；可行性已实测成立，I/O 层的逐块钩子已预留 | `crates/latteset-tectonic/src/io.rs:76` 的逐块通知**目前没有产品侧消费者**；`XdvParser` 只出现在 `examples/xdvscan.rs` | 接 `XdvParser` → `CompileProgress`（提前量阈值 LIB-3d 仍 `[待补测]`） |
 | **P6** 内存 XDV → PDF（J3） | **已落地（整份路线）**；前缀路线按判决不做 | §6.1/§6.3：捕获表里的 XDV → `XdvipdfmxEngine` → 原子替换到项目根 | 无 |
-| **P7** UI / 状态 / 回退可见性 | **已落地** | §6.3.1 的 V1–V7 与 `docs/modules.md` §2.7「形态位可见」；D1 的显式失败已真机验证 | 无 |
-| **P8** 验证与收口 | **收口大部分已落地；计划里的 t11「独立验证」没有单独进行** | ADR-0012 已接受、`docs/README.md` 索引已挂、`docs/modules.md` §2.7 的 Tectonic 契约面已成文；验证随各次改动做，不是一次独立验证 | 若要按计划收口，补一次独立验证 |
+| **P7** UI / 状态 / 回退可见性 | **已落地** | §6.3.1 的 V1–V7 与 `docs/dev/modules.md` §2.7「形态位可见」；D1 的显式失败已真机验证 | 无 |
+| **P8** 验证与收口 | **收口大部分已落地；计划里的 t11「独立验证」没有单独进行** | ADR-0012 已接受、`docs/README.md` 索引已挂、`docs/dev/modules.md` §2.7 的 Tectonic 契约面已成文；验证随各次改动做，不是一次独立验证 | 若要按计划收口，补一次独立验证 |
 | **构建变体（发布路径）** | **已落地**：开发默认不含库形态（主产物零原生依赖），**发布构建含**（`npm run lib:build`）⇒ 用户装到的包两种形态都能选 | 前置与环境的唯一落点 `scripts/with-tectonic-lib.ps1`；CI 的 `build-windows-tectonic-lib` 档（版本 tag / 手动 dispatch 触发）。实测：`lib:build` 出 NSIS 16.24 MB / MSI 22.61 MB；默认档 7.19 MB（§8.3 的 A/B） | 形态**默认值已裁决 = 保持子进程**（ADR-0012 补充节：库形态不跑外部进程 ⇒ 默认切过去会让 biber/makeindex 文档开箱即败；要切得先定"检出外部工具退回子进程"的语义，与 D1 有张力） |
 | **流式出图（部分 PDF）** | **未开工**；可行性 2026-09-15 重评（[DVI 报告 §10](./research/dvi-preview-feasibility.md)） | 合成 postamble **9–12 ms** + **进程内** `XdvipdfmxEngine` **92–131 ms/次**（31→125 页前缀，页数全对；外部进程同档 497–564 ms）；价值窗口 = 冷 Full 125 页 **7601 ms** 里"排版结束→出 PDF"那 5736 ms；体感已测：5 次背靠背重载 **0 long task**、滚动位置 1797 帧零偏移 | **已立项 roadmap ㉞**（[§6.6](./research/tex-ide-roadmap-priority.md)）：最窄切片 = 内存前缀钩子（`io.rs` 已预留、无消费者）→ Rust 合成器 → **独立**进度事件 → 阈值与限流；前置约束见该节"非目标/未测" |
 
@@ -46,7 +46,7 @@
 | **J2** 编译中页事件 | **官方 API 不成立；自建输出层替代路径成立** | 官方 `.xdv` 在整轮编译里只有两个采样点；自建输出层逐块解析可得页表，粒度 = ≤16 KB 字节块（§2.2 A3、§7 LIB-3） |
 | **J1** 常驻后的击键 pass 成本 | **不成立** | 进程地板仅 **9.3 ms**，重档常驻反而 **+31%** ⇒ 达不到「< 子进程地板 × 0.8 且省 ≥100 ms」。按 P4 回退点**不投入常驻**（§6.4） |
 
-**档位结论**：只做被实测支持的两刀 —— **整份 XDV 同进程出 PDF** + **自定义 I/O 与可离线 bundle/缓存**（两者调用路径 = §3.4 的路径 B）；**逐页事件**列为条件档（官方 API 为否，只有自持输出层那条替代路径）；**常驻档不投入**（J1 已判不成立）。三条判据原文见 `docs/research/tex-ide-roadmap-priority.md`（roadmap §6.5）。
+**档位结论**：只做被实测支持的两刀 —— **整份 XDV 同进程出 PDF** + **自定义 I/O 与可离线 bundle/缓存**（两者调用路径 = §3.4 的路径 B）；**逐页事件**列为条件档（官方 API 为否，只有自持输出层那条替代路径）；**常驻档不投入**（J1 已判不成立）。三条判据原文见 `docs/archive/research/tex-ide-roadmap-priority.md`（roadmap §6.5）。
 
 ---
 
@@ -59,7 +59,7 @@
 | G1 | 把 `tectonic` 作为库嵌进**新 crate `crates/latteset-tectonic/`**（§3.2 的落点裁决），实现与 `LatexmkRunner` 同级的 `CompileRunner`；**子进程路径零回归** | t1 §4.1、`crates/latteset-core/src/scheduler/runner.rs:16-19` |
 | G2 | 用**自实现 `IoProvider`（自持输出层）**接管输入/输出 —— 调用路径 = §3.4 的**路径 B**；装配后上层（src-tauri）仍不出现 `std::fs`；对 ADR-0010 的结构性偏离登记为 §4.2 的 **X-5** | t1 §4.1；t3 HL-1/HL-2；t5 §2.2 |
 | G3 | bundle 与缓存**可指定、可离线**：指定本地 bundle / 缓存目录，失败文案可读 | t1 §6①、t2 §8 |
-| G4 | 保持 D1（失败不自动回退）、D3（状态栏显示引擎）、D4（epoch 分档）三条既有裁决不变 | `docs/research/tectonic-test-plan.md:842-847` |
+| G4 | 保持 D1（失败不自动回退）、D3（状态栏显示引擎）、D4（epoch 分档）三条既有裁决不变 | `docs/archive/research/tectonic-test-plan.md:842-847` |
 | G5 | 判定并记录 J1/J2/J3 三判据的成立/不成立，写进门禁编号（§7） | `roadmap:246`（行号随 §6 拆分已漂移 ⇒ 现读作 [roadmap §6.5](./research/roadmap-item-specs.md)）、t1 §3 |
 
 ### 1.2 非目标（本轮明确不做）
@@ -83,7 +83,7 @@
 | B1 | 第二个引擎进产品（设置 + UI + headless 报告） | t1 T-01 / F-01 / F-02 / S-01 |
 | B2 | 免装 TeX Live 的**方向**（自带 bundle、不读用户 TL） | t1 R-04；**但见 §0 的 E-1：冷缓存下产品跑不通** |
 | B3 | Quick 单趟出 PDF | t1 R-01/R-04 |
-| B4 | 首趟成本低于现状两段（28 页 0.88–1.07 s vs xelatex ≈1.96 s） | `docs/research/realtime-preview-cost.md:39,52,73` |
+| B4 | 首趟成本低于现状两段（28 页 0.88–1.07 s vs xelatex ≈1.96 s） | `docs/archive/research/realtime-preview-cost.md:39,52,73` |
 | B5 | 收尾/产物路径与其它引擎一致 | t1 R-11 |
 | B6 | 报错文案指对方向（不再说「TeX Live 未安装」） | t1 R-07 |
 | B7 | D4：Tectonic 进程不设 epoch（`\today` 正确） | t1 R-03 + 单测 U-01 |
@@ -265,7 +265,7 @@ impl latteset_core::scheduler::CompileRunner for TectonicLibRunner {
 | 项 | 取值 | 理由 |
 |---|---|---|
 | 默认 | **子进程形态**（形态位缺省） | N1；默认引擎本就不是 Tectonic —— **⚠ 已被 ADR-0014 修订 1 覆盖（2026-09-17）：默认引擎现为 Tectonic（子进程档）**；形态位缺省仍是子进程，库形态要构建时开特性 |
-| 切换粒度 | **仅全局设置** | 形态位决定装配哪个 runner，而 runner 在装配点定；项目级覆盖要"形态位随 `CompileRequest` 下发"，`CompileRequest` 目前不带引擎形态 ⇒ 放一个项目级字段只会是**看着能覆盖、实际不生效**的假开关（见 [modules.md](./modules.md) §12.1） |
+| 切换粒度 | **仅全局设置** | 形态位决定装配哪个 runner，而 runner 在装配点定；项目级覆盖要"形态位随 `CompileRequest` 下发"，`CompileRequest` 目前不带引擎形态 ⇒ 放一个项目级字段只会是**看着能覆盖、实际不生效**的假开关（见 [modules.md](../dev/modules.md) §12.1） |
 | 回退开关 | 「子进程形态」永远可选；库形态失败**不自动回退**（D1） | `tectonic-test-plan.md:842` |
 | 未知值 | 形态位必须**可缺省**（`#[serde(default)]`） | 否则旧版读新设置整份重置（t1 §4.6） |
 
@@ -302,7 +302,7 @@ impl latteset_core::scheduler::CompileRunner for TectonicLibRunner {
 | D-1 | 库内**禁止**调用 `build_date_from_env` | 会把进程环境里的 `SOURCE_DATE_EPOCH` 吃进来 ⇒ `\today` 冻结（违反 D4 (b)） | t3 §8.1（引用 **`src/driver.rs` 的符号名 `build_date_from_env`**，不用行号 —— 见 §13 的行号说明） |
 | D-2 | 库内**必须**显式 `build_date(SystemTime::now())` | 默认值是 `UNIX_EPOCH` ⇒ 忘写一行就把「`\today` 印 1970」变成**默认行为**（HL-5） | t3 §8.2；`crates/engine_xetex/src/lib.rs:154-160` `[已复核]` |
 | D-3 | 一切 env **只经 `Command::env` 给子进程**，库内**不** `std::env::set_var` | 进程级全局会污染同进程其它步骤 | 现状 `crates/latteset-infra/src/runner.rs:299-301` 已如此；t3 §8.2 |
-| D-4 | 「PDF 逐字节相等」**仍不得**作为 Tectonic 档断言 | 元数据/加密层不可控 | `docs/research/tectonic-test-plan.md:187,845` |
+| D-4 | 「PDF 逐字节相等」**仍不得**作为 Tectonic 档断言 | 元数据/加密层不可控 | `docs/archive/research/tectonic-test-plan.md:187,845` |
 
 **正向结论**：`\today` 正确性与转换步确定性**可以同时保留**（TeX 步给 `build_date(now)`、转换步给固定值）⇒ **不需要为它开 ADR**。
 
@@ -352,7 +352,7 @@ impl latteset_core::scheduler::CompileRunner for TectonicLibRunner {
 | 自定义 bundle 只需 | 实现 `IoProvider`（`Bundle` trait 只有 `get_digest()`/`all_files()`） | t2 §8 |
 | 现成实现 | `cache` / `dir` / `itar` / `ttb_fs` / `ttb_net` / `zip` | t2 §8 |
 | 路径自动识别 | `detect_bundle(source, only_cached, custom_cache_dir)`：目录 → `DirBundle`、`.zip` → `ZipBundle`、`.ttb` → `TTBFsBundle`，**其他扩展名 → `None`** | t2 §8 |
-| 已证伪 | `-b <本地 .tar>` 不可用（`error: … doesn't specify a valid bundle.`） | `t1 §1.8 X-04`；`docs/research/tectonic-test-plan.md:200` |
+| 已证伪 | `-b <本地 .tar>` 不可用（`error: … doesn't specify a valid bundle.`） | `t1 §1.8 X-04`；`docs/archive/research/tectonic-test-plan.md:200` |
 
 ### 5.2 缓存与离线
 
@@ -388,11 +388,11 @@ impl latteset_core::scheduler::CompileRunner for TectonicLibRunner {
 |---|---|---|
 | Quick 升级判据 `tmp/<stem>.aux` 存在 | `runner.rs:354-359` | **路径 B 下我们自己的 I/O 层直接持有 `<stem>.aux`**（内存为主）⇒ 判据改读我们 I/O 层的文件表，**不再依赖 `-k`**；是否需要落盘由我们显式决定（**不用** `output_dir`/`do_not_write_output_files` 这类 session 开关） |
 | SyncTeX CLI（外部 `synctex.exe`，`-d` 固定指 `pdf.parent()/tmp`） | `crates/latteset-infra/src/synctex.rs:26-31` | **库形态不解决 TL-less 的 SyncTeX**（G2/R-1）；内存层的 `main.synctex.gz` 是**解压文本**（t2 §4.1），落盘需再压一次 |
-| ㉒「生成产物不当源码打开」 | `docs/modules.md` §5（SyncTeX 的反向回落策略）与 §12.2 的不变量 | 纯逻辑、引擎无关（t1 §7.2-1）⇒ **库形态不改它**；但反向定位的输入仍来自 `.synctex.gz` |
+| ㉒「生成产物不当源码打开」 | `docs/dev/modules.md` §5（SyncTeX 的反向回落策略）与 §12.2 的不变量 | 纯逻辑、引擎无关（t1 §7.2-1）⇒ **库形态不改它**；但反向定位的输入仍来自 `.synctex.gz` |
 | 页哈希缓存 `tmp/<stem>.<engine>.pages` | `runner.rs:199-211` | 路径 B 下我们**自己产出 XDV**（`XdvipdfmxEngine::process` 的输入就是我们 I/O 层的名字）⇒ 页哈希可继续算；`Engine::writes_xdv()` 的能力位需拆（t1 §6③） |
 | `.log`（`parse_log` 的输入） | 磁盘 `tmp/<stem>.log` | **内存层与磁盘层逐字节一致**（构造性等价，t3 §3.3）⇒ `parse_log` 的输入契约**不用改**；两条边界：`keep_logs=false` 时日志**不落盘**、空文件被显式跳过 ⇒ **失败且 `keep_logs=false` 时内存 `.log` 是唯一副本**（对今天 `-k --keep-logs` 的子进程档是信息增量） |
 
-> **两处编号别混**（曾出现在本文件与 `design.md` 的旧稿里）：**㉒ = 生成产物永不当作源码打开**（`docs/modules.md` §5 / §12.2）；**`.fls`/`.fdb_latexmk` 依赖记录 = ㉝/G1**（`docs/research/tex-ide-roadmap-priority.md`）。
+> **两处编号别混**（曾出现在本文件与 `design.md` 的旧稿里）：**㉒ = 生成产物永不当作源码打开**（`docs/dev/modules.md` §5 / §12.2）；**`.fls`/`.fdb_latexmk` 依赖记录 = ㉝/G1**（`docs/archive/research/tex-ide-roadmap-priority.md`）。
 
 ### 5.5 分发形态
 
@@ -407,7 +407,7 @@ impl latteset_core::scheduler::CompileRunner for TectonicLibRunner {
 
 | # | 坑 | 实测 / 源码 | 后果与处置 |
 |---|---|---|---|
-| **LB-1** | **绝对路径的 `-b` 被 URL 解析吃掉**：`detect_bundle` 先 `Url::parse(source)`，`E:\...` 与 `E:/...` 都被当成 scheme `e` 解析成功 ⇒ 返回 `Ok(None)` ⇒ 报 `doesn't specify a valid bundle.` | `t3 §7.1` **实测** B1/B2 失败；**t5 §3.2 独立复现+扩展**：B5（绝对路径）、B5b（`file:///…` 但路径不存在）都判 `None`；**B8/B9/B10 证明可行的三种给法**：`file:///` 绝对 URL、**相对路径**、以及 **ACL 只读目录**（均 open_ok + 读到字体 4,947,904 B） | 产品要指本地 bundle，**存储形态必须用 `file://` URL 或相对路径**；t5 的 A6 端到端印证：换成本地只读目录 bundle 后产物**同字节数**（74,389 B / 26 页）。设置面把 `E:\…` / `E:/…` / 带引号的「复制为路径」都补成 `file:///…`（`TectonicSettings::normalize_bundle`，见 [modules.md](./modules.md) §6） |
+| **LB-1** | **绝对路径的 `-b` 被 URL 解析吃掉**：`detect_bundle` 先 `Url::parse(source)`，`E:\...` 与 `E:/...` 都被当成 scheme `e` 解析成功 ⇒ 返回 `Ok(None)` ⇒ 报 `doesn't specify a valid bundle.` | `t3 §7.1` **实测** B1/B2 失败；**t5 §3.2 独立复现+扩展**：B5（绝对路径）、B5b（`file:///…` 但路径不存在）都判 `None`；**B8/B9/B10 证明可行的三种给法**：`file:///` 绝对 URL、**相对路径**、以及 **ACL 只读目录**（均 open_ok + 读到字体 4,947,904 B） | 产品要指本地 bundle，**存储形态必须用 `file://` URL 或相对路径**；t5 的 A6 端到端印证：换成本地只读目录 bundle 后产物**同字节数**（74,389 B / 26 页）。设置面把 `E:\…` / `E:/…` / 带引号的「复制为路径」都补成 `file:///…`（`TectonicSettings::normalize_bundle`，见 [modules.md](../dev/modules.md) §6） |
 | **LB-2** | **目录 bundle 必须自带 `SHA256SUM`**：`DirBundle::get_digest` 读它，缺失即 `bail!("bundle does not provide needed SHA256SUM file")`；路径 A 的 `create()` **无条件**调 `get_digest()?`，路径 B 则由我们**显式**调用（缓存键需要它） | `t3 §7.1`：实测报错原文即此句（另注 `DirBundle::all_files` **非递归**） | **裸 TeX Live 目录不能直接当 bundle**；须生成 `SHA256SUM`，或改用 zip/ttb |
 | **LB-3** | **当前工作区没有任何"可直接当 bundle 用"的本地 bundle** | t3 附录 A；t5 §3.2 只用到缓存里的 `data/<digest>/` 解包目录与探针目录 | **t10 必须先造一个合规本地 bundle**（含 `SHA256SUM`）才能做离线验证 |
 | **LB-4** | **空目录 bundle 静默"成功"**：`detect_bundle` 对空目录返回 `Ok(DirBundle)`，`file_count=0`，直到引擎要文件时才 `NotAvailable` | `t5 §3.3-2` **实测** B6（`file:///.../empty-bundle-dir` → `open_ok=true`、`file_count=0`） | 产品允许自定义 bundle 目录时**必须自己校验**（要求存在 `SHA256SUM` 或抽查关键文件），否则用户看到的是"编译成功但啥都没有" |
@@ -499,7 +499,7 @@ impl latteset_core::scheduler::CompileRunner for TectonicLibRunner {
 | **准入判决（t5）** | **整份 XDV 走内存同进程出 PDF = 成立**（243,012 B → 74,389 B / 26 页；与 CLI 页数、文本字符、全文文本 SHA256 前缀**全等**，字节差 −29 B；t5 §2.2）；**前缀（截断）喂进去 = 不成立**（页 5 尾 / 页 6 中 / 64 B 三种截断点一律 exit=1、**0 字节产出**、同一句 `Are you sure this is a DVI file?`；t5 §2.3） |
 | 目标（据判决改写） | **主目标**：整份 XDV（内存或 IoProvider 名字可达）→ `XdvipdfmxEngine::process` → 内存 PDF。**前缀路线**若要做，必须**自己定义前缀协议并在自己这侧补后同步/补页**（t5 §2.3 结论），不能指望引擎接受裸前缀 |
 | 入口条件 | `process` 收的是**文件名 `&str`**，不是内存切片（t2 §3.1）⇒ XDV 必须以 IoProvider 内的名字可达；与 P5 同属"自建输出层"口径 |
-| 验收判据 | ① 整份：`Ok(())` + 页数/文本与 CLI 等价（t5 的四维口径：页数 / 文本字符 / 逐页文本长度 / 全文文本 SHA256 前缀）；② 前缀（**若**做）：**本轮不沿用 t1 §3 J3 的「12/30/60/90/121 五档」通过线** —— 那是**外部 `xdvipdfmx` + 合成 postamble** 的形态（`docs/modules.md:846`），**与库内裸前缀不是同一实验**（t5 §2.3 已证伪裸前缀） |
+| 验收判据 | ① 整份：`Ok(())` + 页数/文本与 CLI 等价（t5 的四维口径：页数 / 文本字符 / 逐页文本长度 / 全文文本 SHA256 前缀）；② 前缀（**若**做）：**本轮不沿用 t1 §3 J3 的「12/30/60/90/121 五档」通过线** —— 那是**外部 `xdvipdfmx` + 合成 postamble** 的形态（`docs/dev/modules.md:846`），**与库内裸前缀不是同一实验**（t5 §2.3 已证伪裸前缀） |
 | 回退点 | 前缀路线失败 ⇒ 退守整份 XDV（保持"要 PDF 就整篇转换"，与 D2 ① 一致）；仍不落地真实磁盘文件 |
 
 ### P7 UI / 状态 / 回退可见性
@@ -535,15 +535,15 @@ impl latteset_core::scheduler::CompileRunner for TectonicLibRunner {
 | P7 | 真机窗口：切形态 → 编译 → 状态栏可见形态位；无「已回退」文案 | D1/D3 |
 | P8 | headless + 真机 + 反例三件套 + `npm run build` / `cargo test -p latteset-core` | 全量回归 |
 
-> **证据落点约定**：复核脚本与结论进 **`scripts/`**（脚本）或 **`docs/research/tectonic-lib-evidence.md`**（结论与原始摘要，**入库**）；`test_file/research-tectonic-lib/**` 只作为**开发期原始证据**，不作为可复核入口（换机器/清仓即丢）。**该文件已于 2026-09 落盘**（本文 §6.1–§6.5 已迁入其中）。
+> **证据落点约定**：复核脚本与结论进 **`scripts/`**（脚本）或 **`docs/archive/research/tectonic-lib-evidence.md`**（结论与原始摘要，**入库**）；`test_file/research-tectonic-lib/**` 只作为**开发期原始证据**，不作为可复核入口（换机器/清仓即丢）。**该文件已于 2026-09 落盘**（本文 §6.1–§6.5 已迁入其中）。
 
 ### §6.1–§6.5 实测收口（已拆分）
 
-> **§6.1–§6.5 原文见 [docs/research/tectonic-lib-evidence.md](./research/tectonic-lib-evidence.md)**（编号不变；即 §6 P8 与 `.gitignore:124` 约定的「入库结论文档」）。本文 §7–§13 里出现的 `§6.x` 指针指该文件。
+> **§6.1–§6.5 原文见 [docs/archive/research/tectonic-lib-evidence.md](./research/tectonic-lib-evidence.md)**（编号不变；即 §6 P8 与 `.gitignore:124` 约定的「入库结论文档」）。本文 §7–§13 里出现的 `§6.x` 指针指该文件。
 
 ## §7 候选可测判据 → 测试方案门禁编号映射表
 
-> 现有编号空间：`P-G1..P-G19`（前置门禁）、`E1–E7`（引擎层）、`INT-10..INT-96`（集成层，含后缀 `INT-20b/31b/36b/38b/43b/54b`）、`DIST-*`/`MB-*`/`G-L1..G-L9`、`U-1..U-31`、`R-1..R-14`（`docs/research/tectonic-test-plan.md:5,216,1014,1017`）。
+> 现有编号空间：`P-G1..P-G19`（前置门禁）、`E1–E7`（引擎层）、`INT-10..INT-96`（集成层，含后缀 `INT-20b/31b/36b/38b/43b/54b`）、`DIST-*`/`MB-*`/`G-L1..G-L9`、`U-1..U-31`、`R-1..R-14`（`docs/archive/research/tectonic-test-plan.md:5,216,1014,1017`）。
 > **新判据用新前缀 `LIB-*`，不与上述任何编号段冲突**。
 > **本文 §12 的风险用 `LBR-*` 前缀**（Latteset 库形态风险），**不占用** test-plan §6.1 的 `R-1..R-14`；跨文档引用时写「本文 LBR-n」或「test-plan §6.1 R-n」。
 
@@ -557,7 +557,7 @@ impl latteset_core::scheduler::CompileRunner for TectonicLibRunner {
 | **LIB-3d** | **t1 §3 J2 的原通过线（恢复，不静默替换）** | `XdvEvents::handle_begin_page` 的**末页**事件时刻 vs **整轮编译返回**时刻 | 末页事件早于编译返回 **≥ 200 ms** `[阈值·原文档提出]`，且页事件单调递增、数量 == 页数 | **恢复** `test_file/research-tectonic-lib/repo-map.md:186` 的原文；t5 未直接测该差值（它测的是"字节块粒度"），且 t3 §9.3bis 注明**尾页可能迟到最末** ⇒ 本条标 `[待补测]`，与 LIB-3（字节粒度，已实测）**并列**，不互相替代 |
 | **LIB-4** | J2 的草案层价值：`x[]/y[]` 非空 | `handle_text_and_glyphs` 的 `glyphs/x/y` | 非空且与页对应 | 新增（`roadmap §6.5:240`）；**t5 只实测到"页事件/字节层"，字形数组仍 `[未实测]`** |
 | **LIB-5** | 逐页字节偏移（t3 给机制、t5 给实测） | `handle_begin_page` 的 `previous_bop` + `counters`；`XdvParser::current_offset()` 簿记 | 页起始偏移可复现、与页表自洽 | **取代** t2 §6.3 的 `[未定]`；t5 已产出精确页表（26 页，postamble 偏移 == 文件尾；开发期原始证据在 `engine-spike/runs/pages-gui-p26.json`，**入库摘要归 §13 的证据文档**） |
-| **LIB-6** | J3：内存 XDV → PDF（**t5 判决：整份成立 / 前缀不成立**） | `XdvipdfmxEngine::process(launcher, dvi, pdf)` | 整份：`Ok(())` + 四维等价（页数 / 文本字符 / 逐页文本长度 / 全文文本 SHA256 前缀，t5 §3.1）；前缀：**本轮不沿用五档通过线**（t1 §3 J3 那套是**外部 xdvipdfmx + 合成 postamble**，`docs/modules.md:846`，与库内裸前缀不是同一实验） | 新增；两形态**不得混引**（t5 §2.3 已证伪裸前缀） |
+| **LIB-6** | J3：内存 XDV → PDF（**t5 判决：整份成立 / 前缀不成立**） | `XdvipdfmxEngine::process(launcher, dvi, pdf)` | 整份：`Ok(())` + 四维等价（页数 / 文本字符 / 逐页文本长度 / 全文文本 SHA256 前缀，t5 §3.1）；前缀：**本轮不沿用五档通过线**（t1 §3 J3 那套是**外部 xdvipdfmx + 合成 postamble**，`docs/dev/modules.md:846`，与库内裸前缀不是同一实验） | 新增；两形态**不得混引**（t5 §2.3 已证伪裸前缀） |
 | **LIB-7** | J3 的字体解析不依赖本机 TL/fontconfig | bundle 被请求的文件清单 | 字体从 bundle 解析成功 | **t5 实测**：A1 记录 **76 次 bundle 输入打开**（含 12 个 native font，如 `FandolSong-Regular.otf`）；A6 把 bundle 换成 `file://` 本地只读目录后**产物同字节数**（t5 §2.2/§3.2）⇒ 库内转换不依赖本机 TL。与 **INT-38**（外部转换器探测）区分：本条判「库内」 |
 | **LIB-8** | 首次 bundle 获取（P0 的验收） | 首跑 argv + 冷缓存行为 | 首跑不含 `-C`；资源就绪档含 `-C` | **扩展** P-G15/DIST-2.8（离线档）与 U-5（`-C` 缺文件/断网退出码）：LIB-8 判「命令构造的分档」，P-G15 判「离线可达」 |
 | **LIB-9** | 库形态的取消可见性（X-3） | 取消点（IoProvider 回调）延迟 | 取消后 ≤ 一个回调周期内返回 `Aborted` | 新增；**取代** `kill_tree` 在库形态下的地位（`runner.rs:770-793` 对子进程档保留） |
@@ -581,7 +581,7 @@ impl latteset_core::scheduler::CompileRunner for TectonicLibRunner {
 
 | 项 | 值 | 出处 |
 |---|---|---|
-| Tectonic 单趟含 PDF：en-empty / zh-min / thesis(28p) | **283.2 / 481.7 / 881.8 ms**（min） | `docs/research/realtime-preview-cost.md:36-39` |
+| Tectonic 单趟含 PDF：en-empty / zh-min / thesis(28p) | **283.2 / 481.7 / 881.8 ms**（min） | `docs/archive/research/realtime-preview-cost.md:36-39` |
 | Tectonic XDV 档：thesis / multifile(74p) | **598.5 / 585.1 ms**（min） | 同上 `:40-41` |
 | Tectonic 收敛档 thesis（对照） | **2276.8 ms**（min） | 同上 `:42` |
 | 产品 Quick 两段合计（xelatex + xdvipdfmx） | **≈1.96 s** | 同上 `:52` |
@@ -646,7 +646,7 @@ impl latteset_core::scheduler::CompileRunner for TectonicLibRunner {
 | # | 下一批工作 | 门禁（既有编号） | 阻塞关系 |
 |---|---|---|---|
 | W-1 | 三张清单：A（`cargo metadata` 空值）、B（bundle FILELIST → TL 包 → 许可）、C（二进制 + C 依赖） | `tectonic-test-plan.md:751-753` | 清单 A 纯本地可先做 |
-| W-2 | 产出 `docs/research/tectonic-bundle-licensing.md`（**目前不存在**） | 文件存在性 = G-L1 | 阻塞发包 |
+| W-2 | 产出 `docs/archive/research/tectonic-bundle-licensing.md`（**目前不存在**） | 文件存在性 = G-L1 | 阻塞发包 |
 | W-3 | 跑 G-L1..G-L9 全绿 | `tectonic-test-plan.md:766-778`；P-G14 | **未全绿前不得把 Tectonic/bundle 放进任何发行物** |
 | W-4 | 为**许可清单 C**取 HarfBuzz 的 `COPYING` 正文（**与构建无关**：走 crates.io 发布版构建时包内含源码、不踩空子模块坑，t4 §3.3） | 清单 C 的前置 | 本机检出无该子模块（t2 §7.1）；发布日期包内含源码 |
 | W-5 | 确定 Windows 侧实际链接的 C 库来源与许可 | 清单 C | `[未定]`（t2 §2.3） |
@@ -671,7 +671,7 @@ impl latteset_core::scheduler::CompileRunner for TectonicLibRunner {
 
 ## §12 风险表
 
-> **编号前缀**：下表风险一律用 **`LBR-n`** 前缀（"Latteset 库形态风险"），与 `docs/research/tectonic-test-plan.md` §6.1 的 `R-1..R-14` **彻底区分**；跨文档引用时写「本文 LBR-n」或「test-plan §6.1 R-n」。§7 的编号空间说明同步（见 §7 抬头）。
+> **编号前缀**：下表风险一律用 **`LBR-n`** 前缀（"Latteset 库形态风险"），与 `docs/archive/research/tectonic-test-plan.md` §6.1 的 `R-1..R-14` **彻底区分**；跨文档引用时写「本文 LBR-n」或「test-plan §6.1 R-n」。§7 的编号空间说明同步（见 §7 抬头）。
 
 | # | 风险 | 后果 | 现有处置 / 判据 | 依据 |
 |---|---|---|---|---|
@@ -680,7 +680,7 @@ impl latteset_core::scheduler::CompileRunner for TectonicLibRunner {
 | LBR-3 | **bundle 体积与许可** | 审计不过不能发包；预置缓存刷新即失效 | §10 的门禁链（G-L1..G-L9） | `tectonic-test-plan.md:237,868` |
 | LBR-4 | **Windows 分发** | 未签名 exe + 未签名安装包，SmartScreen 双门槛；库形态不改变这点 | 与 ADR-0003 叠加；不新增处置 | `tectonic-test-plan.md:730`；`docs/adr/0003-*` |
 | LBR-5 | **SyncTeX 等价性** | TL-less 下不可用；库形态不解决 | P-G17；内存层 `main.synctex.gz` 是解压文本，落盘需再压 | `tectonic-test-plan.md:240,901`（U-19）；t2 §4.1 |
-| LBR-6 | **㉒/㉖/㉗ 对 Tectonic 档的适用性**（编号已更正） | 反向回落、模板 `.cls` 探测、源码版模板提示失去输入 | **㉖：Tectonic 两形态都不经 latexmk ⇒ ㉖ 对 Tectonic 档不适用**（㉖ 的正身 = 真实论文模板 hithesis 的自带 latexmkrc × `-outdir=tmp` 约定，`docs/modules.md:825`；「不经 latexmk」的落点在 `crates/latteset-infra/src/runner.rs:365-368` 的 Full 分支与 `crates/latteset-core/src/types.rs:36-43`，另见 `docs/research/tex-ide-roadmap-priority.md:61,198`）。**㉒**（生成产物不当源码打开，`docs/modules.md:860`）= 纯逻辑、引擎无关 ⇒ **不改**。**㉗**（源码版模板提示）= 只读项目根 ⇒ **引擎无关**。**遗留的下游症状**（子目录 `\include` 的中间文件/搜索根）不随 ㉖ 一起消失，它正是 `tectonic-test-plan.md` 的最高风险未验证项 **U-14** | `docs/design.md:196`（**该行对 ㉒ 的归因是错的，勿照抄**）；t1 §7.2-1；`docs/modules.md:825,860`；`runner.rs:365-368`；`roadmap:61,198`；`tectonic-test-plan.md:896`（U-14） |
+| LBR-6 | **㉒/㉖/㉗ 对 Tectonic 档的适用性**（编号已更正） | 反向回落、模板 `.cls` 探测、源码版模板提示失去输入 | **㉖：Tectonic 两形态都不经 latexmk ⇒ ㉖ 对 Tectonic 档不适用**（㉖ 的正身 = 真实论文模板 hithesis 的自带 latexmkrc × `-outdir=tmp` 约定，`docs/dev/modules.md:825`；「不经 latexmk」的落点在 `crates/latteset-infra/src/runner.rs:365-368` 的 Full 分支与 `crates/latteset-core/src/types.rs:36-43`，另见 `docs/archive/research/tex-ide-roadmap-priority.md:61,198`）。**㉒**（生成产物不当源码打开，`docs/dev/modules.md:860`）= 纯逻辑、引擎无关 ⇒ **不改**。**㉗**（源码版模板提示）= 只读项目根 ⇒ **引擎无关**。**遗留的下游症状**（子目录 `\include` 的中间文件/搜索根）不随 ㉖ 一起消失，它正是 `tectonic-test-plan.md` 的最高风险未验证项 **U-14** | `docs/design.md:196`（**该行对 ㉒ 的归因是错的，勿照抄**）；t1 §7.2-1；`docs/dev/modules.md:825,860`；`runner.rs:365-368`；`roadmap:61,198`；`tectonic-test-plan.md:896`（U-14） |
 | LBR-6b | **`had_aux` 判据的归属**（原表误挂在 ㉖ 名下） | Quick 升级判据 `tmp/<stem>.aux` 失去磁盘载体 | 它属 **㉘（编辑期单趟）**，不是 ㉖：`runner.rs:354-359`；路径 B 下改读我们 I/O 层的文件表（§5.4） | `crates/latteset-infra/src/runner.rs:354-359` |
 | LBR-7 | **内存占用与多窗口并发** | 库形态把引擎搬进宿主进程，峰值工作集不可控；全局互斥锁下无并行收益 | **已知**：峰值工作集重夹具 **245 MB** / 轻夹具 **203 MB**（§6.4）。并发场景随 P4 判决（不投入常驻）一并搁置：库形态仍是"每次编译一次性" | t2 §7.4 第 5 条（`[推断]`）；§6.4 |
 | LBR-8 | **上游 API 变更** | 0.x 子版本不保证兼容（今日名字已与 0.13/0.14 不同） | 钉 `Cargo.lock`；用 0.17 名字（`IoProvider` 无 `create_output`/`output_file_names`/`output_open`） | t2 §4.1/§1.3/§9.2 |
@@ -717,4 +717,4 @@ impl latteset_core::scheduler::CompileRunner for TectonicLibRunner {
 | MSVC + `crt-static` 下 `links` 冲突是否成立（t2 U12） | **已由构建实践否定**：本机以 `vcpkg + x64-windows-static-release + RUSTFLAGS=-Ctarget-feature=+crt-static` 反复构建成功（含 `--features tectonic-lib`），无 `links` 冲突 |
 | §11 复核脚本入仓（`run-samples.ps1` / `dep-closure.py` / `conflict-check.py`，以及 §6 计划新增的 `bench-tectonic-build.ps1` / `bench-tectonic-lib.mjs` / `tectonic-lib-xdvscan.mjs` / `tectonic-lib-xdv2pdf.mjs`） | **部分已落地（2026-09-15）**：`scripts/validate-pdf.mjs`（P2/P3 入口，本轮新增）、`scripts/bench-tectonic-lib.mjs`（P4）、`scripts/tectonic-lib-xdvscan.mjs`（P5）**已入仓**；**仍缺** `bench-tectonic-build.ps1`（P1，实现现在 `test_file/research-tectonic-lib/build-spike/run-samples.ps1`）与 `tectonic-lib-xdv2pdf.mjs`（P6）——P1 的构建补测受外部前置阻塞（见 §3.1.3），P6 的等价能力已由 P2 的整链路覆盖 |
 | §10 许可分布 | `[未定]`（t2 §2.3；不得写成结论） |
-| T13 收口项 | **大部分已落地**：`docs/README.md` 索引行（含 ADR-0012）、ADR-0012 文件已接受、`docs/modules.md` §2.7 的 Tectonic 契约面已成文（含 §12.1 #28）、`docs/design.md` 的能力面与代价已同步。**仍未做**：`roadmap §6.5` 的判据状态没有按 J1 结案与判据③ 改口径重写 |
+| T13 收口项 | **大部分已落地**：`docs/README.md` 索引行（含 ADR-0012）、ADR-0012 文件已接受、`docs/dev/modules.md` §2.7 的 Tectonic 契约面已成文（含 §12.1 #28）、`docs/design.md` 的能力面与代价已同步。**仍未做**：`roadmap §6.5` 的判据状态没有按 J1 结案与判据③ 改口径重写 |

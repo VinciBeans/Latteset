@@ -1,6 +1,6 @@
 # scripts/ —— 工具脚本索引
 
-> **这里不按主题分子目录**：约 50 处文档逐字引用 `node scripts/<name>.mjs`（`docs/modules.md` §12.3、
+> **这里不按主题分子目录**：约 50 处文档逐字引用 `node scripts/<name>.mjs`（`docs/dev/modules.md` §12.3、
 > `docs/design.md` 的基准节、各份 research 报告），搬迁只会造成大面积链接失效而换不到实际收益
 > （2026-09 审计结论）。**新增脚本请同时在本表登记一行。**
 
@@ -49,4 +49,4 @@
 | `render-diagrams.mjs` | 架构图渲染（Mermaid → `docs/diagrams/`） | ⚠ **本机跑不通**（缺 mermaid + 无头浏览器，ADR-0011 记） |
 | `export-logo.mjs` | Logo PNG 导出 | ⚠ 依赖 `@resvg/resvg-js`（**不在 package.json 里**，需手动装） |
 | `gen-log-error-corpus.ps1` | 生成 `crates/latteset-core/src/log_parser/real_error_corpus.rs`（真实错误语料） | 测试生成器，改语料时跑 |
-| `tl-compile-matrix.ps1` | TeX Live 模板编译矩阵（语料调研用） | 一次性调研，结论已进 `docs/research/` |
+| `tl-compile-matrix.ps1` | TeX Live 模板编译矩阵（语料调研用） | 一次性调研，结论已进 `docs/archive/research/` |

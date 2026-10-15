@@ -53,7 +53,7 @@ impl TectonicSettings {
     ///
     /// **引擎闸门不可省**：形态位是 Tectonic 引擎的**子选项**，只有 `engine == Tectonic` 时才谈得上。
     /// 少了 `engine == Tectonic` 这一半，`engine=xelatex` + `lib_form=true` 会**静默跑 Tectonic 库形态**
-    /// ——状态栏报 XeLaTeX、实际引擎是 Tectonic。判据见 `docs/research/tectonic-test-plan.md` 的 INT-92：
+    /// ——状态栏报 XeLaTeX、实际引擎是 Tectonic。判据见 `docs/archive/research/tectonic-test-plan.md` 的 INT-92：
     /// 切回 XeLaTeX 必须产出 `tmp/<stem>.xelatex.pages`，且首轮 `changed_pages` 为全部页。
     ///
     /// `env_forced`（`LATTESET_TECTONIC_LIB=1`）是**显式覆盖**：复核/CI 要在不改用户设置的前提下复现

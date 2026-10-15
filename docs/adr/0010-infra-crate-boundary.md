@@ -19,4 +19,4 @@ latteset-core 只定义接口（FileSystem / CompileRunner / SyncTexProvider）�
 - **影响**：
   - 依赖搬迁：notify / tokio-util / async-trait / serde_json 从 src-tauri 移到 infra；src-tauri 的依赖面收窄到 tauri 系 + serde + tokio(sync) + tracing + 两个本地 crate；
   - 集成测试入口变化：真实 latexmk/synctex 用例从 `cargo test -p latteset -- --ignored` 改为 `cargo test -p latteset-infra -- --ignored`；
-  - 架构图（architecture-diagram.md 图 1）与 modules.md 的模块归属同步为三层 Rust 结构。
+  - 架构图（docs/archive/architecture-diagram.md 图 1）与 docs/dev/modules.md 的模块归属同步为三层 Rust 结构。

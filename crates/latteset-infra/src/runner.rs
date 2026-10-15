@@ -359,19 +359,19 @@ fn compile_command(req: &CompileRequest, kind: CompileKind, bundle: BundlePolicy
     // **按引擎分档（2026-09-14 裁决 D4，别改回无条件设置）**：Tectonic 把这个变量当**引擎时间源**
     // 喂给 `\today` —— 设 0 时**正文**会印成 `1970 年 1 月 1 日`（实测；而 XeTeX 只动 PDF `/ID`、
     // 正文零变化）。所以 **Tectonic 进程不设**它；不设时 Tectonic 的 XDV 仍逐字节稳定（264,736 B），
-    // 页哈希判据不受影响。依据与代价见 docs/research/tectonic-test-plan.md §5.4 D4 与
-    // docs/research/page-hash-prev-quant.md。
+    // 页哈希判据不受影响。依据与代价见 docs/archive/research/tectonic-test-plan.md §5.4 D4 与
+    // docs/archive/research/page-hash-prev-quant.md。
     if req.engine != latteset_core::types::Engine::Tectonic {
         cmd.env("SOURCE_DATE_EPOCH", EPOCH_FOR_REPRODUCIBLE_BUILD);
     }
     cmd
 }
 
-/// Tectonic 命令（路线①；`docs/research/tectonic-test-plan.md` §1.2 / INT-20）。
+/// Tectonic 命令（路线①；`docs/archive/research/tectonic-test-plan.md` §1.2 / INT-20）。
 ///
 /// 参数按测试方案定为**必带**（`-C` 例外，见下）：
 /// - `-C`（仅当 `bundle == CachedOnly`）：只用缓存资源（离线，不联网下载）。**不能无条件加**——
-///   全新机器 + 空缓存时它会让首编必失败（`docs/tectonic-library-plan.md` §6 P0 / E-1）。
+///   全新机器 + 空缓存时它会让首编必失败（`docs/archive/tectonic-library-plan.md` §6 P0 / E-1）。
 ///   判定依据与证据见 [`crate::tectonic`]；
 /// - `-k`：保留中间产物（`.aux`/`.toc`/`.bbl`）—— Quick 的前置条件（`tmp/<stem>.aux`）与 bib 判据都要它；
 /// - `--keep-logs`：保留 `.log`（Tectonic 的日志本来只在内存、收尾才落盘）；
@@ -595,7 +595,7 @@ impl LatexmkRunner {
     /// **只对产 XDV 的引擎有意义**（[`Engine::writes_xdv`]，已知债 #25）——调用方必须先过那道闸，
     /// 否则会把上一次 XeLaTeX 留下的陈旧 XDV 当成本次产物。
     ///
-    /// 为什么需要它（docs/research/incremental-edit-x-dvi.md）：XDV 的页是自包含的字节区间，
+    /// 为什么需要它（docs/archive/research/incremental-edit-x-dvi.md）：XDV 的页是自包含的字节区间，
     /// 页哈希相同 ⇔ 该页的排版结果逐字节未变。于是"这次编译到底改了什么"可以被精确判定，
     /// 下游据此跳过无谓工作——B：不发 `pdf-updated`；C：只重绘变化页；A：跳过 `xdvipdfmx` 转换。
     ///
@@ -615,7 +615,7 @@ impl LatexmkRunner {
 
     /// 成功收尾：页哈希 →（必要时）`xdvipdfmx` 转换 → 拷贝到项目根 → 缓存页哈希。
     ///
-    /// 功能点 A（docs/research/incremental-edit-x-dvi.md §2.2）就在这里落地：Quick 路径改用
+    /// 功能点 A（docs/archive/research/incremental-edit-x-dvi.md §2.2）就在这里落地：Quick 路径改用
     /// `-no-pdf` 后不再自己转 PDF，于是"本次 XDV 页哈希与上次**逐页相同**"时可以：
     /// **跳过转换与拷贝，直接复用项目根已有的 PDF**（省 0.65–1.4s/次）。
     /// Full（latexmk）自己会转换，不受影响。
@@ -972,7 +972,7 @@ mod tests {
     /// 设 0 会让正文 `\today` 印成 1970-01-01；XeTeX 只动 PDF `/ID`）。
     ///
     /// `-C` 是**条件**参数（P0/t14，LIB-8）：缓存有证据才加；冷缓存/首跑档不能加，否则
-    /// Tectonic 拒绝联网取 bundle、首编必失败（`docs/tectonic-library-plan.md` §6 P0）。
+    /// Tectonic 拒绝联网取 bundle、首编必失败（`docs/archive/tectonic-library-plan.md` §6 P0）。
     #[test]
     fn tectonic_command_and_epoch_scoping() {
         let mut req = sample_req();
@@ -1153,7 +1153,7 @@ mod tests {
 
     /// 已知债 #26 的**真机回归**（`#[ignore]`，需要 TeX Live）：在真实多页项目上，编辑第 1 页
     /// 插 1 个汉字只应报**少数几页**变化。旧口径（页哈希含 `bop` 尾部的 `prev`）会报"第 3 页起
-    /// 全部变了"——实验室实测 25/26 页（`docs/research/page-hash-prev-quant.md` §3）。
+    /// 全部变了"——实验室实测 25/26 页（`docs/archive/research/page-hash-prev-quant.md` §3）。
     #[tokio::test]
     #[ignore]
     async fn page_growth_edit_marks_few_pages_on_real_project() {
@@ -1347,7 +1347,7 @@ mod tests {
         }
     }
 
-    /// 功能点 A（docs/research/incremental-edit-x-dvi.md §2.2）：页哈希与上次**逐页相同**时，
+    /// 功能点 A（docs/archive/research/incremental-edit-x-dvi.md §2.2）：页哈希与上次**逐页相同**时，
     /// Quick 路径跳过 `xdvipdfmx` 转换与 PDF 拷贝。
     ///
     /// 判据用 `tmp/main.pdf` 的 mtime：转换没跑 ⇒ 文件不会被重写。

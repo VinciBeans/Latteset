@@ -1,6 +1,6 @@
 // 草案补丁（v1）：把"编辑器里刚改动的那一行"近似地画回预览的对应位置。
 //
-// 目标与口径（docs/research/realtime-preview-cost.md §6、docs/design.md §延迟预算）：
+// 目标与口径（docs/archive/research/realtime-preview-cost.md §6、docs/design.md §延迟预算）：
 // 用户在 ~200ms 内看到自己的输入被反映，**允许不精确**；真正的正确画面由下一次编译的
 // `pdf-updated` 覆盖掉草案层。这里只放**纯函数**（可单测）：文本行索引 / 锚点匹配 / 改动行定位。
 

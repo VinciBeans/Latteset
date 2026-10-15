@@ -1,4 +1,4 @@
-// previewStore 单测（modules.md §9.2 / docs/research/incremental-edit-x-dvi.md 的 B 功能点）：
+// previewStore 单测（modules.md §9.2 / docs/archive/research/incremental-edit-x-dvi.md 的 B 功能点）：
 // pdf-updated 的三种情形——无法判定 / 逐页未变 → 跳过重载 / 有变化 → 重载。
 import { describe, it, expect, beforeEach } from "vitest";
 import { setActivePinia, createPinia } from "pinia";

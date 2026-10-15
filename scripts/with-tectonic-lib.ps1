@@ -51,7 +51,7 @@ $installed = Join-Path $VcpkgRoot "installed/$triplet"
 $portsPresent = (Test-Path (Join-Path $installed 'lib')) -and
                 ((Get-ChildItem (Join-Path $installed 'lib') -Filter '*.lib' -ErrorAction SilentlyContinue | Measure-Object).Count -gt 0)
 if ((Test-Path $VcpkgRoot) -and -not $portsPresent) {
-    $problems.Add("triplet 的依赖未安装（$installed 下没有 .lib）：`n    修：装 freetype / harfbuzz / graphite2 / icu / fontconfig / libpng 的 $triplet 端口；清单与命令见 docs/tectonic-library-plan.md §3.1.3")
+    $problems.Add("triplet 的依赖未安装（$installed 下没有 .lib）：`n    修：装 freetype / harfbuzz / graphite2 / icu / fontconfig / libpng 的 $triplet 端口；清单与命令见 docs/archive/tectonic-library-plan.md §3.1.3")
 }
 
 # ③ 构建工具链：**只有要（重）建 ports 时才需要**。ports 已装好时 cargo 直接链接，
@@ -78,7 +78,7 @@ if ($problems.Count -gt 0) {
 }
 $warnings | ForEach-Object { Write-Host "  ⚠ $_" -ForegroundColor Yellow }
 
-# ---- 设置环境（与 docs/tectonic-library-plan.md §6.1 的命令行逐项一致）----
+# ---- 设置环境（与 docs/archive/tectonic-library-plan.md §6.1 的命令行逐项一致）----
 $env:TECTONIC_DEP_BACKEND = 'vcpkg'
 $env:VCPKG_ROOT = (Resolve-Path $VcpkgRoot).Path
 $env:VCPKG_DEFAULT_TRIPLET = $triplet

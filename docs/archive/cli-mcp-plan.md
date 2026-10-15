@@ -94,7 +94,7 @@ P0-3（路径与 SyncTeX 策略下沉 core）按计划做了：`core::synctex::{
 | P0-1 | `CompileOutcome` 加 `elapsed` + actor 写编译快照 + `status`/`errors` 查询命令 | **改为会话内快照**（`elapsed` 在调用处测），命令面已提供 `status`/`errors`（见 §4） |
 | P0-2 | headless `run_once` + `lib.rs` setup 参数化共用装配 | **部分**：`run_once` 已落地；装配不共用（见 §4） |
 | P0-3 | `pdf_path_for_root` / SyncTeX 请求构造下沉 core，GUI 改调 | **已做**（`core::synctex::{pdf_path_for_root, synctex_data_path, resolve_inverse}`） |
-| P1-4 | outline 解析下沉 Rust（前端改调 `get_outline`） | **早已落地**（更早的提交，见 [modules.md](./modules.md) §3.5） |
+| P1-4 | outline 解析下沉 Rust（前端改调 `get_outline`） | **早已落地**（更早的提交，见 [modules.md](../dev/modules.md) §3.5） |
 | P1-5 | Emitter 三回调改多订阅者 fanout（跑 MCP notifications） | **未做**（一期用快照；见 §5） |
 
 ## 7. harness 接线（DSH，已落地并实测）

@@ -21,10 +21,10 @@ pub enum Engine {
     PdfLaTeX,
     #[serde(rename = "lualatex")]
     LuaLaTeX,
-    /// Tectonic（2026-09 引入；方案见 [tectonic-library-plan.md](../../../docs/tectonic-library-plan.md)；
+    /// Tectonic（2026-09 引入；方案见 [tectonic-library-plan.md](../../../docs/archive/tectonic-library-plan.md)；
     /// 计划期的一次性集成方案已归档到 `docs/archive/tectonic-integration-plan.md`）。
     ///
-    /// 形态 = **子进程驱动官方 `tectonic.exe`**（路线①，`docs/research/tectonic-test-plan.md` §1.2 的 D2 裁决）：
+    /// 形态 = **子进程驱动官方 `tectonic.exe`**（路线①，`docs/archive/research/tectonic-test-plan.md` §1.2 的 D2 裁决）：
     /// 它自带 bundle、**不读用户 TeX Live**，自己出 PDF（`writes_xdv() == false`）⇒ 页级复用 A/B/C
     /// 在该引擎下**不可用**（`page_hashes` 恒空 → 前端按"无法判定"保守全量刷新，A 无对应物）。
     #[serde(rename = "tectonic")]
@@ -58,7 +58,7 @@ impl Engine {
     ///
     /// 只有 XeTeX 有 XDV 这个概念：`xelatex -no-pdf` 写 `tmp/<stem>.xdv`，PDF 再由 `xdvipdfmx`
     /// 按需转换。另外三个引擎**没有**这个中间产物，实测（2026-09，见
-    /// [现代引擎实测](../../../docs/research/modern-engines-zh.md) §3.1 / §8.4）：
+    /// [现代引擎实测](../../../docs/archive/research/modern-engines-zh.md) §3.1 / §8.4）：
     /// - **pdfLaTeX**：`-no-pdf` 是**未识别选项**（`unrecognized option '-no-pdf'`）→ Quick 直接跑不起来；
     /// - **LuaLaTeX**：`-no-pdf` 被**静默忽略**（仍直接写 PDF），且中文下不可能有 DVI/XDV
     ///   （`luatexja`：`DVI output is not supported in LuaTeX-ja`）；
@@ -100,7 +100,7 @@ impl CompileKind {
     }
 }
 
-/// 编译模式（CONTEXT.md：连续编译 / 保存触发编译）。
+/// 编译模式（docs/glossary.md：连续编译 / 保存触发编译）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Type)]
 #[serde(rename_all = "snake_case")]
 pub enum CompileMode {
@@ -162,7 +162,7 @@ pub struct CompileStatusDto {
 
 /// pdf-updated 事件载荷。
 ///
-/// `changed_pages` / `pages`（2026-09，docs/research/incremental-edit-x-dvi.md 的 B/C 两个功能点）：
+/// `changed_pages` / `pages`（2026-09，docs/archive/research/incremental-edit-x-dvi.md 的 B/C 两个功能点）：
 /// 本次编译相对**上一次**变化的页号（1-based、升序）。前端语义：
 /// - `pages > 0` 且 `changed_pages` **非空** → 只有这些页需要重绘，其余页复用 canvas 位图；
 /// - `pages > 0` 且 `changed_pages` **为空** → 逐页字节完全相同 → **跳过重载**（新旧 PDF 逐页等价，
@@ -300,7 +300,7 @@ pub enum CompileOutcome {
         /// 本次产出的 XDV **页哈希**（顺序即页号）。
         ///
         /// 空表示**无法判定**（未产出 XDV / 读取失败 / 不是 XDV）——调度器与前端都按
-        /// "保守全量刷新"处理。用途见 docs/research/incremental-edit-x-dvi.md：
+        /// "保守全量刷新"处理。用途见 docs/archive/research/incremental-edit-x-dvi.md：
         /// 页哈希全同 ⇒ 这次编译的排版结果逐页未变 ⇒ 可跳过预览重载（B）与 PDF 转换（A）。
         page_hashes: Vec<u64>,
     },

@@ -1,5 +1,5 @@
 //! 文档大纲（源结构树）——2026-09-03 从前端 `src/stores/outline.ts` + `src/texParse.ts` 下沉
-//! （cli-mcp-plan.md P1-4；modules.md §12「文档大纲」）。
+//! （docs/archive/cli-mcp-plan.md P1-4；docs/dev/modules.md §12「文档大纲」）。
 //!
 //! 目标：**与前端旧实现行为等价**（等价的判据 = 此处单测全部对拍旧实现用例），
 //! 前端 `get_outline` 命令只做传参（实时缓冲 + 兜底文件列表）与结果呈现。
@@ -13,7 +13,7 @@
 //! - `\begin{verbatim}`…`\end{verbatim}` 环境内的行跳过（其中的结构命令是字面量）；
 //! - 防环 visited；`\input` 相对**项目根**解析优先、回退当前文件目录；
 //! - 读集安全（D8 词法版）：磁盘读取须落在项目根内（与前端 `read_file` 命令
-//!   canonicalize 校验的行为差异仅剩「符号链接目标解析」，见 modules.md §12）。
+//!   canonicalize 校验的行为差异仅剩「符号链接目标解析」，见 docs/dev/modules.md §12）。
 //!
 //! 增量（roadmap ⑦a，2026-09 实测后落地）：[`load_cached`] 跨调用复用**未变化文件的扫描结果**
 //! （按内容指纹），并缓存打开标签的实时缓冲（支持前端只上报**变更过**的缓冲）。

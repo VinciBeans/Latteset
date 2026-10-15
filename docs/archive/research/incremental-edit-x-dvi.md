@@ -56,7 +56,7 @@
 | **C 只重绘变化页** | `89fd2f4` | `PreviewPane.load` 不再无条件 `renderedScale.clear()`：同文件 + 页数一致 + 有变化页集合时**只让变化页失效**，其余页沿用旧 canvas（`renderPage` 的 `renderedScale` 闸门自然跳过） | 74 页文档改**最后一章**：`pagesRendered 7→0`、`pagesReused 0→7`、**render 102ms → 7ms**、total 183→71ms |
 | **A 跳过 PDF 转换** | `1b32e3b` | Quick 改用 `xelatex -no-pdf`（只产 XDV）+ `finish_success()` 按需调 `xdvipdfmx`；页哈希缓存 `tmp/<stem>.pages` 落磁盘（runner 保持无状态，且 Quick/Full 共享基线） | 连续 3 次"改注释 → Quick"全部命中 `跳过 xdvipdfmx 转换与 PDF 拷贝`；集成测试断言"第二次 Quick 不重写 `tmp/main.pdf`" |
 
-**两条落地时才暴露的坑**（详见 §7 与 [troubleshooting](../troubleshooting.md)）：
+**两条落地时才暴露的坑**（详见 §7 与 [troubleshooting](../../troubleshooting.md)）：
 
 1. **判据别用 mtime**：A 的验证最初用 `tmp/main.pdf` 的 mtime，结果被"空闲收敛"干扰——Quick 成功后 2s 的收敛 Full 走 latexmk，它自己会重写该文件，看起来像"Quick 没跳过"。改用日志行判定才看清（连 `#1` 都跳过了）。
 2. **WS 探针脚本不能以 `//` 开头**：应用的执行器把脚本包进括号求值，`//` 开头的脚本会**静默**返回 `null`（不是 error），极难排查。`scripts/editor-report.mjs` 的 `Session.eval` 已加前导换行兜底。

@@ -2,9 +2,9 @@
 
 > 作用：把调研结论变成**当前可执行的优先级与批次**，并保留已完成项的 ID 与证据指针。
 > 依据：[调研总览](./tex-ide-pain-points.md) + [desktop](./desktop-latex-editor-pain-points.md) / [online](./online-latex-editor-pain-points.md) / [vscode](./vscode-latex-workshop-pain-points.md) 三份专项 + [P0-② 分析](./p0-2-first-open-analysis.md) + [模板语料调研](./template-corpus-survey.md) / [中文高校模板引擎要求](./cn-thesis-template-engines.md) + [上游实时渲染方案](../texpresso-live-rendering-roadmap.md)（评估见 §5）
-> 现状实现：[design.md](../design.md)（产品语义与实测数字）、[modules.md](../modules.md)（实现契约、已知债与验证入口）、[cli-mcp-plan.md](../cli-mcp-plan.md)（headless 用法）、[troubleshooting.md](../troubleshooting.md)（操作坑与真机验收清单）
+> 现状实现：[design.md](../../design.md)（产品语义与实测数字）、[modules.md](../../dev/modules.md)（实现契约、已知债与验证入口）、[cli-mcp-plan.md](../cli-mcp-plan.md)（headless 用法）、[troubleshooting.md](../../troubleshooting.md)（操作坑与真机验收清单）
 >
-> **ID 稳定约定**：①…㉗ 沿用历史编号（`modules.md` / `troubleshooting.md` / `design.md` / 源码注释里的「roadmap P0-①」「P0-②-1」「roadmap ④」等引用因此不失效）；新增项从 **㉘** 起续编。已完成项**保留 ID 并移入 §1 基线**，不再占用待办位次。
+> **ID 稳定约定**：①…㉗ 沿用历史编号（`docs/dev/modules.md` / `troubleshooting.md` / `design.md` / 源码注释里的「roadmap P0-①」「P0-②-1」「roadmap ④」等引用因此不失效）；新增项从 **㉘** 起续编。已完成项**保留 ID 并移入 §1 基线**，不再占用待办位次。
 > **证据约定**：**实测** = 可复现的本机结果（命令见各报告）；**[推断]** = 未实测的判断；未标注的规划项一律视为未实现。
 >
 > **当前下一步**：**⑧⑨ 语义层**（合并里程碑，见 §6.3）→ **⑩⑪㉖**；⑦c 已完成（夹具 + 口径 + 数据，结论是"不需要优化"，见 §1 与 [p1c 报告](./p1c-multifile-large-project.md)）。§3 是唯一的排序来源，§4 说明批次与出口条件。
@@ -13,30 +13,30 @@
 
 | ID | 项 | 完成 | 结论与证据 |
 |---|---|---|---|
-| ① | 中文文件名/路径与编码实测复核 | 2026-09 | 路径层面全链路可用；修掉真实缺陷（GBK 源 + pdflatex 的 `.log` 非法 UTF-8 → 「编译失败」退化为「拿不到任何错误信息」）。MCP 补验：中文路径 PDF 渲染正常、反向 SyncTeX 跳 `Ln 10`。见 [troubleshooting.md](../troubleshooting.md) |
-| ②-1 | 根文件候选可见可交互 | 2026-09 | `ProjectInfo.root_candidates` + `get_project` + `RootFilePicker.vue` + 状态栏入口；**并修掉阻断缺陷**：`update_settings` 不同步内存 `ProjectState.root_file`。见 [modules.md](../modules.md) §12 |
+| ① | 中文文件名/路径与编码实测复核 | 2026-09 | 路径层面全链路可用；修掉真实缺陷（GBK 源 + pdflatex 的 `.log` 非法 UTF-8 → 「编译失败」退化为「拿不到任何错误信息」）。MCP 补验：中文路径 PDF 渲染正常、反向 SyncTeX 跳 `Ln 10`。见 [troubleshooting.md](../../troubleshooting.md) |
+| ②-1 | 根文件候选可见可交互 | 2026-09 | `ProjectInfo.root_candidates` + `get_project` + `RootFilePicker.vue` + 状态栏入口；**并修掉阻断缺陷**：`update_settings` 不同步内存 `ProjectState.root_file`。见 [modules.md](../../dev/modules.md) §12 |
 | ③ | 性能基准与回归基建 | 2026-09 | `scripts/{gen-bench-projects,bench}.mjs`：六档纯文本 fixture + 可选真实模板档；一条命令出 cold/noop/edit 报告，超预算退出码 1。**结论：瓶颈在小文档固定开销而非大文档**；三档小文档超 2s 及格线；真实论文档 cold >240s（口径待重定，见 §10） |
 | ④ | 错误诊断升级 | 2026-09 | 19 类 `DiagnosisKind`（缺包/缺类/缺字体/字体集/引擎不匹配/未定义命令/组未闭合/连锁 Emergency stop…），匹配不到返回 `None` 降级原文；**23 例真实语料** + 手写期望表 + DoD 覆盖率 ≥80%；真机验证两行式展示 + 点条目跳 `Ln 4` |
 | ⑤ | SyncTeX 可靠性加固（含 ㉒、⑳） | 2026-09 | `scripts/synctex-report.mjs` + beamer 夹具；三组样本 34 点：正向/反向/同文件 **34/34**、跳到位 ≤3 行 31/34（**≤5 行 34/34**）；修掉「生成文件被当源码打开 / 失败静默 / 编译中竞争」三处缺陷。见 design.md §预览 |
-| ⑥ | CLI + MCP 交互接口 | 2026-09 | 新 crate `latteset-server`（headless `Session` + `latteset-cli` + `latteset-mcp`，**零新增第三方依赖**）。实测闭环 `open → read → write → compile(成功) → 改坏 → compile(failed + 诊断 + 退出码 1) → 修好 → 成功`；SyncTeX 正反向往返命中；两次编译 PDF 逐字节一致。回归：`cargo test -p latteset-server`（10）+ `--test mcp_stdio`（真实二进制 + stdio 管道 5）+ 真编译 `#[ignore]` 用例。用法见 [cli-mcp-plan.md](../cli-mcp-plan.md)，契约见 [modules.md](../modules.md) §8.1 |
-| ⑦a | 大纲重扫增量（⑦ 的拆项之一） | 2026-09 | core `OutlineCache`（按内容指纹复用未变化文件的扫描结果，**内容每次仍重取**）+ 前端只提交**变化过**的缓冲（`lastSent` 差分 + `open_paths` 淘汰）+ 刷新合并。实测（11 文件/436KB）：全量重扫 + 全量提交 **55.5ms → 9.7ms**（编辑一个文件）/ **8.4ms**（无编辑）；真机端到端 `scans=1 reused=10` → `scans=0 reused=11`。顺带修掉**入口路径未归一**（同一文件两种拼写 → 大纲重复项）与**并发刷新重复发送**（结构事件风暴实测连发 11 次）。契约见 [modules.md](../modules.md) §3.5/§12.2，数据见 [p1 分析](./p1-large-doc-editor-analysis.md) §3.3 |
+| ⑥ | CLI + MCP 交互接口 | 2026-09 | 新 crate `latteset-server`（headless `Session` + `latteset-cli` + `latteset-mcp`，**零新增第三方依赖**）。实测闭环 `open → read → write → compile(成功) → 改坏 → compile(failed + 诊断 + 退出码 1) → 修好 → 成功`；SyncTeX 正反向往返命中；两次编译 PDF 逐字节一致。回归：`cargo test -p latteset-server`（10）+ `--test mcp_stdio`（真实二进制 + stdio 管道 5）+ 真编译 `#[ignore]` 用例。用法见 [cli-mcp-plan.md](../cli-mcp-plan.md)，契约见 [modules.md](../../dev/modules.md) §8.1 |
+| ⑦a | 大纲重扫增量（⑦ 的拆项之一） | 2026-09 | core `OutlineCache`（按内容指纹复用未变化文件的扫描结果，**内容每次仍重取**）+ 前端只提交**变化过**的缓冲（`lastSent` 差分 + `open_paths` 淘汰）+ 刷新合并。实测（11 文件/436KB）：全量重扫 + 全量提交 **55.5ms → 9.7ms**（编辑一个文件）/ **8.4ms**（无编辑）；真机端到端 `scans=1 reused=10` → `scans=0 reused=11`。顺带修掉**入口路径未归一**（同一文件两种拼写 → 大纲重复项）与**并发刷新重复发送**（结构事件风暴实测连发 11 次）。契约见 [modules.md](../../dev/modules.md) §3.5/§12.2，数据见 [p1 分析](./p1-large-doc-editor-analysis.md) §3.3 |
 | ⑲ | 模板样本调研 | 2026-09 | **0/19** 案例因默认引擎选错；`\RequirePDFTeX` **0/7374**；文档调研 19/19 兼容 XeLaTeX → ②-2 砍掉。另暴露 4 类真实障碍（缺包/缺字体、首编超时、latexmkrc 交互、`.ins`/`.dtx`） |
 | ㉑ | 外部改 `.latteset/settings.json` 同步 `root_file` | 2026-09 | watch 热更新后同步内存 `ProjectState.root_file`（设覆盖按 D8 解析、清覆盖回自动探测）+ **合并基数改为磁盘纯全局**（否则"清掉覆盖"永远不生效）+ 前端 `settingsChanged` 不一致时 `syncProject()`。真机双向验证。顺带修掉外部非原子写导致的"读到截断文件即丢弃"（3×150ms 短重试） |
 | ㉓ | 编辑非 UTF-8 源文件 | 2026-09 | `read_file` 遇 `InvalidData` 返回**中文可操作提示**（另存为 UTF-8）+ 状态栏提示条；**故意不做 lossy 打开**（保存会写回 U+FFFD = 静默损坏文件）。真机验证（截图） |
-| ㉔ | 文档欠账：`cli-mcp-plan.md` 的路径引用迁到 `latteset-infra` | 2026-09 | 已改为 `crates/latteset-infra/src/{runner,storage}.rs`，无残留（⑥ 完成后该文的现状盘点半节改写为使用说明） |
+| ㉔ | 文档欠账：`docs/archive/cli-mcp-plan.md` 的路径引用迁到 `latteset-infra` | 2026-09 | 已改为 `crates/latteset-infra/src/{runner,storage}.rs`，无残留（⑥ 完成后该文的现状盘点半节改写为使用说明） |
 | ㉕ | 学位论文首编超时 | 2026-09 | 上限 **600→1800s**；**不再静默重试**（旧行为要白等两个超时窗口）；超时**进错误列表**并带证据化诊断（首编/源文件数/日志页码 → 慢 vs 疑似卡住；日志已有致命错误则直接报那条）+ `Diagnosis.suggested_timeout_secs` 与一键「提高到 Ns 并重试」。真机 cycle 已验证。**真实模板 DoD 被 ㉖ 阻塞**（§6.1） |
 | ㉗ | `.ins`/`.dtx` 源码版模板 | 2026-09 | `Diagnosis.missing_file` + core `source_release_hint` + runner 读项目根：缺 `.cls` 且项目里有同名 `.ins` → 给具体命令 `xelatex X.ins`。**实测教训**：`.ins`/`.dtx` 同名时目录序会先选中 `.dtx` → 显式优先 `.ins`；只有 `.dtx` 时不编造命令。真机验证 |
 | ㉘ | 编辑期轻量出图 + 空闲收敛 | 2026-09 | 实测省 **40.2%**（6/6 档达标）→ 落地：Quick 直调引擎 / Full 完整 latexmk；无产物自动升级 Full；`draft` 状态 + 状态栏「引用待更新」+ 2s 空闲收敛。真机 cycle 与 `fdb_latexmk` mtime 双重佐证。见 design.md §附 |
 | ㉚ | 构建确定性验证 | 2026-09 | `scripts/check-determinism.mjs`；实测：不固定 `SOURCE_DATE_EPOCH` 时两次编译不一致（只差 trailer `/ID`：Quick 首差 @92143 共 67 字节），固定后 **3 档 × 2 路径逐字节一致**；顺带排除"会影响 `\today`"的顾虑。见 design.md §构建确定性 |
 | ㉛ | 编译决策日志 | 2026-09 | 触发侧打"不触发"的三类原因（无根文件 / 项目外 / 被忽略）；调度侧打 开始(root/kind/timeout)、入队等待、合并替换、直接执行最新、成功(draft)/失败(kind)、终止清队。core 加 `tracing` facade（非 IO，ADR-0006 仍成立） |
-| 阶段 2 | 引擎子进程 + 流式输出（上游实时渲染路线的吸收项，§5.3 / §5.8） | 2026-09 | 管道已接（`Stdio::piped()`）+ 尾随 `tmp/<stem>.log`（三条读任务 → 同一状态机）→ 状态栏「已排版 N 页」+ 错误列表**编译还没结束**就报致命错误。中间态走**独立事件**（`compile-progress` / `compile-errors`），前端按 `phase` 守卫——终态 `errors-updated` 不被晚到的中间态覆盖。真机实测（400KB / 162 页 ctexbook 首编）：`1.7s running → 3.4–4.8s 页数 2→162 → 8.2s success`；插错后 `41.5s` 收到实时错误、`42.3s` 出终态（37 条含警告）。**落地时才实测到的两条**：引擎输出在非 TTY 下是 4KB 块缓冲（按页 flush 的日志才是主力通道）、中间态可能晚于终态抵达。契约见 [modules.md](../modules.md) §2.4 / §2.6.1 |
+| 阶段 2 | 引擎子进程 + 流式输出（上游实时渲染路线的吸收项，§5.3 / §5.8） | 2026-09 | 管道已接（`Stdio::piped()`）+ 尾随 `tmp/<stem>.log`（三条读任务 → 同一状态机）→ 状态栏「已排版 N 页」+ 错误列表**编译还没结束**就报致命错误。中间态走**独立事件**（`compile-progress` / `compile-errors`），前端按 `phase` 守卫——终态 `errors-updated` 不被晚到的中间态覆盖。真机实测（400KB / 162 页 ctexbook 首编）：`1.7s running → 3.4–4.8s 页数 2→162 → 8.2s success`；插错后 `41.5s` 收到实时错误、`42.3s` 出终态（37 条含警告）。**落地时才实测到的两条**：引擎输出在非 TTY 下是 4KB 块缓冲（按页 flush 的日志才是主力通道）、中间态可能晚于终态抵达。契约见 [modules.md](../../dev/modules.md) §2.4 / §2.6.1 |
 | ⑦c | 多文件大项目（编辑器侧）：夹具 + 口径 + 数据 | 2026-09 | 三档夹具（9/21/41 文件 × 2.2–5.5 MB，后两档**同总量双倍文件数**以分离变量）+ 口径脚本 `scripts/editor-report.mjs`（WS 直驱真机、零第三方依赖、超门槛退出码 1）。**五项门槛全过**：每击键净开销 **0.077–0.097 ms 绝对值恒定**（与文件数/总量无关）、无 >50 ms longtask、折叠 0.73–1.45 ms/MB、大纲往返 5.07–6.41 ms/MB（门槛 20）、20×1 MB model 22–46 ms（门槛 100）；21 个标签全关后 model 25→4、缓冲 0 → **无泄漏**。**结论：不需要优化**。见 [p1c 报告](./p1c-multifile-large-project.md) |
 | 增量编辑 × DVI（B/C/A 三件） | 2026-09 | **页哈希差分驱动的三处复用**（[报告](./incremental-edit-x-dvi.md) §2.3）：① B 逐页未变则**跳过预览重载**（`reloadKey` 不动；真机 `skippedReloads` 1→2）；② C 只重绘变化页（74 页改末章：`pagesRendered 7→0`、render **102→7ms**）；③ A 页哈希全同则**跳过 PDF 转换**（Quick 改 `xelatex -no-pdf` + 条件 `xdvipdfmx`，缓存 `tmp/<stem>.pages`）。core 新增 `xdv` 模块（页索引 + 页哈希，9 条单测）。**顺带**：XDV 页索引第一次进入产品路径（此前只是诊断工具） |
 | 无 fork 的替代路径（G4 / 阶段 6·7） | [no-fork-alternatives.md](./no-fork-alternatives.md)（快照 API 盘点 + **导言区占比实测 71–89.5%** + 5 条替代逐条判定） |
-| ㉜ | **非 `.tex` 输入变化不触发编译**（改了 `.bib`/图片没反应） | 2026-09 | 触发规则从"只认 `.tex`"改为 **`is_compile_trigger`：项目内任何带扩展名的非忽略文件**（core 单一落点，watch 粗过滤 + compose 终判）。真机实测（proj-26）：外部改 `refs.bib` → 触发 Quick → 空闲收敛 Full，**PDF 文本层出现新标题**（bibtex 真跑了）；反向改回 → PDF 复原。**防自激**：自己写在项目根的 `<stem>.pdf`（与 `.pdf.tmp`）实测 6 条事件全部被拒、0 次多余请求；**目录不触发**（notify 在 Windows 上报 `Any` 认不出类型 ⇒ 用"必须带扩展名"兜住，建/删目录实测编译次数不变）。代价：非输入文件（`notes.md`）也会白编译一次 ⇒ 精确失效是 **㉝**。契约见 [modules.md](../modules.md) §3.3 |
-| ⑩ | 深色主题（Candy Desk 暗色） | 2026-09 | token 两层（**通道变量**+**角色 token**，59 个，`App.vue :root` 一处定义、`[data-theme=dark]` 一处覆盖）+ Monaco 独立深浅两套主题 + `ui.theme = light/dark/system` 设置（Rust model/merge/specta 绑定，**默认 light** ⇒ 升级外观不变）+ 首帧不闪（`index.html` 内联脚本读 localStorage）。**对比度实测**：正文 15.3:1 / 次级 7.1 / 三级 4.4 / 错误 8.3 / 警告 10.9 / 成功 9.2 / 主色文本 5.8；**并改掉一处真问题**——"实底强调 + 白字"在深色下只剩 2.4:1 ⇒ 引入 `--on-accent`（深色用墨色），修后 6.3:1。PDF 预览**不反色**（保真优先，白页 = 台灯下的纸）。见 [design.md](../design.md) §界面主题 |
+| ㉜ | **非 `.tex` 输入变化不触发编译**（改了 `.bib`/图片没反应） | 2026-09 | 触发规则从"只认 `.tex`"改为 **`is_compile_trigger`：项目内任何带扩展名的非忽略文件**（core 单一落点，watch 粗过滤 + compose 终判）。真机实测（proj-26）：外部改 `refs.bib` → 触发 Quick → 空闲收敛 Full，**PDF 文本层出现新标题**（bibtex 真跑了）；反向改回 → PDF 复原。**防自激**：自己写在项目根的 `<stem>.pdf`（与 `.pdf.tmp`）实测 6 条事件全部被拒、0 次多余请求；**目录不触发**（notify 在 Windows 上报 `Any` 认不出类型 ⇒ 用"必须带扩展名"兜住，建/删目录实测编译次数不变）。代价：非输入文件（`notes.md`）也会白编译一次 ⇒ 精确失效是 **㉝**。契约见 [modules.md](../../dev/modules.md) §3.3 |
+| ⑩ | 深色主题（Candy Desk 暗色） | 2026-09 | token 两层（**通道变量**+**角色 token**，59 个，`App.vue :root` 一处定义、`[data-theme=dark]` 一处覆盖）+ Monaco 独立深浅两套主题 + `ui.theme = light/dark/system` 设置（Rust model/merge/specta 绑定，**默认 light** ⇒ 升级外观不变）+ 首帧不闪（`index.html` 内联脚本读 localStorage）。**对比度实测**：正文 15.3:1 / 次级 7.1 / 三级 4.4 / 错误 8.3 / 警告 10.9 / 成功 9.2 / 主色文本 5.8；**并改掉一处真问题**——"实底强调 + 白字"在深色下只剩 2.4:1 ⇒ 引入 `--on-accent`（深色用墨色），修后 6.3:1。PDF 预览**不反色**（保真优先，白页 = 台灯下的纸）。见 [design.md](../../design.md) §界面主题 |
 | ㊳ | 保存→开编链路的往返成本（**先量后定 → 定量后否决**） | 2026-09-17 | 实测（dev、`bench/tiny`、库形态、真机）：**Leg A**（前端 `save_all` IPC + 落盘）**7 / 7 / 7 / 6 / 8 ms**（5 样本，页内 `Date.now()` 包住 invoke）；**Leg B**（FS 事件 → 忽略过滤 → 排编译 → runner 起跑）**211 / 244 / 232 / 245 / 255 µs**（日志三元组 `watch 原始事件`→`触发编译`→`开始编译`）。端到端"落盘 → 开编" **≈7 ms** ⇒ 与"≥100 ms 才值得做"的门槛**差 14 倍**，**不做**"自写盘快速通道"。**顺带纠正一处误解**：`debounce_ms`（当前 500 ms、可调 100–2000）是**自动保存**的防抖（`src/composables/useAutoSave.ts:16-17`），**不是**编译侧的合并窗口 —— "编辑 → 开编"的主导项是它，而它是有意设计（一次编辑常伴随多处写盘）。 |
-| ㊱ | SyncTeX 失败查询的重试语义（**失败查询不再白等**） | 2026-09-17 | 根因两处，都修了：① `infra/synctex.rs::with_retry` 把**所有**错误都退避重试（含"没有这个源文件"这类**确定性**失败）⇒ 一次失败查询 668 ms；② `resolve_inverse` 有 **5 个 y 候选**，每个候选都白付一次 600 ms 退避 ⇒ 无同步数据时 `inverse` **3.13 s**（5 × 625 ms，与实测 3127–3156 ms 吻合）。改法：错误按**语义**分四类（`Io`/`Busy` 瞬时 ⇒ 退避；`Unavailable`/`Parse` 确定性 ⇒ 立刻返回），并让"整份同步数据用不了"时**跳出候选循环**。**实测**（release、`bench/large`、**子进程档**产出的有效同步数据）：forward 确定性失败 **668 → 14–15 ms**、forward 无同步数据 **645 → 10–11 ms**、inverse 无同步数据 **3127 → 11 ms**（≈285×）；成功路径不变（forward 15–21 ms / inverse 14–16 ms）。**瞬时竞争不回归**：独占锁住 `.synctex.gz` 250 ms 期间发起查询 → **608 ms 后退避成功命中 page 8** ✓。契约见 [modules.md](../modules.md) §5、诊断入口见 [troubleshooting.md](../troubleshooting.md)。⚠ 验证途中发现的**新缺口**另立 **㊷**（库形态的**根文件**在同步数据里叫 `texput` ⇒ 根文件自身定位不可用；被 `\include` 的章节正常。见 §6.10）。 |
+| ㊱ | SyncTeX 失败查询的重试语义（**失败查询不再白等**） | 2026-09-17 | 根因两处，都修了：① `infra/synctex.rs::with_retry` 把**所有**错误都退避重试（含"没有这个源文件"这类**确定性**失败）⇒ 一次失败查询 668 ms；② `resolve_inverse` 有 **5 个 y 候选**，每个候选都白付一次 600 ms 退避 ⇒ 无同步数据时 `inverse` **3.13 s**（5 × 625 ms，与实测 3127–3156 ms 吻合）。改法：错误按**语义**分四类（`Io`/`Busy` 瞬时 ⇒ 退避；`Unavailable`/`Parse` 确定性 ⇒ 立刻返回），并让"整份同步数据用不了"时**跳出候选循环**。**实测**（release、`bench/large`、**子进程档**产出的有效同步数据）：forward 确定性失败 **668 → 14–15 ms**、forward 无同步数据 **645 → 10–11 ms**、inverse 无同步数据 **3127 → 11 ms**（≈285×）；成功路径不变（forward 15–21 ms / inverse 14–16 ms）。**瞬时竞争不回归**：独占锁住 `.synctex.gz` 250 ms 期间发起查询 → **608 ms 后退避成功命中 page 8** ✓。契约见 [modules.md](../../dev/modules.md) §5、诊断入口见 [troubleshooting.md](../../troubleshooting.md)。⚠ 验证途中发现的**新缺口**另立 **㊷**（库形态的**根文件**在同步数据里叫 `texput` ⇒ 根文件自身定位不可用；被 `\include` 的章节正常。见 §6.10）。 |
 | ㊲ | 首屏让位：文本行索引不再挡首屏（**先量后定 → 定量后否决**） | 2026-09-17 | 立项依据是"28 页 164–173 ms ⇒ 外推 125 页 0.7–0.8 s 且挡住首屏"—— **两条都被实测否掉**（dev、`bench/large` 125 页 / 5646 行、子进程档）：① 索引真实耗时 **278 ms**（旧外推高 2.6×，`[draft] 文本行索引就绪：5646 行 / 125 页，278ms`）；② **首屏没被挡**：同一轮加载 `total=98–115 ms`、`render=55–74 ms`（8 页全渲染完）**完成时索引仍在跑**（日志显示索引比加载晚 **204 ms** 结束）—— 因为索引是 `void` 发起、逐页 `await`，与渲染在 worker 队列里**交错**而不是串在前面；③ 最坏情况"加载刚结束（索引仍在跑）就跳到第 60 页"= **52 ms**，稳态跳页 **12–13 ms** ⇒ 索引的**最坏附加延迟 ≈40 ms**。⇒ **不改**（把索引挪到 idle 只会把这 278 ms 的占用从"加载后"挪到"首次编辑时"，换 ~40 ms 的最坏情况，不划算）。⚠ 教训：这次立项用的是**线性外推**（28 页 ×4.5），实测是**次线性**的 278 ms ⇒ 涉及"每页成本"的估算必须实测。 |
 | ㊷ | 库形态「根文件」的 SyncTeX 定位不可用（**失败即修，2026-09-17 落地**） | 2026-09-17 | 库形态产出的 `tmp/<stem>.synctex.gz` 里主输入记录是 **`Input:1:texput`**（引擎 C 侧 `open_log_file()` 抢先把 jobname 定成 `texput`，根因见 §6.10）⇒ 自解析按文件找 tag 时主文件永远落空 ⇒ **单文件项目**双向定位全失效（分章项目只有被 `\include` 的章节能定位）。修法 = 收尾把主输入名补成**真实绝对路径**（`crates/latteset-tectonic/src/synctex.rs`，纯数据补丁 + gz 往返；**不改引擎**）。**实测**（release CLI、`LATTESET_TECTONIC_LIB=1`）：`bench/large` 的 `forward main.tex 100` 从「同步数据里没有这个源文件」→ **`{"page":8,"x":133.76837158203125,"y":204.46743774414062}`**，与子进程档**逐字段相同**；`bench/multifile`（20 章）根文件 `forward main.tex 10` → `page 39` 同样逐字段相同（章节样本本来就正常）。**零变化 A/B**（HEAD 二进制 vs 补丁版、清空 `tmp/` 各跑一轮、三夹具）：**PDF/`.log`/错误归属/同步数据（除 Input 行）逐字节相同**，有错文档的 `line:3 / undefined_control_sequence` 一字不差。残留 1 处**与本补丁无关**的差异：目录区域的反向命中，库形态落在生成物 `main.toc`（㉒ 的提示），子进程档落在源码行 `\tableofcontents` —— 把主输入名改回 `texput` 后该结果**一字不变**（即判决性反证）。
 
@@ -104,7 +104,7 @@
 | **㊸ 悬停公式即时预览（候选，未排期）** | 光标停在公式上 → 浮层给出**这一个公式**的真实排版预览（TeXStudio 式），不重排全篇、不碰权威产物 | ① ~~**先量**：三个夹具（轻/中/重导言区）的片段编译耗时分布 + 缓存命中后的响应，出数再决定是否投入（先量后做，同 ㊲㊳ 的处置）~~ ✅ **已量（2026-09-17，§6.11.8）**：库形态 240/545/760 ms、整篇 1.87–2.20 s（片段 = 1/3–1/8）、重复悬停 77/332 ms（A 闸门）、子进程形态热态地板 ≈420 ms 且与导言区无关、冷启动被 biber 拖到 8.6 s；**结论 = 继续做，形态不改判，目标分级（轻/中 ≤400、重 ≤900、重复 ≤400），超 3 s 的项目退回按钮式**；② 出数后若做：公式扫描器逐例单测通过（行内/行间/环境/多行/转义 `\$`/注释/`\verb`）、首次出图 p50 ≤ 400 ms（目标，待校准）、缓存命中 ≤ 50 ms、**主编译墙钟增量 ≤5%**、权威 `main.pdf`/`tmp/main.*` 与关闭该功能时**逐字节相同**、坏公式**给原因不留白**；③ 真机用可观测钩子断言（同 `window.__previewLastReload` 约定） | ✅ **已完成**（2026-09-17：点名入表 → 同日 P0 定量 → 两处决策 → 切片 1/2/3 落地；真机四项验收齐备，见 §1 与 §6.11） |
 | **㊹ 导言区固化为 format（候选，未排期）** | 让每次编译（主编译与公式预览都算）**不再重复加载项目导言区**，同时保持输出与"逐字读导言区"**逐字节一致** | ① 先侦察：能否用现有 format 缓存机制装一个"项目导言区 format"（键 = 导言区哈希 + bundle digest）、`mylatexformat` 的限制清单（哪些宏包不能进）、失败时如何无痛回落；② 判据：同一文档用/不用 format 的 **PDF 与页哈希逐字节相同**，重导言区（`ctexbook`+`tikz`）的 `typeset_ms` 至少降一半、冷编（3 趟）总墙钟降幅 ≥20%；③ 失效路径必须有测试（改导言区 ⇒ 自动重建、不得复用旧 format） | ⬜ **待测一条变体（技术主写法已被引擎拒绝）**（2026-09-17 两轮侦察：xelatex 路线全崩、Tectonic 路线主写法被引擎拒绝；复活前先测"导言区插在内核 `\dump` 之前、不越界"这条，见 §6.12.1） |
 | **㊺ 软件内新建文件/目录（新建文件 + 向导已完成；新建目录/右键待做）** | 打开空目录或需要加文件时**不必跳出软件** | ① 空目录：新建 `main.tex` ⇒ 树出现 + 编辑器打开 + **能直接编译**（根探测重跑）；② 新建目录后可在其中新建文件；③ 重名 / 非法字符 / 项目外路径都有明确提示（不静默失败）；④ 真机验收：文件树右键与 `+` 入口都能用、`Esc` 取消不产生空文件 | ✅ **新建文件 + 新手向导已完成并真机验收（2026-09-17）**：`FileTree` 标题栏 `＋` 就地输入 → `saveAll`（D8）→ 刷新树 + 打开；空目录那条路的"建完就能编"由**骨架 + `rescanRoot`（重探测 + 补首编）**闭合。其余：新建**目录**、右键在选中目录里建 **仍未做**（见 §6.13 待办）。判据与证据见 §6.13/§6.13.1 |
-| **㊻ 引擎清单动态化 + 默认引擎切 Tectonic（已完成）** | 设置面板的引擎选项**不再写死在前端**：顺序（Tectonic 优先）、名字、说明与**本机可用性**都由后端给；`LATTESET_TEX_ENGINES` 可覆盖；默认引擎改 Tectonic | ① 弹层不冲出面板（选项只留名字，说明在下方）；② 清单来自后端（前端无引擎数组，状态栏也走同一份）；③ 不可用的引擎禁用 + 给原因；④ `LATTESET_TEX_ENGINES` 能筛选与重排、**不能伪造可用性**；⑤ 新装（无 settings.json）默认 Tectonic，老配置不变 | ✅ **已完成并真机验收（2026-09-17）**：core 6 例 + infra 4 例单测；真机验到"清单来自后端 / 覆盖成 `pdf, xelatex` 恰为两项且顺序照写 / 当前引擎被收窄掉时补只读项不空白 / 状态栏同源"；`不可用⇒禁用` 的真机渲染需在没装引擎的机器上验（本机四个全可用）。见 §6.14 + [ADR-0014 修订 1](../adr/0014-tectonic-first.md) |
+| **㊻ 引擎清单动态化 + 默认引擎切 Tectonic（已完成）** | 设置面板的引擎选项**不再写死在前端**：顺序（Tectonic 优先）、名字、说明与**本机可用性**都由后端给；`LATTESET_TEX_ENGINES` 可覆盖；默认引擎改 Tectonic | ① 弹层不冲出面板（选项只留名字，说明在下方）；② 清单来自后端（前端无引擎数组，状态栏也走同一份）；③ 不可用的引擎禁用 + 给原因；④ `LATTESET_TEX_ENGINES` 能筛选与重排、**不能伪造可用性**；⑤ 新装（无 settings.json）默认 Tectonic，老配置不变 | ✅ **已完成并真机验收（2026-09-17）**：core 6 例 + infra 4 例单测；真机验到"清单来自后端 / 覆盖成 `pdf, xelatex` 恰为两项且顺序照写 / 当前引擎被收窄掉时补只读项不空白 / 状态栏同源"；`不可用⇒禁用` 的真机渲染需在没装引擎的机器上验（本机四个全可用）。见 §6.14 + [ADR-0014 修订 1](../../adr/0014-tectonic-first.md) |
 | **㊼㊽㊾ 文件管理补齐：删 / 改名 / 搜索（已完成）** | 文件树从"只有增"补成完整 CRUD：**删**（悬停垃圾桶 + 二次确认 + 目录递归）、**改名**（右键 → 行内编辑）、**查**（树上方搜索栏 + 模糊匹配） | ① 删除必须确认、取消零副作用、目录要报"里面有多少东西"；② 改名只改本目录、不覆盖同名；③ 删/改都要收口编辑器状态（标签关闭 / 路径重映射 / 根文件重探）；④ 搜索子串优先 + 子序列兜底、命中保留祖先与整棵子树；⑤ 后端拒绝删/改项目根 | ✅ **已完成并真机验收（2026-09-21）**：`FileSystem` 三个新方法 + `delete_path`/`rename_path` 两道命令；前端 `ConfirmDialog.vue` + `services/fuzzy.ts`（6 例单测）；真机 10 项全过（含"改根文件名 ⇒ 根跟着走 + 补编译恢复就绪""删根文件 ⇒ 标签关闭 + 状态栏回到未确定根文件"）。见 §6.15 |
 
 ## 5. 外部方案与产物格式评估（否决与吸收都在这里）
@@ -136,9 +136,9 @@
 | 它的阶段 | 我们的状态 |
 |---|---|
 | 阶段 1 端到端骨架 | ✅ 已完成（改文件 → 编译 → 解析 → 显示） |
-| 阶段 2 子进程 + 流式输出 + 时间片 | 🟢 **唯一真缺的那件已落地**：子进程 ✅ / 时间片 ➖ 不需要 / **流式输出 ✅（2026-09）**：管道已接（`Stdio::piped()`）+ 尾随 `tmp/<stem>.log`（引擎输出在非 TTY 下是 **4KB 块缓冲**，按页 flush 的日志才是主力通道）；状态栏「已排版 N 页」+ 错误列表**编译还没结束**就见致命错误。真机实测 400KB / 162 页 ctexbook 首编：`1.7s running → 3.4–4.8s 页数 2→162 → 8.2s success`；插错后 `41.5s` 收到实时错误、`42.3s` 出终态。契约见 [modules.md](../modules.md) §2.4 / §2.6.1。**未做**：部分 PDF 只到可行性（`xdvipdfmx` 接受合成 postamble，0.65–0.94s/次，未接线）。时间片结构性不需要：32s 编译期间打字 4.42ms/键、零 >50ms longtask |
+| 阶段 2 子进程 + 流式输出 + 时间片 | 🟢 **唯一真缺的那件已落地**：子进程 ✅ / 时间片 ➖ 不需要 / **流式输出 ✅（2026-09）**：管道已接（`Stdio::piped()`）+ 尾随 `tmp/<stem>.log`（引擎输出在非 TTY 下是 **4KB 块缓冲**，按页 flush 的日志才是主力通道）；状态栏「已排版 N 页」+ 错误列表**编译还没结束**就见致命错误。真机实测 400KB / 162 页 ctexbook 首编：`1.7s running → 3.4–4.8s 页数 2→162 → 8.2s success`；插错后 `41.5s` 收到实时错误、`42.3s` 出终态。契约见 [modules.md](../../dev/modules.md) §2.4 / §2.6.1。**未做**：部分 PDF 只到可行性（`xdvipdfmx` 接受合成 postamble，0.65–0.94s/次，未接线）。时间片结构性不需要：32s 编译期间打字 4.42ms/键、零 >50ms longtask |
 | 阶段 3 增量输出解析 | 🟡 **技术要件已达成、但无消费方**（2026-09 深挖，[报告](./stage3-incremental-output-parsing.md)）：追加式页索引 + 回滚已实现并验证（4 种喂入序列对拍一致；141 轮实测**增量累计恒定在 6.6–8.1ms**、每轮全量线性涨到 260ms → 上游"每轮耗时常数级"的验收标准**达成**）；但编译期页进度已由阶段 2 的 `[N]` 标记满足、编译后索引一次全量只要 5.4ms、⑪ 未开工 → **原型入库不接线**。副产品：修复了全量解析器两个静默错误（截断前缀会解出内容被截断的假完整页），并把"半成品可读"从 6 个采样点加强到 **1122 个截断点 / 71993 页 / 0 处不一致**；页哈希差分与 SyncTeX 已完成对拍 |
-| 阶段 4 脏矩形显示 | 🟡 已被粗粒度等价物覆盖：分页 DOM 虚拟化 + 同文件 canvas 复用（[modules.md](../modules.md) §9.4）；PDF 路线下无法矩形级增量 |
+| 阶段 4 脏矩形显示 | 🟡 已被粗粒度等价物覆盖：分页 DOM 虚拟化 + 同文件 canvas 复用（[modules.md](../../dev/modules.md) §9.4）；PDF 路线下无法矩形级增量 |
 | 阶段 5 VFS + 事务回滚 | ❌ 与 **ADR-0007** 冲突（overlay 会引入第二真相源），且需引擎配合 |
 | 阶段 6 seen 水位 + trace | ❌ **执行层不可得**：机制要"引擎进程活着 + 状态可回退"（G4 fork 快照，Windows 无 `fork()`）；信息层（读了什么）已由 `.fls` / `.fdb_latexmk` 免费提供，但只够**依赖级**用途（精确失效），兑不出"打字不重算前半篇"。见 [G1 报告](./g1-read-interception-feasibility.md) |
 | 阶段 7 fork 快照 + fence | ❌ **不可达，但结论已收紧**（2026-09 专项，[报告](./no-fork-alternatives.md)）：Windows 上"进程快照 + 恢复执行"**没有等价机制**（`PssCaptureSnapshot` 只读、CRIU 是 Linux 专属、Cygwin fork 要求 Cygwin 目标引擎），唯一真等价是 **WSL**（本机不可用：服务拒绝访问）。**但实测显示 fork 能省的只占小头**：编辑期单趟的成本里**导言区占 71%（28 页）～89.5%（74 页）**——重排只占 10–29%，fork 一分钱也省不到固定开销。⇒ 该啃的是"砍固定开销"（导言区 fmt 化等），**不需要 fork** |
@@ -156,7 +156,7 @@
 | 未存盘 overlay | 阶段 5a `edit_data` | **㉙**（P2；与 ADR-0007 冲突，无实测痛点） |
 | **编译期页完成度进度** | 阶段 3 的页索引（去掉渲染） | §5.7 / §10-B.8：读 `tmp/*.xdv` 出「已排版 N 页」，C1，未接线——**需求已由阶段 2 的 `[N]` 标记落地**（§1「阶段 2」行），XDV 版只剩页级差分/增量解析的价值 |
 | **页级变更判定** | 同上（页哈希差分） | ⑪ 的候选判定输入（§6.4）：保证不漏，但重排时会覆盖大量页 |
-| **引擎 stdout 管道 + 部分 PDF** | 阶段 2（子进程 + 流式输出） | §5.8：`Stdio::null()` → `piped()` 出**编译期进度 + 实时错误**（✅ **已落地 2026-09**，见 [modules.md](../modules.md) §2.6.1）；页前缀 + 合成 postamble 出**部分 PDF**（**2026-09-15 重评：已从"仅可行性"变成可落地**——合成器入库 `scripts/xdv-partial.mjs`、库形态进程内转换 92–131 ms/次、长编译窗口 7.6 s、重载 0 long task 且滚动位置零偏移；见 [DVI 报告](./dvi-preview-feasibility.md) §10。**未接线**，且 Tectonic 子进程档不落 XDV ⇒ 该档无此能力） |
+| **引擎 stdout 管道 + 部分 PDF** | 阶段 2（子进程 + 流式输出） | §5.8：`Stdio::null()` → `piped()` 出**编译期进度 + 实时错误**（✅ **已落地 2026-09**，见 [modules.md](../../dev/modules.md) §2.6.1）；页前缀 + 合成 postamble 出**部分 PDF**（**2026-09-15 重评：已从"仅可行性"变成可落地**——合成器入库 `scripts/xdv-partial.mjs`、库形态进程内转换 92–131 ms/次、长编译窗口 7.6 s、重载 0 long task 且滚动位置零偏移；见 [DVI 报告](./dvi-preview-feasibility.md) §10。**未接线**，且 Tectonic 子进程档不落 XDV ⇒ 该档无此能力） |
 
 **明确不做**：fork 快照、seen 水位/trace、VFS 事务回滚（§7）、**DVI/XDV 作为预览格式**（§5.6）。
 
@@ -213,10 +213,10 @@
 
 - **子进程 ✅ 早有**（`infra::runner`，含超时树杀）；**唯一缺口是输出通道**：`runner.rs` 的 `Stdio::null()` 把引擎 stdout/stderr 全丢了 → 编译期既没有进度也没有实时错误。**2026-09 已改为 `piped()`**。
 - **时间片 ➖ 不需要**：引擎是独立 OS 进程。实测 32s Full 编译期间打字 **4.42ms/键、p95 7.2ms、零 >50ms longtask**（空闲对照 4.33ms / p95 5.4ms）。
-- **流式输出 ✅ 已落地**（落地记录见 [modules.md](../modules.md) §2.4 / §2.6.1）：三条读任务（stdout/stderr/`tmp/<stem>.log` 尾随）→ 同一个状态机 → `compile-progress` / `compile-errors` 两个**中间态**事件 → 状态栏「已排版 N 页」+ 错误列表实时致命错误。
+- **流式输出 ✅ 已落地**（落地记录见 [modules.md](../../dev/modules.md) §2.4 / §2.6.1）：三条读任务（stdout/stderr/`tmp/<stem>.log` 尾随）→ 同一个状态机 → `compile-progress` / `compile-errors` 两个**中间态**事件 → 状态栏「已排版 N 页」+ 错误列表实时致命错误。
   - **落地时才发现的两条新事实**：① 引擎输出**非 TTY 下是 4KB 块缓冲**，短文档要等进程结束才 flush → 实时通道必须以"按页 flush 的 `.log`"为主力（只接管道时，1471ms 的编译里首条错误出现在 1394ms，等于没有提前量）；② 中间态**可能晚于终态抵达**（runner 收尾仍会补发最后一批），故中间态必须走**独立事件** + 前端 `phase` 守卫——最初复用 `errors-updated` 时真机观察到"超时诊断 1 条被 30 条中间态覆盖"。
   - **实时错误只报致命错误**：`Overfull`/`Underfull`/`LaTeX Warning` 留到终态（实测一次失败的长文档日志 30 条里 27 条是 `Overfull`，会淹没真错误）；终态行为不变（仍含警告）。
-  - **顺带定位一条既有缺陷**：错误条目的文件归属会错一章（TeX 日志把 `)` 与下一个 `(` 打在同一行，文件栈失配）——见 [troubleshooting.md](../troubleshooting.md) 与新记的 [modules.md](../modules.md) §12.1 #22（未修）。
+  - **顺带定位一条既有缺陷**：错误条目的文件归属会错一章（TeX 日志把 `)` 与下一个 `(` 打在同一行，文件栈失配）——见 [troubleshooting.md](../../troubleshooting.md) 与新记的 [modules.md](../../dev/modules.md) §12.1 #22（未修）。
 - **"部分 PDF" 做通了**（这是验收里"输出一产生就显示"的唯一现实路径）：页前缀 + **从零合成 postamble** → `xdvipdfmx` 接受 → 页数 = 前缀页数（12/30/60/90/121 全对）、首页渲染与完整文件一致（仅字体编号不同）。成本：构建 0–4ms + 转换 **0.65–0.94s/次**（与页数几乎无关）。坑：字体定义必须同时收 `define_native_font`(252) **和** 经典 `fnt_def`(243–246)，`post_post` 回指指针必须改。**未接线 → 2026-09-15 重评后立项为 ㉞（§6.6）**：合成器已入库（`scripts/xdv-partial.mjs`）、库形态进程内转换把每次刷新的成本降到 **~0.1 s**、且"频繁重载的体感"已补测（0 long task、滚动零偏移）。
 - **验收对照**：`UI 不卡` ✅ 已满足；`10 秒文档首屏数百毫秒` ❌ **达不到**（实测 ≈1–3s）——差的那部分正是"拥有渲染栈"（渲染那半已否决）。
 
@@ -234,7 +234,7 @@
 
 **本批落地**（两笔提交）：
 - **仓库卫生**：删误入的 pnpm lockfile ×2、根目录 `texput.log`、一次性转储（687 KB）与孤儿配置；`.gitignore` 收口 e2e 实验产物（docs 一直声明"未提交"却缺规则）；夹具产物 `git rm --cached`。
-- **文档**：P0 陈旧表述 8 项（默认引擎 / 超时不重试 / Tectonic `-r 1` / SyncTeX 进程内 / design 前提失效 / ADR 计数）+ 3 处坏链；**新建 `docs/research/README.md` 状态表**（26 份调研：状态 · 一句话结论 · 被谁引用）；roadmap §6 详报拆到 `roadmap-item-specs.md`（文件名不改 ⇒ 19 条入链零成本）；`docs/archive/` 收纳已被收编的分册；落盘悬空引用 `tectonic-lib-evidence.md`；troubleshooting 加「现象 → 行号」速查表。
+- **文档**：P0 陈旧表述 8 项（默认引擎 / 超时不重试 / Tectonic `-r 1` / SyncTeX 进程内 / design 前提失效 / ADR 计数）+ 3 处坏链；**新建 `docs/archive/research/README.md` 状态表**（26 份调研：状态 · 一句话结论 · 被谁引用）；roadmap §6 详报拆到 `roadmap-item-specs.md`（文件名不改 ⇒ 19 条入链零成本）；`docs/archive/` 收纳已被收编的分册；落盘悬空引用 `tectonic-lib-evidence.md`；troubleshooting 加「现象 → 行号」速查表。
 - **代码**：前端 `services/paths.ts`（分隔符归一与"在项目内"判定的唯一口径）+ `services/errors.ts`；**顺带修掉一处隐患**（相对路径实现在项目外返回绝对路径 ⇒ 会把绝对路径当相对路径发给 `update_settings`）；`.tex` 判定统一不区分大小写；后端 `CompileKind::as_str()` 收进 core、删死代码 `effective_settings`。
 
 **真机冒烟**（2026-09-21）：新建文件 / 改名子文件 / 删含文件目录（确认弹窗报"里面还有 1 个文件"）/ 搜索与清空 —— 四条全过；`cargo test` 267+45+10、`npm run test` 16 文件 153 例、`npm run build` 全绿。
@@ -266,7 +266,7 @@
 | **自研 DVI/XDV 渲染栈** | 需字形级渲染 + 系统字体（含 `.ttc`）+ specials；上游用 MuPDF（**AGPL**，与本项目 MIT 冲突）。索引那一半已吸收（§5.7） |
 | **自建/改造 TeX 引擎**（含 fork TeX Live 的 xetex） | 许可允许但代价三层，且最值钱的 fork 快照在 Windows 上仍不可达；真要走应走 Tectonic 并另立 ADR。见 §5.5 |
 | **实时协作** | P=0.40；在线方案护城河，本地方案投入产出不成立。定位「个人 / 离线优先」，协作交给 Git |
-| **增量编译** | [ADR-0005](../adr/0005-latexmk-first-incremental-next.md) 已实测证伪：latexmk 增量＝整份单遍重排，属 xelatex 引擎上限 |
+| **增量编译** | [ADR-0005](../../adr/0005-latexmk-first-incremental-next.md) 已实测证伪：latexmk 增量＝整份单遍重排，属 xelatex 引擎上限 |
 | **②-2 引擎自动推断** | ⑲ 实测：**0/19** 模板因默认 XeLaTeX 选错、`\RequirePDFTeX` 0/7374；改用 ④ 的「选错时明确告诉用户怎么改」替代 |
 | **推断 bib 工具链** | 实测 latexmk 自己就会跑 `bibtex`/`biber`，无需推断也无需用户配置 |
 | **自研 PDF 渲染引擎** | pdf.js 已是够用底座；LaTeX Workshop 的教训是"预览是二等公民"，不是"必须自研渲染器" |
@@ -285,29 +285,29 @@
 
 | 本文件项 | 实现 / 证据位置 |
 |---|---|
-| ① 中文路径 | [troubleshooting.md](../troubleshooting.md)「中文文件名/路径兼容性实测」 |
-| ②-1 根文件候选 | [modules.md](../modules.md) §8 命令表 / §9.2 stores / §9.4 组件表 / §10 契约 |
-| ②-2 引擎推断（否决） | [design.md](../design.md) §后置/未决清单「已否决」 |
+| ① 中文路径 | [troubleshooting.md](../../troubleshooting.md)「中文文件名/路径兼容性实测」 |
+| ②-1 根文件候选 | [modules.md](../../dev/modules.md) §8 命令表 / §9.2 stores / §9.4 组件表 / §10 契约 |
+| ②-2 引擎推断（否决） | [design.md](../../design.md) §后置/未决清单「已否决」 |
 | ③ 性能基准 | design.md §基准脚本与实测基线 + `scripts/{gen-bench-projects,bench}.mjs` |
-| ④ 错误诊断 | modules.md §4.1 + design.md §错误列表 + `log_parser/diagnosis.rs` / `real_error_corpus.rs` |
-| ⑤ SyncTeX | [ADR-0008](../adr/0008-synctex-via-cli-with-interface.md) + modules.md §5 + design.md §预览 + `scripts/synctex-report.mjs` |
-| ㊷ 库形态同步数据补丁 | modules.md §5（契约）与 §12.2 #26（已修）+ troubleshooting.md「库内嵌档下 SyncTeX 定位不可用」+ [roadmap-item-specs.md](./roadmap-item-specs.md) §6.10.1（实测与 A/B）+ `test_file/e2e/synctex-42-{verify,artifacts-ab,selfcheck}.ps1`（工作区产物） |
+| ④ 错误诊断 | docs/dev/modules.md §4.1 + design.md §错误列表 + `log_parser/diagnosis.rs` / `real_error_corpus.rs` |
+| ⑤ SyncTeX | [ADR-0008](../../adr/0008-synctex-via-cli-with-interface.md) + docs/dev/modules.md §5 + design.md §预览 + `scripts/synctex-report.mjs` |
+| ㊷ 库形态同步数据补丁 | docs/dev/modules.md §5（契约）与 §12.2 #26（已修）+ troubleshooting.md「库内嵌档下 SyncTeX 定位不可用」+ [roadmap-item-specs.md](./roadmap-item-specs.md) §6.10.1（实测与 A/B）+ `test_file/e2e/synctex-42-{verify,artifacts-ab,selfcheck}.ps1`（工作区产物） |
 | ㊸ 悬停公式即时预览 | [roadmap-item-specs.md](./roadmap-item-specs.md) §6.11（竞品口径 + 需求读数 + 三条路线 + 判据/风险）与 **§6.11.8（P0 定量数据）** + `src/latexSyntax.ts` 的 `math` 状态（定界规则来源）+ `src/latexSuggest.ts`（Monaco provider 注册范式）+ `git show 0ac930c`（片段编译的实测成本与三个真机坑）+ `test_file/e2e/math-preview-lab.ps1` / `math-preview-lab.json`（工作区产物） |
-| ㊹ 导言区固化为 format | [roadmap-item-specs.md](./roadmap-item-specs.md) §6.11.10（由来：㊸ 的最小包定量）+ `mylatexformat` 上游文档（`kpsewhich mylatexformat.ltx` 命中 TeX Live 2026）+ 现有 format 缓存机制（modules.md §2.7 的 `format_cache_path` / bundle digest 键） |
-| ㊺ 软件内新建文件 + 新手向导 | [roadmap-item-specs.md](./roadmap-item-specs.md) §6.13/§6.13.1（设计、细化、五条判据与真机证据）；`crates/latteset-core/src/newfile.rs`（骨架表 + 6 例单测）、`src-tauri/src/commands.rs` 的 `new_file_skeleton`、`src/components/{FileTree,NewFileWizard,SettingsPanel}.vue`、`src/stores/project.ts` 的 `rescanRoot`、`src/composables/useAutoSave.ts`；契约见 modules.md §6/§8/§9.2/§9.3/§9.4/§12.2 |
-| ㊻ 引擎清单动态化 + 默认引擎 | [roadmap-item-specs.md](./roadmap-item-specs.md) §6.14；`crates/latteset-core/src/engine.rs`（清单 + 6 例单测）、`crates/latteset-infra/src/probe.rs`（PATH 探测 + 4 例单测）、`src-tauri/src/commands.rs` 的 `list_engines`、`src/services/engines.ts`、`SettingsPanel` / `StatusBar`；决策见 [ADR-0014 修订 1](../adr/0014-tectonic-first.md)；契约见 modules.md §6/§8/§12.2 |
-| ㊼㊽㊾ 文件管理补齐（删 / 改名 / 搜索） | [roadmap-item-specs.md](./roadmap-item-specs.md) §6.15；`crates/latteset-core/src/project/fs.rs`（三个新 trait 方法）、`crates/latteset-infra/src/fs.rs`（实现 + 单测）、`src-tauri/src/commands.rs` 的 `delete_path` / `rename_path`、`src/components/{ConfirmDialog,FileTree,FileTreeItem}.vue`、`src/services/fuzzy.ts`（+ 6 例单测）、`src/stores/editor.ts` 的 `closeTabsUnder` / `remapPaths`；契约见 modules.md §8/§9.2/§9.4 |
-| ⑥ CLI + MCP（**已完成**） | [cli-mcp-plan.md](../cli-mcp-plan.md) + modules.md §8.1 + `crates/latteset-server` |
-| ⑦a 大纲增量（**已完成**） | modules.md §3.5（缓存三不变量）/ §12.2 + `core::outline::{load_cached, OutlineCache}` + `src/stores/outline.ts` |
+| ㊹ 导言区固化为 format | [roadmap-item-specs.md](./roadmap-item-specs.md) §6.11.10（由来：㊸ 的最小包定量）+ `mylatexformat` 上游文档（`kpsewhich mylatexformat.ltx` 命中 TeX Live 2026）+ 现有 format 缓存机制（docs/dev/modules.md §2.7 的 `format_cache_path` / bundle digest 键） |
+| ㊺ 软件内新建文件 + 新手向导 | [roadmap-item-specs.md](./roadmap-item-specs.md) §6.13/§6.13.1（设计、细化、五条判据与真机证据）；`crates/latteset-core/src/newfile.rs`（骨架表 + 6 例单测）、`src-tauri/src/commands.rs` 的 `new_file_skeleton`、`src/components/{FileTree,NewFileWizard,SettingsPanel}.vue`、`src/stores/project.ts` 的 `rescanRoot`、`src/composables/useAutoSave.ts`；契约见 docs/dev/modules.md §6/§8/§9.2/§9.3/§9.4/§12.2 |
+| ㊻ 引擎清单动态化 + 默认引擎 | [roadmap-item-specs.md](./roadmap-item-specs.md) §6.14；`crates/latteset-core/src/engine.rs`（清单 + 6 例单测）、`crates/latteset-infra/src/probe.rs`（PATH 探测 + 4 例单测）、`src-tauri/src/commands.rs` 的 `list_engines`、`src/services/engines.ts`、`SettingsPanel` / `StatusBar`；决策见 [ADR-0014 修订 1](../../adr/0014-tectonic-first.md)；契约见 docs/dev/modules.md §6/§8/§12.2 |
+| ㊼㊽㊾ 文件管理补齐（删 / 改名 / 搜索） | [roadmap-item-specs.md](./roadmap-item-specs.md) §6.15；`crates/latteset-core/src/project/fs.rs`（三个新 trait 方法）、`crates/latteset-infra/src/fs.rs`（实现 + 单测）、`src-tauri/src/commands.rs` 的 `delete_path` / `rename_path`、`src/components/{ConfirmDialog,FileTree,FileTreeItem}.vue`、`src/services/fuzzy.ts`（+ 6 例单测）、`src/stores/editor.ts` 的 `closeTabsUnder` / `remapPaths`；契约见 docs/dev/modules.md §8/§9.2/§9.4 |
+| ⑥ CLI + MCP（**已完成**） | [cli-mcp-plan.md](../cli-mcp-plan.md) + docs/dev/modules.md §8.1 + `crates/latteset-server` |
+| ⑦a 大纲增量（**已完成**） | docs/dev/modules.md §3.5（缓存三不变量）/ §12.2 + `core::outline::{load_cached, OutlineCache}` + `src/stores/outline.ts` |
 | ⑦c / ⑦b（**已完成 / 缓做**） | [p1-large-doc-editor-analysis.md](./p1-large-doc-editor-analysis.md)（拆分依据）+ [p1c-multifile-large-project.md](./p1c-multifile-large-project.md)（夹具/口径/数据）+ `scripts/{gen-large-project,editor-report}.mjs` |
 | ㉖ latexmkrc 交互 | [roadmap-item-specs.md](./roadmap-item-specs.md) §6.1 + troubleshooting.md「`\include{子目录/文件}` + `-output-directory`」 |
 | ⑪ 预览状态保持 | design.md §预览 + 本文件 §5.7（页哈希差分候选）+ [incremental-edit-x-dvi.md](./incremental-edit-x-dvi.md)（判定输入已就位：差分 ⟷ SyncTeX 对拍 + "0 页变化"实测） |
 | DVI/XDV 预览（**否决**） | [dvi-preview-feasibility.md](./dvi-preview-feasibility.md) |
-| ㉞ 流式出图（**已立项**） | [roadmap-item-specs.md](./roadmap-item-specs.md) §6.6 + [dvi-preview-feasibility.md](./dvi-preview-feasibility.md) §10（重评与实测）+ `scripts/xdv-partial.mjs`（合成器，本轮入库）+ modules.md §2.7 / 已知债 #21 |
+| ㉞ 流式出图（**已立项**） | [roadmap-item-specs.md](./roadmap-item-specs.md) §6.6 + [dvi-preview-feasibility.md](./dvi-preview-feasibility.md) §10（重评与实测）+ `scripts/xdv-partial.mjs`（合成器，本轮入库）+ docs/dev/modules.md §2.7 / 已知债 #21 |
 | G2 字节偏移重同步（**索引吸收**） | [g2-byte-offset-resync.md](./g2-byte-offset-resync.md) + `scripts/xdv-report.mjs` |
 | G1 拦截每一次读（**降级为依赖记录**） | [g1-read-interception-feasibility.md](./g1-read-interception-feasibility.md) + `scripts/fls-report.mjs`（`.fls` / `.fdb_latexmk` 依赖报告） |
 | 上游阶段 2（子进程/流式/时间片） | [stage2-streaming-feasibility.md](./stage2-streaming-feasibility.md)（进度三通道 + 部分 PDF 实测 + UI 不卡对照） |
-| ㉟ 窗口按钮融入（**已立项，未排期**） | [roadmap-item-specs.md](./roadmap-item-specs.md) §6.7 + `src-tauri/src/commands.rs` 的 `apply_window_theme`（原生边框路径的外观保障，提交 `8eb260a`）+ modules.md §9.4（布局契约） |
+| ㉟ 窗口按钮融入（**已立项，未排期**） | [roadmap-item-specs.md](./roadmap-item-specs.md) §6.7 + `src-tauri/src/commands.rs` 的 `apply_window_theme`（原生边框路径的外观保障，提交 `8eb260a`）+ docs/dev/modules.md §9.4（布局契约） |
 | **编译期并行与"白等"（㊱–㊶）** | [roadmap-item-specs.md](./roadmap-item-specs.md) §6.9（串行点清单 / 实测表 / 已证伪四条 / 已经并行的部分）+ [dvi-preview-feasibility.md](./dvi-preview-feasibility.md) §11（引擎**进程内**全局锁、4 线程零并行收益、两进程真并行）+ [tectonic-library-plan.md](../tectonic-library-plan.md) §12（缓存**无进程间锁**） |
 | ⑫ TinyTeX / ⑮⑯⑰⑱ | design.md §后置/未决清单 |
 
@@ -318,7 +318,7 @@
 1. **㉖ 的触发条件未定位**：`\include{子目录}` + `-outdir=tmp` 的最小复现在**无 rc / 精简 rc** 下 latexmk 都能自愈；hithesis 那一档不自愈且挂起，**是 rc 的哪一行造成的还没定论**（已排除"单纯覆写 `$pdflatex` + 尾部 `;cp`"）。
 2. ~~**⑦c 的多文件大项目全未测**~~ **已补（2026-09，⑦c 完成）**：≥20 文件、打开全部标签的内存/耗时、树刷新、include 图解析规模均已测，五项门槛全过、结论"编辑器侧不需要优化"（[p1c 报告](./p1c-multifile-large-project.md)）；剩下的是**编译期**表现与可信堆读数（见 §10-B.21）。
 3. **⑥ 留了三个未做项**：MCP 状态订阅（notifications）、headless 与 GUI 并发编译同项目的锁（现约定 headless 独占）、headless `file_write` 不代建父目录（与 GUI 同契约）。
-4. **⑦a 留了一个开口**：大纲只在**编译成功**时刷新，编译一直失败时大纲停在旧结构；缓存已让"按保存触发"变便宜（8–10ms/次），但时机/节流策略未定（modules.md §12.1 #17）。
+4. **⑦a 留了一个开口**：大纲只在**编译成功**时刷新，编译一直失败时大纲停在旧结构；缓存已让"按保存触发"变便宜（8–10ms/次），但时机/节流策略未定（docs/dev/modules.md §12.1 #17）。
 
 **B. 需要补测的数字**
 
@@ -345,8 +345,8 @@
 
 15. **beamer 的 2–4 行往返偏移**：三组样本里只有 beamer 有偏移，换取块规则后不变 → 归因于 beamer/主题的 synctex 记录粒度，**不修**（基线见 design.md §预览）。
 16. **① 的遗留（编辑 GBK 源文件只报英文错误）**：已由 ㉓ 处理（中文可操作提示 + 状态栏提示条）；**仍不支持编辑**非 UTF-8 源文件，这是设计取舍不是欠账。
-17. **`cargo test -p TeXpresso`（src-tauri）在本机因 WebView2 限制无法运行**：见 [troubleshooting.md](../troubleshooting.md)（另有新增坑：接了常驻 `latteset-mcp` 后该二进制被锁，需换 `CARGO_TARGET_DIR` 或用 `--lib`）。
-18. **`parse_log` 的文件栈错位（2026-09 落地阶段 2 时新发现，未修）**：TeX 日志把"关闭上一个文件 + 打开下一个文件"打在**同一行**（`[64]) (./ch_05.tex`），而扫描器只认行首 `(` / `)` → 文件归属错一章（实测：错误在 `ch_05.tex:164`，列表报 `./ch_04.tex:164`），错误列表的文件名与点击跳转目标都错。终态与流式共用同一解析器，两条路径都受影响；修法要按字符顺序做括号配对。见 [modules.md](../modules.md) §12.1 #22 与 [troubleshooting.md](../troubleshooting.md)。
+17. **`cargo test -p TeXpresso`（src-tauri）在本机因 WebView2 限制无法运行**：见 [troubleshooting.md](../../troubleshooting.md)（另有新增坑：接了常驻 `latteset-mcp` 后该二进制被锁，需换 `CARGO_TARGET_DIR` 或用 `--lib`）。
+18. **`parse_log` 的文件栈错位（2026-09 落地阶段 2 时新发现，未修）**：TeX 日志把"关闭上一个文件 + 打开下一个文件"打在**同一行**（`[64]) (./ch_05.tex`），而扫描器只认行首 `(` / `)` → 文件归属错一章（实测：错误在 `ch_05.tex:164`，列表报 `./ch_04.tex:164`），错误列表的文件名与点击跳转目标都错。终态与流式共用同一解析器，两条路径都受影响；修法要按字符顺序做括号配对。见 [modules.md](../../dev/modules.md) §12.1 #22 与 [troubleshooting.md](../../troubleshooting.md)。
 19. **精确失效的收益未在真实大文档上量化**（[G1 报告](./g1-read-interception-feasibility.md) §8.5）：只测到小探针"改无关文件 → 白编译一次"；真实收益 = 白编译频率 × 单次编译时长，两个因子都未统计。
 20. **`.fls` / `.fdb_latexmk` 当依赖源的边界未全测**（[G1 报告](./g1-read-interception-feasibility.md) §8）：多趟 xelatex 的 `.fls` 合并行为、biber/makeindex 等更多子步骤、编辑期写入时机，均未验证。
 21. **⑦c 的三条遗留**（[p1c 报告](./p1c-multifile-large-project.md) §8）：多文件大项目的**编译期**表现（watch 事件淹没）未测；`Ctrl+F`/大范围替换未测；堆内存没有可信读数（dev 下 `performance.memory` 抖动到出现负差值），且只测了 dev 模式、生产构建未测。

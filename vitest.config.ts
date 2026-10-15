@@ -1,7 +1,7 @@
 import { defineConfig } from "vitest/config";
 import vue from "@vitejs/plugin-vue";
 
-// 前端单测（vitest）：architecture.md §8「MVP 后补 vitest + @vue/test-utils」。
+// 前端单测（vitest）：docs/archive/architecture.md §8「MVP 后补 vitest + @vue/test-utils」。
 // 与 vite.config.ts 分离，避免污染 Tauri dev/build 的 vite 配置。
 export default defineConfig({
   plugins: [vue()],

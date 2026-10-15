@@ -1,11 +1,11 @@
 # 品牌标识（Logo）
 
 > 概念：**热浪杯**（Hot Steam Cup）。风格：年轻、简约、扁平几何 · 不对称动势。
-> 术语见 [CONTEXT.md](../CONTEXT.md)，产品设计见 [design.md](./design.md)。
+> 术语见 [glossary.md](./glossary.md)，产品设计见 [design.md](./design.md)。
 
 ## 概念
 
-Latteset = **Latte + Typeset**，本义是"一杯拿铁的时间，排版已经跟上"，与核心设计因素**实时编译**绑定（见 CONTEXT.md）。
+Latteset = **Latte + Typeset**，本义是"一杯拿铁的时间，排版已经跟上"，与核心设计因素**实时编译**绑定（见 glossary.md）。
 
 Logo 是一只**刚冲好、还冒着热气的拿铁杯**：
 

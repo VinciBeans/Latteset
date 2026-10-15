@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // 阶段 3「增量输出解析」的原型与验证工具（roadmap §5.3 阶段 3 / G2 报告 §10-B.8 留下的"追加式解析器"）。
 //
-// 上游要求（texpresso-live-rendering-roadmap.md §阶段 3）：
+// 上游要求（docs/archive/texpresso-live-rendering-roadmap.md §阶段 3）：
 //   ① 维护 offset（已扫描到的字节位置）；② 只做指令长度计算，不解释内容；
 //   ③ 遇到结构标记（BOP/EOP）记录字节偏移进页索引；④ **缓冲区变短（回滚）时丢弃末页、offset 退回上一页边界**。
 //   性能护栏：成本 ∝ **新增字节数**，而不是 ∝ 总输出大小。验收：每轮解析耗时常数级。
@@ -11,7 +11,7 @@
 //   node scripts/xdv-inc.mjs <file.xdv> --cost[=chunkBytes] # 成本：按 flush 粒度模拟，增量累计 vs 每轮全量累计
 //   node scripts/xdv-inc.mjs <file.xdv> --watch=200         # 编译期真实尾随：每轮增量 vs 每轮全量
 //
-// 结论见 docs/research/stage3-incremental-output-parsing.md。
+// 结论见 docs/archive/research/stage3-incremental-output-parsing.md。
 
 import { readFileSync, statSync } from 'node:fs';
 import { createHash } from 'node:crypto';

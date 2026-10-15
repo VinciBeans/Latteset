@@ -2,21 +2,21 @@
 
 > 团队 `tectonic-test-plan` · **T5 汇总与红队评审** · 2026-09-14 · **本文只出方案，不改产品代码。**
 >
-> **四份分册（逐条明细附录，已复制入库；2026-09 归档到 `docs/archive/tectonic-plan-parts/`）**：引擎层 [`engine.md`](../archive/tectonic-plan-parts/engine.md)（E1–E7，**56 条** / G1–G6 六个门禁）、集成层 [`integration.md`](../archive/tectonic-plan-parts/integration.md)（**Rev.10**，INT-10..INT-96，**88 条**）、测量 [`perf.md`](../archive/tectonic-plan-parts/perf.md)（Rev.4，R*/M*/H_*/U1–U12）、分发与许可 [`dist.md`](../archive/tectonic-plan-parts/dist.md)（DIST-*/MB-*/G-L*/F1–F8）。
+> **四份分册（逐条明细附录，已复制入库；2026-09 归档到 `docs/archive/tectonic-plan-parts/`）**：引擎层 [`engine.md`](../tectonic-plan-parts/engine.md)（E1–E7，**56 条** / G1–G6 六个门禁）、集成层 [`integration.md`](../tectonic-plan-parts/integration.md)（**Rev.10**，INT-10..INT-96，**88 条**）、测量 [`perf.md`](../tectonic-plan-parts/perf.md)（Rev.4，R*/M*/H_*/U1–U12）、分发与许可 [`dist.md`](../tectonic-plan-parts/dist.md)（DIST-*/MB-*/G-L*/F1–F8）。
 > **版本冻结（合并基线 = 最终值，引用前请核对）**
 > **复制时刻：2026-09-14 16:47:28**（`test_file/tectonic-plan-parts/` → `docs/research/tectonic-plan-parts/`；该时刻**四对文件已逐一复核 SHA-256 相等**）。**入库物以 docs 侧为准**（lab 源 `test_file/**` 被 gitignore，不进仓库）。
 >
 > | 分册 | 行 | 字节 | SHA-256（全量） |
 > |---|---:|---:|---|
-> | [`engine.md`](../archive/tectonic-plan-parts/engine.md) | **285** | **77,491** | `B13CCA1006A2BE9666D940CA1212CEB6E23514EEAA18FE873C249B9D0F83852D` |
-> | [`integration.md`](../archive/tectonic-plan-parts/integration.md) | **460** | **105,367** | `5A67A5241BD3CD0546992922155E9544E7B07A8F3757C35F10F53CB276C4DF74` |
-> | [`perf.md`](../archive/tectonic-plan-parts/perf.md) | 383 | 63,356 | `F68A711E6278ABCAF9862591B66B06DE80C444DC93D44D0BAEE93320CAD35F3D` |
-> | [`dist.md`](../archive/tectonic-plan-parts/dist.md) | 340 | 51,550 | `816EC45673CA520F5BB55B900E17BB70C79FF44B41D03C39660198BAD040158B` |
+> | [`engine.md`](../tectonic-plan-parts/engine.md) | **285** | **77,491** | `B13CCA1006A2BE9666D940CA1212CEB6E23514EEAA18FE873C249B9D0F83852D` |
+> | [`integration.md`](../tectonic-plan-parts/integration.md) | **460** | **105,367** | `5A67A5241BD3CD0546992922155E9544E7B07A8F3757C35F10F53CB276C4DF74` |
+> | [`perf.md`](../tectonic-plan-parts/perf.md) | 383 | 63,356 | `F68A711E6278ABCAF9862591B66B06DE80C444DC93D44D0BAEE93320CAD35F3D` |
+> | [`dist.md`](../tectonic-plan-parts/dist.md) | 340 | 51,550 | `816EC45673CA520F5BB55B900E17BB70C79FF44B41D03C39660198BAD040158B` |
 >
 > 分册内容：engine = E1–E7（**56 条**）+ G1–G6（含 E3.7–E3.10）；integration = **Rev.10**（88 条，反例 27，含 INT-54b）；perf = Rev.4；dist = 分发/缓存/许可。**分册可能继续修订**；本文与分册冲突处一律以本文 §8 裁决台账为准。
 > **冲突处理**：分册之间、以及分册与 `docs/archive/tectonic-integration-plan.md`（2026-09 归档）之间的冲突，**一律以本文 §8 裁决台账为准**；附录原文保留（它们是逐条证据与出处，不重写）。
 >
-> **已有实测数字的来源**：`docs/research/modern-engines-zh.md` §2/§7.4/§7.7/§8.2/§8.3/§8.4、`docs/design.md`（基准表、延迟预算、失败语义）、`docs/research/incremental-edit-x-dvi.md` §2.1–2.3、`docs/archive/tectonic-integration-plan.md`（2026-09 归档）、`docs/modules.md` §12，以及四份分册本轮实读的工件（`test_file/projects/bench/_zhcmp/**`）与队长 2026-09-14 的干净目录落盘实测。
+> **已有实测数字的来源**：`docs/archive/research/modern-engines-zh.md` §2/§7.4/§7.7/§8.2/§8.3/§8.4、`docs/design.md`（基准表、延迟预算、失败语义）、`docs/archive/research/incremental-edit-x-dvi.md` §2.1–2.3、`docs/archive/tectonic-integration-plan.md`（2026-09 归档）、`docs/dev/modules.md` §12，以及四份分册本轮实读的工件（`test_file/projects/bench/_zhcmp/**`）与队长 2026-09-14 的干净目录落盘实测。
 >
 > **标记约定**：`[实测]` 有命令与输出/工件；`[源码]` `file:line`；`[推断]` 由源码或机制外推、**未跑**；`[未测]` 无任何证据。**本文不虚构任何未实测的数字**——凡无实测来源者一律标 `[推断]`/`[未测]` 并进 §6.2。
 
@@ -44,7 +44,7 @@
    - **原始（含 `prev`）**：现状口径，反映"原始字节是否相同"；
    - **归一化（只哈希 `bop+45..eop`）**：反映"**该页内容**是否变化"，可把连锁收窄到真正变化的那一页。
 
-   **这同时是 `docs/modules.md` 已登记的已知债 #26，不是 Tectonic 新问题**：差别只在**触发频率** —— XeLaTeX 侧固定 epoch、日期永不变 ⇒ 该债几乎不触发；Tectonic 选 D4 的 (b)（不固定 epoch）就把它变成"**每天发生一次**"。两种口径会给出**不同的"变化页集合"**；**不声明口径的页哈希判据不可复核**（H_C 在原始口径下会因首页变长而整体塌陷，却被误读成"内容大片变化"）。本文以纪律 + **P-G19** 登记；与 T1 的 **E3.8** 同源，合并时以 E3.8 的 ID 为准。
+   **这同时是 `docs/dev/modules.md` 已登记的已知债 #26，不是 Tectonic 新问题**：差别只在**触发频率** —— XeLaTeX 侧固定 epoch、日期永不变 ⇒ 该债几乎不触发；Tectonic 选 D4 的 (b)（不固定 epoch）就把它变成"**每天发生一次**"。两种口径会给出**不同的"变化页集合"**；**不声明口径的页哈希判据不可复核**（H_C 在原始口径下会因首页变长而整体塌陷，却被误读成"内容大片变化"）。本文以纪律 + **P-G19** 登记；与 T1 的 **E3.8** 同源，合并时以 E3.8 的 ID 为准。
 
 7. **输出路径：只对"转换产物（PDF）"成立的纪律**（别写宽了 —— T1 实测 + 队长独立复算）：
    - **转换产物（PDF）的字节级比较**必须**同时**满足：**① 固定完整输出路径（目录 + 文件名，逐字符相同）**；**② 固定 epoch（纪律 5）**。队长的完整样本（同一份 28 页 XDV、`epoch=0`）：**同路径两跑全等**（79,354 B / `9310317941DB7975`）；**同目录仅换等长文件名** `bb.pdf` ⇒ **不等**（79,348 B）；换更长名 ⇒ 不等（79,343 B）；**异目录同名** ⇒ 不等（79,336 B）；不设 epoch ⇒ 不等（79,346 B）。⇒ **该效应不由路径长度驱动**（等长名同样不等），**不能靠长度对齐绕过**。
@@ -68,7 +68,7 @@
 | N5 | **不覆盖不稳定 CLI 面** | `--outfmt html`（`.spx`）、`-X/nextonic` V2 子命令（**没有** `--synctex/--outfmt/-r`，不要走）、`-Z search-path`/`shell-escape` 等 `-Z` 项 |
 | N6 | **不重测既有引擎的行为面** | XeLaTeX/LuaLaTeX/pdfLaTeX 只测"回归面"（默认引擎仍是 XeLaTeX、`npm run build`、`cargo test` 不回归）。**⚠ 默认已改 Tectonic（2026-09-17，ADR-0014 修订 1）**：本行的"默认引擎仍是 XeLaTeX"按 §7 修订版读作"默认引擎是 Tectonic" |
 | N7 | **不决定产品决策本身** | 是否随包分发 exe/bundle/TL 工具、缓存目录归谁、首跑超时策略等 → 本文给**仍待决的槽位 D5–D9**（§5.4）与判据，不替产品选；D1–D4 **均已裁决** |
-| N8 | **不承诺真实学位论文模板（hithesis 档）的数字** | 该档当前受阻（`I can't write on file 'body/introduction.aux'` → Emergency stop → latexmk 挂住，`modules.md §12.1 #6`），**排除在阈值判定之外**（§3.1.3） |
+| N8 | **不承诺真实学位论文模板（hithesis 档）的数字** | 该档当前受阻（`I can't write on file 'body/introduction.aux'` → Emergency stop → latexmk 挂住，`docs/dev/modules.md §12.1 #6`），**排除在阈值判定之外**（§3.1.3） |
 | N9 | **不覆盖 Windows 之外的平台** | 本机与全部实测都是 Windows x64（官方 exe 只有 MSVC 构建）；macOS/Linux 不在本轮 |
 
 ### 0.3 结论先行（12 条）
@@ -137,7 +137,7 @@
 
 | 路线 | 形态 | 得到 | 放弃 | 前提 | 优先级 |
 |---|---|---|---|---|---|
-| **① PDF 档（默认，本迭代落地）** | `tectonic -C -o tmp --synctex --keep-logs -k -p <rel>`（Quick 追加 `-r 0`。**⚠ 产品侧已改判为 `-r 1` 两趟（2026-09）**：`-r 0` 单趟产物**整段没有目录**，`crates/latteset-infra/src/runner.rs:401-403` 现为 `-r 1`；见 [troubleshooting.md:51](../troubleshooting.md)。本行其余内容为引擎层事实记录） | PDF + `.aux`/`.log`/`.bbl`/`.synctex.gz` 齐全；Quick 判定（`.aux` 存在）可用；runner 侧形态**与 LuaLaTeX 完全同类**（引擎自己出 PDF、不算页哈希、不调 `xdvipdfmx`） | **页级复用 B/C**（`page_hashes` 恒空 ⇒ 每次全量刷新）、A 标「该引擎不支持」 | 无（TL-less 也成立） | **P0** |
+| **① PDF 档（默认，本迭代落地）** | `tectonic -C -o tmp --synctex --keep-logs -k -p <rel>`（Quick 追加 `-r 0`。**⚠ 产品侧已改判为 `-r 1` 两趟（2026-09）**：`-r 0` 单趟产物**整段没有目录**，`crates/latteset-infra/src/runner.rs:401-403` 现为 `-r 1`；见 [troubleshooting.md:51](../../troubleshooting.md)。本行其余内容为引擎层事实记录） | PDF + `.aux`/`.log`/`.bbl`/`.synctex.gz` 齐全；Quick 判定（`.aux` 存在）可用；runner 侧形态**与 LuaLaTeX 完全同类**（引擎自己出 PDF、不算页哈希、不调 `xdvipdfmx`） | **页级复用 B/C**（`page_hashes` 恒空 ⇒ 每次全量刷新）、A 标「该引擎不支持」 | 无（TL-less 也成立） | **P0** |
 | **② XDV 档 + 外部转换（独立分支，P1）** | 收敛档 `tectonic -o tmp --outfmt xdv --keep-logs -k <rel>`（3 趟 + 9 BibTeX，**28 页**）→ **外部 `xdvipdfmx`（TL 自带）** → PDF + 页哈希 | 恢复 B/C（页级复用） | ① 的"免装 TeX Live"——**② 既需要 `xdvipdfmx.exe`、又需要 TL 的字体树（见下）**，与 G2（synctex 要 TL）同类；且该档仍 3 趟 + 9 次 BibTeX，**不是 Quick** | 本机装有 TeX Live（转换器与字体树都在 TL 里）；字体可被 kpathsea/TL 树解析 | **P1** |
 
 **路线 ② 的定位（Rev.6 更正，勿再写成"免装 TL 的出路"）**：Tectonic 的 XDV 里字体记的是**裸名**（`FandolSong-Regular.otf`、`lmroman12-regular` —— 无路径，`lmroman` 连扩展名都没有），而 XeLaTeX 侧是**绝对路径** ⇒ 外部转换成功靠的是 **TeX Live 的字体树 + kpathsea**（实测三类字体名 + `kpsewhich` 全命中 TL 路径），且 **`xdvipdfmx.exe` 本身也来自 TL**。⇒ **② =「有 TL 机器上的可选转换路径」**，与 G2 同类；**不得**用它论证免装 TL（T1 E2.12/E2.13，P0）。
@@ -234,12 +234,12 @@
 | **P-G11** | 首跑不得被默认超时"判死" | 冷缓存 + 默认 `timeout_secs=120` 首跑（实测 189/214/51 s > 120 s） | 不出现误导性超时诊断 | 判据（二选一）：① 首跑成功；② 失败时诊断含"首次获取资源/下载"字样且 `suggested_timeout_secs ≥ 300`。**反例**：出现"疑似卡住（日志无页输出）"这类把下载误判为卡住的文案 ⇒ FAIL | P0 | `modern-engines-zh.md` §8.2；`AGENTS.md` roadmap ㉕（超时不自动重试） |
 | **P-G12** | D1/D3 落地（人类已裁决） | ① 令 Tectonic 失败（删 exe / 造内容错误）；② 看状态栏；③ 点"一键切到 XeLaTeX 重编" | 失败**可见**、有出路、当前引擎可见 | 判据：① 错误列表条目 message 或 `diagnosis.hint` 含可执行动作（切引擎/提高超时/改源码）且**不自动回退**（全文无"已回退/静默回退"文案）；② 状态栏**不打开设置面板**即可见引擎名，且同处体现 Quick/Full 强度；③ 切引擎 ≤2 次点击且切换后编译成功 | P0 | human 裁决 D1/D3（2026-09-14）；`StatusBar.vue:48-99`（现状无引擎字段）、`policy.rs:53-59` |
 | **P-G13** | 判据工具纪律（防恒绿用例） | 用 `--diff <f>` 与 `--diff=<f>` 各跑一次；再故意漏值/给多余位置参数 | 两种形态都出差分；错用则非零退出 | 判据：**stdout 必须含 `页级差分`** 才算有效样本；漏值/多余参数 `exit 2`（已修，`scripts/xdv-report.mjs:273-308`） | P0 | engine.md 工具-①/②；队长已修 |
-| **P-G14** | 许可门禁（=G-1） | 跑 `docs/research/tectonic-bundle-licensing.md` 的 G-L1..G-L9 | 全绿 + 发行物含 NOTICE | 判据：见 §4.3；**未全绿前不得把 Tectonic exe/bundle 放进任何发行物** | P0 | dist.md §5 |
+| **P-G14** | 许可门禁（=G-1） | 跑 `docs/archive/research/tectonic-bundle-licensing.md` 的 G-L1..G-L9 | 全绿 + 发行物含 NOTICE | 判据：见 §4.3；**未全绿前不得把 Tectonic exe/bundle 放进任何发行物** | P0 | dist.md §5 |
 | **P-G15** | 离线形态门禁（=G-2） | 空缓存 + 断网，`-b <name>.ttb -C` 编中文夹具；另测"预置缓存 + `-C`" | exit 0、中文 0 缺字、页数一致 | 判据：exit 0 + `Missing character`==0 + `cache/bundles` **不存在**（证明没走 BundleCache）+ 日志 `downloading` 行数 == 0 | P0 | dist.md DIST-2.1/2.8；`lib.rs:275-287` |
 | **P-G16** | 夹具侧前置（漏了整批静默作废） | `<outdir>/chapters/` 必须预先创建；每档前后清产出；编辑类样本必须还原源文件 | 样本有效 | 判据：不建 ⇒ 必现 `I can't write on file 'chapters/ch01.aux'` → Emergency stop（**反例自证**）；未还原源文件 ⇒ 页哈希差分判据全错 | P0 | perf.md §2.4；`recheck.ps1:20-22`、`bench.mjs:145-147` |
 | **P-G17** | SyncTeX 往返与"可见降级" | ① 对拍三判据（E4.3）；② 在无 `synctex.exe` 的 PATH 下点 PDF 双向定位 | ① 等价；② **可见提示**（不是只进 console） | 判据：① 三判据全中（forward 页号与 `pdfinfo` 一致；inverse 落同一子文件且行号差 ≤ 2；每个子文件 ≥1 次命中）；② 失败落到状态栏/工具条且 `note` 含 "synctex" | P0 | engine.md E4.3/E4.4；`synctex.rs:29-31,60-68`（`-d` 硬编码 `tmp/`、起外部 `synctex.exe`） |
 | **P-G18** | 版本三件套唯一真相源 | 见 §1.1；造一次"版本不匹配"（如 `.fmt` 后缀 `-32`） | 拒绝运行 + 可操作错误 | 判据：不匹配时**不进入编译**、错误文案含期望版本与处置动作 | P0 | dist.md DIST-1.2/2.18；`FORMAT_SERIAL=33` |
-| **P-G19** | **页哈希口径纪律**（**取舍不属本计划**：归本仓已知债 **#26**；与 T1 **E3.8** 同源） | 凡**跨档 / 跨引擎 / 跨次**的页哈希判据，**必须在文档与脚本里声明口径**：**原始**（含 45 B `bop`/`prev`）或**归一化**（只哈希 `bop+45..eop`） | 判据可复核、报告可对齐 | 判据（两条）：① 每条页哈希用例写明口径（`xdv.rs:211` 现状 = 原始）；② 两种口径会给出**不同的"变化页集合"** ⇒ 报告必须标明所用口径并给出该口径下的集合（例：页 1 +10 B ⇒ 原始口径 25/26 页变化；归一化收窄到真正变化的那一页）。**本项只保留纪律，不指派实现落地**（候选修法 `bytes[bop+45..p]` 的收益/风险归已知债 #26） | P0 | 队长裁决（归一化口径选择权归已知债 #26）；T1 E3.8；T2 INT-31b；`xdv.rs:211`；`docs/modules.md` #26 |
+| **P-G19** | **页哈希口径纪律**（**取舍不属本计划**：归本仓已知债 **#26**；与 T1 **E3.8** 同源） | 凡**跨档 / 跨引擎 / 跨次**的页哈希判据，**必须在文档与脚本里声明口径**：**原始**（含 45 B `bop`/`prev`）或**归一化**（只哈希 `bop+45..eop`） | 判据可复核、报告可对齐 | 判据（两条）：① 每条页哈希用例写明口径（`xdv.rs:211` 现状 = 原始）；② 两种口径会给出**不同的"变化页集合"** ⇒ 报告必须标明所用口径并给出该口径下的集合（例：页 1 +10 B ⇒ 原始口径 25/26 页变化；归一化收窄到真正变化的那一页）。**本项只保留纪律，不指派实现落地**（候选修法 `bytes[bop+45..p]` 的收益/风险归已知债 #26） | P0 | 队长裁决（归一化口径选择权归已知债 #26）；T1 E3.8；T2 INT-31b；`xdv.rs:211`；`docs/dev/modules.md` #26 |
 
 ### 2.2 引擎层矩阵（E1–E7，56 行；来源 engine.md refreeze（285 行，含 E3.7–E3.10），本文压缩判据、保留全部可判定要素）
 
@@ -285,8 +285,8 @@
 | E3.4 | 边界：首次未收敛（空 `<P>`） | 空目录跑一次（不喂上次 `.aux`） | 仍收敛 | `main.log` 页数 == 稳态页数；`main.aux` 存在；再跑一次 `--diff=` **0 页变化** | P0 | `[未测]`；"首次"正是 Quick/Full 升级判据的输入（`runner.rs:293-298`） |
 | E3.5 | 边界：bibtex 参与时 | FULL 跑两次 | 仍可复现 | 两次 PDF SHA-256 相等；**`refs.bib` 修好后必须重跑**（现状 bibtex 中止被吞 = G3） | P0 | `[未测]`（未在 bibtex 成功前提下测过确定性） |
 | E3.6 | **`SOURCE_DATE_EPOCH` 会改"印出来的日期"**（引擎行为差异，直接命中产品） | 同夹具两次：① `SOURCE_DATE_EPOCH=0` ② **不设**；各跑 `-C --outfmt pdf -o <P> main.tex`，再 `pdftotext` 取日期行 | **裁定后的产品行为 = ②**（Tectonic 档不设）；① 是**反例形态** | 三条：① 设 epoch 的 PDF **文本**含 `1970 年 1 月 1 日`（反例，不得出现在产品输出里）；② 两份 PDF 去空白文本**唯一差异就是日期**（实测首个差异 @18 = 日期处，其余逐字符全同，13,559 vs 13,560 字符）；③ **XeLaTeX 对照两份日期相同** ⇒ 差异是**引擎级**、不是夹具级 | P0 | engine.md E3.6 `[实测]`；T2 `[实测]`；`_t2-probe/r2/{nodate,withdate}`；`runner.rs:269-280`；§5.4 D4 |
-| E3.7 | **D4 三选项的引擎层代价**（E3.6 的量化，给 D4 裁决用） | ① **不设 epoch** 各连跑两次：`-C --outfmt pdf` 与 `-C --outfmt xdv`，分别比 SHA-256；② **仅 epoch 不同**的两次 `--pass tex --keep-logs`（其余参数全同）比**逐页字节**；③ 根因 = `bop` 末尾 4 B 的 `prev` | (b) 的代价**只有两条**（PDF 元数据 + 跨天日期）；**XDV 逐字节稳定** | 判据：① 不设 epoch 时两次 **XDV 的 SHA-256 相等**（`63531F94…4BAC`，264,736 B）⇒ 页哈希源稳定，**(b) 不摧毁 A/B/C**；而两次 **PDF 的 SHA-256 不等**（`92240605…` vs `F766FACC…`，各 80,509 B、`pdftotext` 相同 ⇒ 差异仅在 `/ID`/Info 元数据）；② 仅 epoch 不同时：**页 1 变长 10 B（78 处差异）**、**页 2 逐字节相同**、**页 3–26 长度全同、差异只落在页内偏移 43–44**（`prevB − prevA = +10`）⇒ 机制 = **`prev` 绝对偏移连锁**，不是"每页内容都变了"；③ 设 epoch 后两次 PDF SHA-256 相等 | P0 | engine.md E3.7 `[实测]`（`_t1-probe/d4/` + 队长复算）；`docs/modules.md` **已知债 #26** |
-| E3.8 | **页哈希口径必须声明**（E3.7② 的接口影响，P-G19 / T2 INT-31b 同源） | 读 `xdv.rs:211`；对同一份 XDV 分别算"原始（含 45 B `bop`）"与"归一化（`bop+45..`）"两套哈希 | 现实现 = **原始口径** | 判据：① 每条涉及页哈希/差分的用例**必须声明口径**；② **原始口径**下"任何一页变长 ⇒ 其后所有页 `prev` 连锁变化 ⇒ 被判为变化"（本夹具 **25/26 页**），**归一化口径**可把连锁收窄到"真正变化的那一页"；③ **口径选择权不在本计划**（归一化归 `docs/modules.md` 已知债 #26，候选修法 `bytes[bop+45..p]`，收益/风险未量化 ⇒ 未修） | P0 | engine.md E3.8 `[源码]` `xdv.rs:211`；队长裁决 |
+| E3.7 | **D4 三选项的引擎层代价**（E3.6 的量化，给 D4 裁决用） | ① **不设 epoch** 各连跑两次：`-C --outfmt pdf` 与 `-C --outfmt xdv`，分别比 SHA-256；② **仅 epoch 不同**的两次 `--pass tex --keep-logs`（其余参数全同）比**逐页字节**；③ 根因 = `bop` 末尾 4 B 的 `prev` | (b) 的代价**只有两条**（PDF 元数据 + 跨天日期）；**XDV 逐字节稳定** | 判据：① 不设 epoch 时两次 **XDV 的 SHA-256 相等**（`63531F94…4BAC`，264,736 B）⇒ 页哈希源稳定，**(b) 不摧毁 A/B/C**；而两次 **PDF 的 SHA-256 不等**（`92240605…` vs `F766FACC…`，各 80,509 B、`pdftotext` 相同 ⇒ 差异仅在 `/ID`/Info 元数据）；② 仅 epoch 不同时：**页 1 变长 10 B（78 处差异）**、**页 2 逐字节相同**、**页 3–26 长度全同、差异只落在页内偏移 43–44**（`prevB − prevA = +10`）⇒ 机制 = **`prev` 绝对偏移连锁**，不是"每页内容都变了"；③ 设 epoch 后两次 PDF SHA-256 相等 | P0 | engine.md E3.7 `[实测]`（`_t1-probe/d4/` + 队长复算）；`docs/dev/modules.md` **已知债 #26** |
+| E3.8 | **页哈希口径必须声明**（E3.7② 的接口影响，P-G19 / T2 INT-31b 同源） | 读 `xdv.rs:211`；对同一份 XDV 分别算"原始（含 45 B `bop`）"与"归一化（`bop+45..`）"两套哈希 | 现实现 = **原始口径** | 判据：① 每条涉及页哈希/差分的用例**必须声明口径**；② **原始口径**下"任何一页变长 ⇒ 其后所有页 `prev` 连锁变化 ⇒ 被判为变化"（本夹具 **25/26 页**），**归一化口径**可把连锁收窄到"真正变化的那一页"；③ **口径选择权不在本计划**（归一化归 `docs/dev/modules.md` 已知债 #26，候选修法 `bytes[bop+45..p]`，收益/风险未量化 ⇒ 未修） | P0 | engine.md E3.8 `[源码]` `xdv.rs:211`；队长裁决 |
 | E3.9 | **"确定性由谁承担"：外部 `xdvipdfmx` 那一步是否可复现**（路线② / INT-20b 的前提） | 同一份 XDV → **同一个 `-o` 输出路径**，分两组各跑多次：① `SOURCE_DATE_EPOCH=0` ② 不设；逐次比 SHA-256 | ① 组逐次相同；② 组逐次不同 | 三条：① `epoch=0` 组**三次 SHA-256 全等**（实测 **79,065 B / `6F7EFC14…`**；队长复算另组 79,351 B 亦全等）⇒"㉚ 的逐字节确定性由**转换步骤**承担"**成立**；② 不设组两次**不等**（79,073 B，`DF49B482…` vs `C4A86ED1…`）⇒ 转换步骤并非天生确定，必须显式设 epoch；③ **本条纪律只对转换步成立**：**转换产物**须"**固定完整输出路径（目录 + 文件名）+ 固定 epoch**"（跨目录、**同目录换名（即使等长）** 都会不等 —— 队长样本 79,354（同路径）/79,348（等长改名）/79,343（换长名）/79,336（异目录同名）/79,346（不设 epoch）B；**该效应不由路径长度驱动**，不能靠长度对齐绕过）；而 **XDV 侧实测路径无关**（同源 + `epoch=0`、目录名长度差 30+ 字符 ⇒ XDV 逐字节相同，264,728 B / `738F96DD…71FEB`）⇒ XDV 比较**只需固定 epoch** | P0 | engine.md E3.9 终版 `[实测]`（`_t1-probe/d4/conv-*`）+ 队长独立复算；E3.7 + E2.12 + T2 INT-20b/INT-36④ |
 | E3.10 | **D4 裁定后的分步口径**（T5 引用的权威表述） | 读 `runner.rs:275`（现状**无条件**）与 `523-548`（`convert_xdv`） | 按**子进程**分别设 epoch，而不是"整个编译设/不设" | 三条（逐进程声明）：① **Tectonic 进程不设** epoch（D4=(b)）⇒ 正文日期 = 当天、**XDV 逐字节稳定**、**PDF 不保证**；② **外部 `xdvipdfmx` 进程设 `0`**（仅路线②）⇒ 该步产物逐字节确定（E3.9① 已证）；③ **断言边界**：XDV 逐字节相等 ✅、正文日期 = 当天 ✅、**PDF 逐字节相等 ❌ 不得断言**（差异 56 B/80,509 B ≈ **0.07%**，仅在 `/ID`+Info，长度与文本相同） | P0 | engine.md E3.10 `[实测]`+`[源码]`；E3.7/E3.9；T2/D4 裁决；`runner.rs:275,523-548` |
 
@@ -360,7 +360,7 @@
 | INT-15 | 运行中切引擎用**快照** | 编译运行中把引擎切成 XeLaTeX | 运行中那次仍用 Tectonic 跑完 | 两次 `Quick/Full 编译（…engine…）` 的引擎名按时间线正确；页哈希缓存分别落在 `tmp/<stem>.tectonic.pages` 与 `…xelatex.pages` | P0 | `types.rs:249-262`、`runner.rs:209-211` |
 | INT-16 | 引擎未安装时文案指向正确 | 令 `engine=tectonic` 指向不存在的可执行 | 可读中文 + 下一步 | 错误条目 message **含 "tectonic"、不含 "TeX Live"** | P0 | `runner.rs:321,322,538`（现状三条 "TeX Live 未安装？"） |
 | INT-17 | **D3：状态栏必须有可见指示**（引擎名 + 强度） | 切引擎后**不打开设置面板**看状态栏；Quick 成功后再看一次 | 引擎名与强度同处可见 | 判据：状态栏文本同处含 `Tectonic`（或 tooltip）**与** Quick/Full 强度；**Quick 成功后与「引用待更新」chip 同时可见，Full 收敛后 chip 消失**；反例：现状 `StatusBar.vue` 无引擎字段 ⇒ FAIL | P0 | human 裁决 D3；`StatusBar.vue:48-99`；T2 Rev.4 |
-| INT-18·19 | headless 不漂移；恢复默认仍回 XeLaTeX | CLI/MCP 跑同一夹具；面板「恢复默认」 | 语义一致；默认仍是 xelatex | CLI 退出码 0 且 `pdf_path` 指向项目根 `<stem>.pdf`，错误条数与 GUI 一致；`Settings::default().compile.engine == XeLaTeX` | P1 | `modules.md §8.1/§12.2`、`settings/model.rs:32-45` |
+| INT-18·19 | headless 不漂移；恢复默认仍回 XeLaTeX | CLI/MCP 跑同一夹具；面板「恢复默认」 | 语义一致；默认仍是 xelatex | CLI 退出码 0 且 `pdf_path` 指向项目根 `<stem>.pdf`，错误条数与 GUI 一致；`Settings::default().compile.engine == XeLaTeX` | P1 | `docs/dev/modules.md §8.1/§12.2`、`settings/model.rs:32-45` |
 
 **2) Quick/Full 映射（命令表见 §1.2，唯一真相源）**
 
@@ -368,7 +368,7 @@
 |---|---|---|---|---|---|---|
 | INT-20 | 命令构造正确且可单测 | 扩 `compile_command` 单测，逐项断言 ①/② 的 argv | argv 与 §1.2 一致 | 断言 `argv == ["tectonic","-o","tmp","--synctex","--keep-logs","-k","-p", …]`；QUICK 追加 `-r 0`；两条路径都含 `SOURCE_DATE_EPOCH=0`；**不含** `latexmk`/`-no-pdf`/`--outfmt xdv`/`--pass tex` | P0 | `runner.rs:235-280,826-840`；T2 Rev.2（`-p` 必带） |
 | INT-21 | `tmp/` 由产品创建 | 冷项目（无 `tmp/`）Tectonic 首编 | 编译成功 | exit 0 且 `tmp/<stem>.pdf` 存在；**反例自证**：去掉 `create_dir_all` 必现 `output directory "tmp" does not exist` | P0 | =P-G4；`runner.rs` 全文无 `create_dir` |
-| INT-22 | 首编必须升级为 Full | 干净项目第一次编辑触发（Quick 请求） | 升级 Full、`draft=false` | 日志出现「无构建产物，Quick 升级为 Full」；`tmp/<stem>.aux` **确实产出**（前提：带 `-k`） | P0 | `runner.rs:293-298`、`modules.md §12.2` |
+| INT-22 | 首编必须升级为 Full | 干净项目第一次编辑触发（Quick 请求） | 升级 Full、`draft=false` | 日志出现「无构建产物，Quick 升级为 Full」；`tmp/<stem>.aux` **确实产出**（前提：带 `-k`） | P0 | `runner.rs:293-298`、`docs/dev/modules.md §12.2` |
 | INT-22b | **既有不变量重映射**：`无 tmp/<stem>.aux ⇒ Quick 升级 Full` 在新引擎下依赖 `-k` | 两档各跑一次序列（FULL → 改一字 → Quick）：① 带 `-k`；② 故意不带 `-k` | ① 第二次是真 Quick；② 必须**暴露**为"每次都升级"而不是静默退化 | 判据：① 第二次 `draft=true` 且日志为「Quick 编译（单趟直调引擎）」；② 不带 `-k` 时出现「无构建产物，Quick 升级为 Full」⇒ 该现象必须被**显式记录为已知形态**（因为 `.aux` 依赖 `-k`），并由 P-G3 的 argv 断言把它堵死 | P0 | perf.md Rev.4 U12；`runner.rs:293-298`；队长实测（`.aux` 只在 `-k` 档落盘） |
 | INT-23 | 第二次编辑**真的**是 Quick（不许恒升级） | ① FULL 成功一次；② 改一个字触发 | 第二次是单趟、`draft=true` | 日志「Quick 编译（单趟直调引擎）」+ `draft=true`；**反例判据**：出现"无构建产物，Quick 升级为 Full"即 FAIL（说明 `-k` 缺失） | P0 | `runner.rs:293-298` |
 | INT-24 | Full 的收敛语义与 XeLaTeX 基线一致 | 同一大夹具 Tectonic FULL vs `latexmk` Full | 目录页码收敛到同一值（页数允许差 1） | 解析 `tmp/<stem>.toc` 目标页码逐条相等；stdout 含 ≥1 条 `Rerunning TeX because` | P0 | `design.md`（单趟 vs 收敛的 `.toc` 29→41 实测） |
@@ -376,7 +376,7 @@
 | INT-26 | `draft` 只在**真单趟**时报 | Quick 未升级 / 已升级 / 失败 三情形 | 只有第一种 `draft=true` | 事件序列 `success{draft:true}` → 收敛 `success{draft:false}`；`failed` 后 `draft` 保持 true | P0 | `src/stores/compile.ts:15-46` |
 | INT-27 | 空闲收敛仍走 FULL | 草稿成功后停手 2 s | 触发一次 FULL，成功后「引用待更新」消失 | 时间线 `success(draft)` → Δ≈2 s → `running` → `success(draft:false)`；判定**不依赖** `fdb_latexmk`（Tectonic 不产）⇒ 用 stdout 的 `Rerunning TeX`/`-r` 缺失证据 | P0 | `useIdleConvergence.ts:20-48`、`design.md`（Δ≈2.0 s 实测） |
 | INT-28 | 自动收敛不得污染 Quick 语义 | QUICK 连跑两次观察 `.toc` | Quick 永不自己收敛 | 两次 Quick 后 `.toc` 不变；日志**无** `Rerunning TeX because` | P0 | `driver.rs:1704-1711` |
-| INT-29 | bib/biber 场景下 Quick 可用性 | `small-article` 编辑正文 → Quick；再 Full | Quick 不崩、Full 正确 | Quick 后 PDF 可渲染、无 `??` 泛滥（与 XeLaTeX 同档对比）；Full 后引用编号与页码与基线一致 | P1 | `modules.md §12.1 #3` |
+| INT-29 | bib/biber 场景下 Quick 可用性 | `small-article` 编辑正文 → Quick；再 Full | Quick 不崩、Full 正确 | Quick 后 PDF 可渲染、无 `??` 泛滥（与 XeLaTeX 同档对比）；Full 后引用编号与页码与基线一致 | P1 | `docs/dev/modules.md §12.1 #3` |
 
 **3) 页级复用 A/B/C 在 Tectonic 上的生效判据（**① 路线下 B/C 不可用，判据改为"可见降级"**）**
 
@@ -398,25 +398,25 @@
 
 | ID | 目的 | 操作 | 期望 | 判据 | P | 证据·落点 |
 |---|---|---|---|---|---|---|
-| INT-40 | 实时页进度可达 | 大夹具 Tectonic 首编；监听 `compile-progress` | `running` 后进度单调递增 | 命令含 `-p/--print`（单测断言）；`running` 后 ≤1.5 s 收到首个 `pages>=1` 且早于终态 ≥500 ms（**占位阈值，需 T3 校准**） | P0 | =P-G5②；`modules.md §12.1 #20` |
+| INT-40 | 实时页进度可达 | 大夹具 Tectonic 首编；监听 `compile-progress` | `running` 后进度单调递增 | 命令含 `-p/--print`（单测断言）；`running` 后 ≤1.5 s 收到首个 `pages>=1` 且早于终态 ≥500 ms（**占位阈值，需 T3 校准**） | P0 | =P-G5②；`docs/dev/modules.md §12.1 #20` |
 | INT-41 | 实时错误可达 | 注入 `\undefinedmacrohere` | `compile-errors` 在进程结束前到达 | 「首条实时错误时刻 + 100 ms < 终态时刻」 | P0 | `runner.rs:1347` |
 | INT-42 | 终态错误列表完整可读 | 造内容错误（缺宏包/语法错） | `errors-updated` 非空、含警告清单 | 错误条数 > 0 且 `kind == content_error`；**不得**出现「编译失败且无法读取日志」；命令含 `--keep-logs`（单测断言） | P0 | `runner.rs:373-399` |
 | INT-43 | **bib 成败一律走产物级判据**（Rev.3/Rev.4） | ① 成功档：正常夹具跑 FULL；② 失败档：`\bibliography{refs}` 指向缺失/坏的 `.bib` | 成功可证、失败可见、定位规则明确 | **成功**：`.bbl` 的 `\bibitem` 条数 **== `.bib` 条目数（实测 9/9）** 且 `main.log` 的 `Citation … undefined` == **0**；**失败**：`Citation … undefined` > 0 **或** `.bbl` 缺失 ⇒ UI 必须 ≥1 条错误且 message 指向该 `.bib`。**`.bbl` 定位规则**：`<outdir>/<root_file stem>.bbl`（**不得硬编码 `main.bbl`**，见 E6.2d③）；**负例断言**：`<outdir>/**/chapters/*.bbl` **必须不存在**；`Not writing …: it would be empty.` 只作**辅助**断言、不许当判据（与 G6 同源）。**禁止**：计小写 `errors were issued by BibTeX`（成功档 8 条假阳性、失败档无信号）；查 `.blg` 的 `You've used N entries`（端口无该统计块 ⇒ 100% 假阴性） | P0 | =P-G6；T2 Rev.4 + engine.md Rev.2 E6.2d；工件 `test_file/projects/_t2-probe/thesis/tprint` |
 | INT-43b | **判定器回归样本**：成功但无摘要行的 `.blg` 必须判 `unknown`，**不得判 `fail`** | 把 E6.2/E6.2b 的负例喂给集成侧的 bib 判定器 | 三态（成功/失败/未知）可区分 | 判据：负例输出 **`unknown`**；同族三条一起覆盖 —— `.log` 无 `This is XeTeX` 抬头、告警是小写 `warning:`、`.blg` 无收尾汇总（T1 门禁 G6"引擎自述 ≠ 事实"的落地面） | P0 | T2 Rev.3 INT-43b；engine.md Rev.2 G6 |
-| INT-44 | 多趟重跑时页数不回落 | Tectonic FULL（自动收敛） | 状态栏页数只升不降 | 事件序列里 `pages` 单调不减 | P0 | `modules.md §2.6.1` |
+| INT-44 | 多趟重跑时页数不回落 | Tectonic FULL（自动收敛） | 状态栏页数只升不降 | 事件序列里 `pages` 单调不减 | P0 | `docs/dev/modules.md §2.6.1` |
 | INT-45 | 良性噪音不进错误列表（**Rev.3 扩面**） | ① 用 Tectonic 跑中文夹具（日志含 `Fontconfig error: …`）；② 同一轮观察 **8 条小写 bibtex 警告** | 两类噪音都不占错误列表 | 判据：错误列表**不含** `Fontconfig error`，也**不含**那 8 条 `warning: errors were issued by BibTeX…`（每次成功构建都会出现）。**实现注意**：`parse_log` 现状"碰巧正确"（要求字面量 `Warning`，小写 `warning:` 天然不入）⇒ **放宽警告判定时必须同时加白名单**，否则 8 条假警报会直通 UI | P1 | §8.4；`scan.rs:89-93`；T2 Rev.3（反例 #17） |
 | INT-46 | **超时诊断在 `.log` 缺失时仍成立**（**升为 P0**，见 C-8） | 超时设 5 s 跑大文档（Tectonic） | 证据化诊断仍给可用项、不误导 | `diagnosis.suggested_timeout_secs` 有值；message **不得**只说"日志无页输出"而不给替代证据（stdout 页标记应被用上） | P0 | =E7.7；`runner.rs:632-686` |
 | INT-47 | 首跑不得被默认超时判死 | 冷缓存 + 默认 `timeout_secs=120` 首跑 | 不报"超时"、有进度 | 判据二选一：① 首跑成功；② 失败诊断含"下载/获取资源"且 `suggested_timeout_secs ≥ 300`；**反例**：出现"疑似卡住（日志无页输出）" ⇒ FAIL | P0 | =P-G11；§8.2（51–214 s > 120 s） |
 | INT-48 | 中止与残留 | 编译中按停止 | `aborted`、无残留 | `tasklist` 无 `tectonic.exe`；状态 `failed{kind:aborted}`；队列清空 | P1 | `runner.rs:692-710` |
-| INT-49 | 中间态不顶掉权威列表 | 复刻超时/收尾补发场景 | 终态清单不被中间态覆盖 | `errors-updated` 之后不再接受 `compile-errors`（前端 `phase` 守卫）；终态条目数 == 列表最终条目数 | P1 | `modules.md §12.2`（实测 1 条被 30 条覆盖） |
+| INT-49 | 中间态不顶掉权威列表 | 复刻超时/收尾补发场景 | 终态清单不被中间态覆盖 | `errors-updated` 之后不再接受 `compile-errors`（前端 `phase` 守卫）；终态条目数 == 列表最终条目数 | P1 | `docs/dev/modules.md §12.2`（实测 1 条被 30 条覆盖） |
 
 **5) 既有功能在"不读本机 TeX Live"下的降级（能力可以没有，但"没有"必须可见且不误导）**
 
 | ID | 目的 | 操作 | 期望 | 判据 | P | 证据·落点 |
 |---|---|---|---|---|---|---|
-| INT-50 | 触发面不因引擎而变 | 三文件矩阵（改 `main.tex` / `refs.bib` / `fig.png`）两种引擎各跑 | 触发矩阵逐格一致 | 三种改动的 `compile_request_for_change` 结果相同；改 `.bib` 后**不**出现新编译（与 XeLaTeX 现状同） | P0 | `watch.rs:178`（只认 `.tex`）、`modules.md §12.1 #23` |
+| INT-50 | 触发面不因引擎而变 | 三文件矩阵（改 `main.tex` / `refs.bib` / `fig.png`）两种引擎各跑 | 触发矩阵逐格一致 | 三种改动的 `compile_request_for_change` 结果相同；改 `.bib` 后**不**出现新编译（与 XeLaTeX 现状同） | P0 | `watch.rs:178`（只认 `.tex`）、`docs/dev/modules.md §12.1 #23` |
 | INT-51 | 依赖信息在 Tectonic 下的替代面 | 加 `--makefile-rules tmp/<stem>.deps`，与 `.fls` 对同一源做差集 | 可用于"精确失效"、不添噪音 | `tmp/<stem>.deps` 存在、含主输入与项目内被读文件、**不含** bundle 内宏包路径；**不得**把 `.fls` 解析器直接套到 makefile 规则上（格式不同 ⇒ 静默空集） | P1 | `driver.rs:1540-1573`、`scripts/fls-report.mjs` |
-| INT-52 | 生成产物永不当作源码打开 | 在 PDF 目录区/参考文献区点击（反查命中 `tmp/main.toc` / `tmp/main.bbl`） | 就近回落真实源码并提示"已回落" | 不出现 `tmp/*` 标签页；`InverseResultDto.note` 非空 | P0 | `synctex/classify.rs:31-75`、`modules.md §12.2` |
+| INT-52 | 生成产物永不当作源码打开 | 在 PDF 目录区/参考文献区点击（反查命中 `tmp/main.toc` / `tmp/main.bbl`） | 就近回落真实源码并提示"已回落" | 不出现 `tmp/*` 标签页；`InverseResultDto.note` 非空 | P0 | `synctex/classify.rs:31-75`、`docs/dev/modules.md §12.2` |
 | INT-53 | 编译中的 SyncTeX 竞争 | 编译进行中连续点击 PDF | 不静默失败 | UI 出现同步提示（工具条 5 s 自动消失）而非只有 console；退避沿用 100/200/300 ms | P0 | `synctex.rs:5-24,19-24` |
 | INT-54 | **SyncTeX 的二进制依赖必须可见降级**（+ 与页哈希**互不污染**，T2 INT-54b） | TL-less 机器用 Tectonic 编译成功 → 点反向定位；另跑 `--pass tex --synctex --keep-logs` 与不带 `--synctex` 各一次 | 可见提示说清"本机没有 synctex 工具，故无法双向定位"；**synctex 不改变 XDV** | 判据：① 失败落到状态栏/工具条，`note` 含 "synctex"，**不得**只走 `console.error`；② **两次 XDV 逐字节相同**（242,960 B / `08E7219F…`）、XDV 内**不含**源码绝对路径 ⇒ **页哈希与 SyncTeX 可同时开启**（INT-54b；T1 已撤回"synctex 逐页加 special"的旧说法） | P0 | G2；`synctex.rs:60-68`；T2 INT-54b；随包分发/自解析 = **D5 待决**（§5.4） |
 | INT-55·60 | 引擎无关的既有逻辑不退化 | 根文件探测三形态；core 既有四条 `.ins`/`.dtx` 单测 | 与引擎无关地保持 | `get_project` 候选逐条相同；`cargo test -p latteset-core source_release` 全绿 | P0 | `project/root_detect.rs:22-104`、`diagnosis_tests.rs:294-347` |
@@ -456,7 +456,7 @@
 | INT-81 | 首跑下载有可见反馈 | 清缓存后首跑（联网） | 有单调递增的可见反馈 | `running` 期间 ≥3 次可见反馈更新，内容含下载计数（现有 `compile-progress` 只报 `[N]` ⇒ 首跑无页标记 ⇒ 现状零反馈） | P0 | §8.2（逐文件 `note: downloading`，**无百分比**） |
 | INT-82 | 离线开关（仅用本地缓存） | 设置项打开 → `-C`；断网编译 | 断网也能编；缺资源给明确提示 | 命令含 `-C`；断网 + 缓存齐 ⇒ exit 0；断网 + 缺资源 ⇒ 错误条目含"离线/缓存"字样 | P0 | `compile.rs:183-185`；**注意 `-C` 单独不等于离线**（C-7） |
 | INT-83 | 缓存目录不可写时的降级 | 缓存目录只读 / 指向普通文件 | 可读诊断、含**我们传入的路径** | 错误列表 1 条含缓存路径；无 panic/无英文栈（引擎原文实测不含路径且本地化） | P1 | dist.md DIST-5.1 `[实测]` `os error 183` |
-| INT-84 | 不污染项目目录 | 编译前后项目文件快照 | 只新增白名单 | 新增文件 ⊆ {`tmp/**`, 项目根 `<stem>.pdf`, `tmp/<stem>.<engine>.pages`}；不得出现 `Tectonic.toml`/bundle/format 缓存落在项目内 | P1 | `modules.md §12.3` |
+| INT-84 | 不污染项目目录 | 编译前后项目文件快照 | 只新增白名单 | 新增文件 ⊆ {`tmp/**`, 项目根 `<stem>.pdf`, `tmp/<stem>.<engine>.pages`}；不得出现 `Tectonic.toml`/bundle/format 缓存落在项目内 | P1 | `docs/dev/modules.md §12.3` |
 | INT-85 | 网络半失败可重试且有证据 | 慢网/丢包下首跑 | 最终成功或给出重试证据 | stderr 出现 `failure downloading …` 时可重试；成功/失败都有记录 | P1 | `ttb_net.rs:201`、`itar.rs:66` |
 | INT-86 | 排障入口：用了哪个 tectonic | 编译日志/诊断 | 含 exe 绝对路径 + `--version` | 断言日志含绝对路径与版本串 | P1 | 现状无（只记引擎名） |
 | INT-87 | 首次使用引导 | 首次切到 Tectonic（缓存空） | 提示资源体积/时长量级 | 引导文案存在且与 INT-47 的超时口径一致（数字引 §8.2 的 51–214 s） | P1 | `[推断]` 形态可讨论 |
@@ -579,7 +579,7 @@
 
 **3.1.3 `thesis-real-hithesis`（真实学位论文模板）：当前受阻，**不得进判定****
 
-- 阻塞点：用产品相同命令重跑，~4 分钟后报 `! I can't write on file 'body/introduction.aux'`（`\include{body/...}` 需要 `tmp/body/` 存在）→ `Emergency stop` → **latexmk/perl 进程挂住（10 分钟零 CPU）**（`design.md` §基准脚本、`modules.md §12.1 #6`）。
+- 阻塞点：用产品相同命令重跑，~4 分钟后报 `! I can't write on file 'body/introduction.aux'`（`\include{body/...}` 需要 `tmp/body/` 存在）→ `Emergency stop` → **latexmk/perl 进程挂住（10 分钟零 CPU）**（`design.md` §基准脚本、`docs/dev/modules.md §12.1 #6`）。
 - 处置：① 在 ㉖ 修好前**排除在阈值判定之外**（保留为"已知不可测档"）；② Tectonic 侧要单独回答"bundle 里有没有 `hithesis.cls` / 能否按 bundle 解析"——**这是 `[未测]` 的 P0 前置**（= U-8）。
 - 可测的那一半：表格/公式/图密集度由 `thesis`（28 页）代表**下界**；真实模板是**上界**，上界在 ㉖/许可审计前**不承诺任何数字**。
 
@@ -761,13 +761,13 @@
 | R3 需法务 | LGPL（静态链接）、AGPL、许可不明/多重许可冲突、无许可证文本 | **阻断发包**，直到有书面结论 |
 | R4 排除 | 仅随 `doc/`/`source/` 分发且**已被 bundle 忽略**的内容 | 记录"为什么可以不管" |
 
-> **待审计标记**：L2/L3/L5/L6/L7 的**具体结论**（能否闭源分发、需要哪些声明、是否必须改名/附全文）一律标 **「待审计」**，**不得**当结论使用。产出物：`docs/research/tectonic-bundle-licensing.md`（必含：范围与版本、清单 A/B/C 三表、结论（分 M1/M2/M3）、随附文件清单、**遗留待审计项**——禁止用"应该没问题"收尾）。
+> **待审计标记**：L2/L3/L5/L6/L7 的**具体结论**（能否闭源分发、需要哪些声明、是否必须改名/附全文）一律标 **「待审计」**，**不得**当结论使用。产出物：`docs/archive/research/tectonic-bundle-licensing.md`（必含：范围与版本、清单 A/B/C 三表、结论（分 M1/M2/M3）、随附文件清单、**遗留待审计项**——禁止用"应该没问题"收尾）。
 
 ### 4.3 审计门禁 G-L1..G-L9（**全绿前不得把 Tectonic/bundle 放进发行物**）
 
 | ID | 检查 | 判定方式（二进制/可 grep） | P |
 |---|---|---|---|
-| G-L1 | `docs/research/tectonic-bundle-licensing.md` 存在且**结论小节完整** | 文件存在；"待审计/未结论"字样**不出现在结论小节**（遗留项集中在小节 6） | P0 |
+| G-L1 | `docs/archive/research/tectonic-bundle-licensing.md` 存在且**结论小节完整** | 文件存在；"待审计/未结论"字样**不出现在结论小节**（遗留项集中在小节 6） | P0 |
 | G-L2 | 清单 A/B/C 三张表都非空且**无空许可证字段** | 表行数 > 0；空值计数 == 0 | P0 |
 | G-L3 | 发行物含第三方声明（`THIRD-PARTY-NOTICES` 或等价物） | 安装包解包后文件存在；About 页可达（人工 1 项） | P0 |
 | G-L4 | Tectonic 本体许可文本随发行物（MIT 全文 + 版权行） | NOTICE 含 "the Tectonic Project" 与 MIT 全文 | P0 |
@@ -790,7 +790,7 @@
 | MB-5 | ttb 产物字节 | `<build>/<name>/<name>.ttb` 存在且 > 0；头部 14 字节 == `tectonicbundle`、u32 版本 == 1、头部第 34..66 字节 == `content/SHA256SUM` | `pack` 缺 `content/` 时 exit 0 | P0 |
 | MB-6 | 冒烟（用**运行期**命令形态） | ① `tectonic -C -b <ttb> --outfmt xdv` 编 `min-zh`+`thesis` 成功 ② `--outfmt fmt` 能建 latex/plain 格式 ③ 页数与基线一致（28 页） | 打包器与运行期同代码，但"能建包"证明不了"能编译" | P0 |
 | MB-7 | 可复现性 | 同机同 tarball+patches **重跑一次**：`expected_hash` 与 `content/SHA256SUM` 完全相同 | "版本钉法"的前提；**ttb 逐字节可复现 `[未测]`**（gzip 层） | P0 |
-| MB-8 | 许可清单随产物 | 每版 ttb 都产出/更新 `docs/research/tectonic-bundle-licensing.md` 与发行物 NOTICE | 见 §4.3 | P0 |
+| MB-8 | 许可清单随产物 | 每版 ttb 都产出/更新 `docs/archive/research/tectonic-bundle-licensing.md` 与发行物 NOTICE | 见 §4.3 | P0 |
 
 **升级/维护（谁负责，怎么升）**：上游 relay 域名与 Azure 订阅**由单一个人持有**（供应链单点；上游曾因"archive.org 被中国屏蔽"换服务）；官方 bundle 目前落后本机 TL 两代（TL2024 vs TL2026）⇒ **新宏包可能不在包里**。升级最小动作清单：① 改 `bundle.toml`/patches → ② 跑流水线 → ③ 过 MB-1..MB-8 → ④ 更新发布清单（ttb 大小 + SHA-256 + `expected_hash`）→ ⑤ 重跑 DIST-2.8 离线冒烟 → ⑥ 复核许可清单是否新增包/新许可。**责任人槽位**：待确认（建议 Rust/构建维护者 1 人 + 发布检查清单勾选项）。
 
@@ -843,7 +843,7 @@
 | **D2** | 页哈希取数路线 | **已定论（实测）**：`pdf -k` 拿不到 `.xdv` ⇒ 默认路线 ①（要 PDF、放弃 B/C）；② 需自备转换器且与 TL-less 冲突（§1.2.2） |
 | **D3** | 状态栏是否显示引擎 | **已裁决：显示**，且同处体现 Quick/Full 强度（INT-17） |
 | **D4** | **`SOURCE_DATE_EPOCH` 的引擎语义差异 —— 已裁决：(b) Tectonic 档不固定 epoch**（用户裁决 2026-09-14；按"**已裁决记录**"写，不再列三选项） | **理由**：同一变量在两引擎语义不同 —— XeLaTeX 只动 PDF `/ID`、**正文零变化**；Tectonic **改正文**（`\today`）——且实测**不设 epoch 时 XDV 仍逐字节稳定**（`63531F94…4BAC`，264,736 B）⇒ **(b) 不摧毁 A/B/C**。**落地口径（P0 前提 = T2 `INT-20b`）**：`SOURCE_DATE_EPOCH` **按子进程施加** —— **Tectonic 进程不设**、**同轮外部 `xdvipdfmx` 进程设 `0`**（㉚ 的确定性由后者承担）；现实现**无条件设置**（`runner.rs:275`）⇒ 落地时必须改，且该断言**现在应当 FAIL**（反例自证）。**代价（两条）**：(i) PDF 档放弃逐字节确定性，且仅 `/ID`/Info 元数据层面（⇒ **"PDF 逐字节相等"禁止作为 Tectonic 档断言**，INT-36b③/E3.1②）；(ii) 会印 `\today` 的文档**跨天时页哈希变化**（牵连机制 E3.7②/已知债 #26）。判据 = INT-36b / INT-20b / E3.6 / E3.7 / **E3.9 / E3.10**；**确定性只断言在 XDV 与转换步上**（`epoch=0` 的转换步连跑 3 次逐字节相同 = 79,065 B/`6F7EFC14…`，E3.9①）；**PDF 逐字节相等不得断言**（E3.10③）；**修复空间（分步 env 两全 = U-31）保持"待实测"，不升格为已证** |
-| **D4 的框架性提醒** | **这不是 Tectonic 新问题**：`bop.prev` 绝对偏移连锁是 **`docs/modules.md` 已登记的已知债 #26**（连"日期串差一位 ⇒ 页 1 +10 B、页 2 相同、页 3–26 差异只在偏移 43–44"这个样本都同款） | 差别只在**触发频率**：XeLaTeX 侧固定 epoch ⇒ 日期永不变 ⇒ 该债几乎不触发；**Tectonic 选 (b) 会把它从"理论问题"变成"每天发生一次"** ⇒ 这是 D4 真正的决策依据（详见 §0.1 纪律 6 / P-G19 / E3.8） |
+| **D4 的框架性提醒** | **这不是 Tectonic 新问题**：`bop.prev` 绝对偏移连锁是 **`docs/dev/modules.md` 已登记的已知债 #26**（连"日期串差一位 ⇒ 页 1 +10 B、页 2 相同、页 3–26 差异只在偏移 43–44"这个样本都同款） | 差别只在**触发频率**：XeLaTeX 侧固定 epoch ⇒ 日期永不变 ⇒ 该债几乎不触发；**Tectonic 选 (b) 会把它从"理论问题"变成"每天发生一次"** ⇒ 这是 D4 真正的决策依据（详见 §0.1 纪律 6 / P-G19 / E3.8） |
 | **D4 落地口径**（建议，**待实测 U-31**） | **epoch 按步施加**：**Tectonic 进程不设**（⇒ 日期正确）、**我们调的 `xdvipdfmx` 进程设 `SOURCE_DATE_EPOCH=0`**（⇒ PDF 逐字节可复现）⇒ 路线② **理论上可同时得到"正文日期正确 + PDF 可复现"** | 落地位置 = §1.2.2 路线② 的**命令构造**（分步环境变量）+ 本节 D4；**未实测，勿当已证** |
 | **D5** | 是否随包分发 TL 工具（`synctex.exe` / `xdvipdfmx.exe`），或自研解析 | 待定；判据 = P-G17/INT-54/INT-38（TL-less 下必须"可见降级"或"自带能力"） |
 | **D6** | 缓存目录归谁（我们独占 vs 共享用户 Tectonic） | 待定；判据 = DIST-2.10（两处目录文件数+mtime 对比） |
@@ -874,7 +874,7 @@
 | R-11 | **未知 engine 值重置整份设置** | 用户降级回旧版或手改配置即被抹掉全部设置 | P-G9、INT-13·14 | `storage.rs:41-67` |
 | R-12 | **陈旧 XDV 覆盖** | 屏幕停在旧 PDF 还报"成功" | P-G2、E2.9、INT-31（"本轮产物凭证"） | `runner.rs:463-466` 已实测事故（109,732 → 70,193 B） |
 | R-13 | **`SOURCE_DATE_EPOCH` 在两引擎语义不同**（XeLaTeX 只动 PDF `/ID`；Tectonic **改正文** `\today` → 1970-01-01） | 若照抄无条件设置，标题页等 `\today` 文档会印 1970；两个引擎在同一产品设置下行为不同 | **已裁决 (b)**：Tectonic 档不设、转换步设 `0`（INT-20b）；**确定性只断言在 XDV/转换步上**（E3.7/E3.9/E3.10）；跨次比对须**同路径 + 固定 epoch**（§0.1 纪律 5/7） | T2 `[实测]` + T1 E3.6–E3.10 `[实测]`：13,559 vs 13,560、首个差异 @18；`epoch=0` 转换步 3 次全等（79,065 B） |
-| R-14 | **`bop.prev` 绝对偏移连锁使"变化页集合"失真**（页 1 变长 ⇒ 原始口径报 25/26 页变化） | 若产品/脚本不声明口径，"只重绘变化页"会整体塌陷、回归判据会把偏移连带误读成"内容大片变化" | **P-G19 / E3.8**（口径必须声明；归一化口径可收窄到真正变化的那一页）；这是**已知债 #26**，Tectonic 选 D4 (b) 会让它**每天触发** | T1 E3.7/E3.8 `[实测]`+`[源码]`；`xdv.rs:211`；`docs/modules.md` 已知债 #26 |
+| R-14 | **`bop.prev` 绝对偏移连锁使"变化页集合"失真**（页 1 变长 ⇒ 原始口径报 25/26 页变化） | 若产品/脚本不声明口径，"只重绘变化页"会整体塌陷、回归判据会把偏移连带误读成"内容大片变化" | **P-G19 / E3.8**（口径必须声明；归一化口径可收窄到真正变化的那一页）；这是**已知债 #26**，Tectonic 选 D4 (b) 会让它**每天触发** | T1 E3.7/E3.8 `[实测]`+`[源码]`；`xdv.rs:211`；`docs/dev/modules.md` 已知债 #26 |
 
 ### 6.2 未验证清单 U-1..U-31（**不得当结论使用**；P0 项 = 15 条）
 
@@ -908,8 +908,8 @@
 | U-26 | 其它"引擎自述日志"是否同样不可信（`.blg` 的机制**已定**：端口不实现 `You've used` 统计块、干净运行无收尾汇总 ⇒ 不再是未知项） | 决定还能不能信任这类信号（`main.log` 无 `This is XeTeX` 抬头、`.log` 结束才落盘、`Skipped writing N intermediate files` 的语义） | 统计多次运行的 `.log`/`.blg` 形态差异并写进 G6 清单 | P1 | 引擎 |
 | U-27 | `run-xdv.log` 记 **264,736 B** 与现存 `main.xdv` **264,728 B** 差 8 B（C-12） | 若属同源同批，则该档的确定性判据会挂 | 同批双跑 xdv 档，记字节数 + SHA-256 | P1 | 引擎 |
 | **U-28** | **TL-less 机器（ENV-B）从未测过** | 价值主张、G2、文案、`writes_xdv()==false` 收尾路径全押在它 | 干净 Windows 跑 E1.1/E4.3/INT-16/P-G8 | P0 | 全体 |
-| U-29 | **中间产物存在性矩阵**与既有不变量的完整对应（`.aux`(443 B)/`.toc`(1623 B)/`.bbl`(680 B) 只在 `-k` 档出现；还有哪些不变量建立在 latexmk 的落盘契约上） | 单点映射（INT-22b）之外还可能有别的隐式依赖 | 对 ① 路线枚举 `tmp/**` 产物并逐条对照 `modules.md` 的行为契约 | P1 | 集成（perf.md Rev.4 U12 的扩展） |
-| U-30 | **真实学位论文模板（hithesis 档）受阻**：`body/introduction.aux` 写不进 → Emergency stop → latexmk 挂住；Tectonic 侧还要先答"bundle 里有没有 `hithesis.cls`" | 真实模板是"图表/公式密集"的上界，当前**不承诺任何数字** | ㉖ 修好后重测；Tectonic 侧先 `-C --keep-logs` 试编并读缺包错误 | P1 | 测量/分发（§3.1.3；`modules.md §12.1 #6`） |
+| U-29 | **中间产物存在性矩阵**与既有不变量的完整对应（`.aux`(443 B)/`.toc`(1623 B)/`.bbl`(680 B) 只在 `-k` 档出现；还有哪些不变量建立在 latexmk 的落盘契约上） | 单点映射（INT-22b）之外还可能有别的隐式依赖 | 对 ① 路线枚举 `tmp/**` 产物并逐条对照 `docs/dev/modules.md` 的行为契约 | P1 | 集成（perf.md Rev.4 U12 的扩展） |
+| U-30 | **真实学位论文模板（hithesis 档）受阻**：`body/introduction.aux` 写不进 → Emergency stop → latexmk 挂住；Tectonic 侧还要先答"bundle 里有没有 `hithesis.cls`" | 真实模板是"图表/公式密集"的上界，当前**不承诺任何数字** | ㉖ 修好后重测；Tectonic 侧先 `-C --keep-logs` 试编并读缺包错误 | P1 | 测量/分发（§3.1.3；`docs/dev/modules.md §12.1 #6`） |
 | U-31 | **D4 的"两全"路径**：epoch 按步施加（Tectonic 进程不设 + 外部 `xdvipdfmx` 设 `0`）能否同时得到"正文日期正确 + PDF 逐字节可复现" | 决定路线② 是否比 ① 多一个决定性优势；也是 D4 (c) 的实现口径 | ② 路线跑两次（跨天各一次），比 PDF SHA-256 与 `pdftotext` 日期 | P1 | 集成/引擎（队长 2026-09-14 提议；**标为待实测，勿当已证**） |
 
 **已闭环、不再列为未验证的项（避免重复劳动）**：默认档是否落 `.xdv`（含 `-k`）→ **不落**，机制 = `driver.rs:1985` 内存移除（队长实测 + engine.md Rev.2，C-1）；bibtex 主调用是否失败 → **成功**（`.bbl` 9 条 / PDF `[1]…[9]`，C-2）；`.blg` 为何没有摘要行 → **端口不实现该统计块**（全树 0 命中）；**章级 aux 是否写出同名 `.bbl`** → **不会**（章级恒空、日志有 `Not writing 'chapters/chNN.bbl': it would be empty.`，主 `.bbl` 唯一；engine.md Rev.2 E6.2d，两个独立探针目录）；`-b <本地 .tar>` → **不成立**（实测）；`-C` 是否等于离线 → **不等于**（实测）；`xdv-report.mjs --diff` 空格形态 → **已修**（两种形态都支持、错用 exit 2）；页级复用能否与默认 PDF 档共存 → **不能**（D2 定论）；P0/P1 划分 → 已由本文统一。
@@ -927,7 +927,7 @@
 | **精炼基线（权威）** | ① `docs/design.md` 基准表**加一列 Tectonic**（同一张表里才可比）；② 本文 §3.4/§3.7 | **入库** | 唯一能跨机器/跨清仓存活的基线 |
 | **现场证据（日志/产物）** | `_zhcmp/logs/`、`_zhcmp/tect*/`、`test_file/projects/_t2-probe/`（T2 探针） | 不入库 | 已在 gitignore 覆盖面内 |
 | **四份分册明细（附录）** | `docs/archive/tectonic-plan-parts/{engine,integration,perf,dist}.md`（**2026-09 已从 `docs/research/` 归档**；原 `test_file/tectonic-plan-parts/` 保留） | **入库** | 本文是"合并 + 裁决"，逐条证据与出处仍在分册；清仓后明细不丢 |
-| **许可审计产物** | `docs/research/tectonic-bundle-licensing.md` + 发行物 `THIRD-PARTY-NOTICES` | **入库** | §4.3 门禁 G-L1/G-L3 |
+| **许可审计产物** | `docs/archive/research/tectonic-bundle-licensing.md` + 发行物 `THIRD-PARTY-NOTICES` | **入库** | §4.3 门禁 G-L1/G-L3 |
 
 **harness 入口约定（建议）**
 
@@ -999,7 +999,7 @@ scripts/bench-tectonic-report.mjs --input <本次 json> --baseline <固化 json>
 | GAP-4 | 没有"**引擎自述日志不完整**"这一测试类别 | 新增类别：`.blg` 尾部丢失（E6.2/U-26）、`main.log` 无 `This is XeTeX` 抬头（E5.1 附注）、`.log` 结束才落盘（E5.2）、`Skipped writing N intermediate files` 的语义（E2.8） |
 | GAP-5 | 没有**产品决策槽位** | 本文新增 §5.4：**D1–D4 已裁决**（含 D4 = (b) 分步 epoch），**D5–D9 仍待决**（是否随包分发 TL 工具、缓存目录归属、首跑超时策略、bundle 落地形态、`-p` 通道形态） |
 | GAP-6 | 没有**环境矩阵**（区域/代理/沙箱/TL-less） | §1.3 ENV-A..ENV-E + 环境纪律（不在沙箱里测性能、测量期不跑 GUI） |
-| GAP-7 | 分册明细在清仓后可能丢 | 四份分册已**复制**入 `docs/archive/tectonic-plan-parts/`（2026-09 归档）并在 `docs/README.md`/`docs/research/README.md` 补链接（附录） |
+| GAP-7 | 分册明细在清仓后可能丢 | 四份分册已**复制**入 `docs/archive/tectonic-plan-parts/`（2026-09 归档）并在 `docs/README.md`/`docs/archive/research/README.md` 补链接（附录） |
 
 ---
 
@@ -1021,7 +1021,7 @@ scripts/bench-tectonic-report.mjs --input <本次 json> --baseline <固化 json>
 
 | 分册 | 章节 | 状态 |
 |---|---|---|
-| **（位置变更）** | **四份分册原件已归档**：`docs/research/tectonic-plan-parts/` → **`docs/archive/tectonic-plan-parts/`**（2026-09） | 内容已被本文 **§2–§4 收编**（逐条判据压缩进矩阵），且下表已把这些分册章节列为**需修订**；分册保留为**逐条证据与出处**，引用时按本表核对。索引见 [docs/research/README.md](./README.md) 与 [docs/archive/README.md](../archive/README.md) |
+| **（位置变更）** | **四份分册原件已归档**：`docs/research/tectonic-plan-parts/` → **`docs/archive/tectonic-plan-parts/`**（2026-09） | 内容已被本文 **§2–§4 收编**（逐条判据压缩进矩阵），且下表已把这些分册章节列为**需修订**；分册保留为**逐条证据与出处**，引用时按本表核对。索引见 [docs/archive/research/README.md](./README.md) 与 [docs/archive/README.md](../README.md) |
 | engine.md | §0 G5 的**旧版**"机制"段（`driver.rs:1615` 的 `!keep_intermediates &&` 决定项、"`-k` 会得到假是"） | **已被实测证伪**（C-1）；**Rev.2 已自行改为 `driver.rs:1985` 的内存移除机制**（正确）；"默认档不落 `.xdv`"的结论成立 |
 | engine.md | E6.1 / E6.2（旧版判 bibtex 中止、bundle 版本落后为根因） | **Rev.2 已更正**为"主调用成功 + `.blg` 无统计块"（G6）；本文采用 Rev.2（C-2），并新增 E6.2b/E6.2c |
 | engine.md | §4 未验证清单 A-1（"探针禁止用 `-k`"） | 表述需改：`-k` 与 `.xdv` **无关**；纪律改为"默认档探针不得加 `--outfmt`"（§1.2 纪律 4） |
@@ -1030,7 +1030,7 @@ scripts/bench-tectonic-report.mjs --input <本次 json> --baseline <固化 json>
 | perf.md | §2.1/§4.3 的 Tectonic 命令形态 | 需补 `-p`（C-13）与"`-C` 与首跑互斥"（C-7） |
 | integration.md | §2 映射表（未含 `-p`）、§3（旧版"B/C 生效判据"）、§8（"选择 A/B"） | **Rev.2/Rev.3/Rev.4 已修订**（含 D1 的 INT-95/96、D2 的 INT-35/38/39、E6.2d 的 `.bbl` 定位规则）；本文以 Rev.4 为准（C-9/C-10/C-13） |
 | dist.md | §0 F1（`-b` 本地 tar）、§0 F2（`-C` 语义） | 与集成方案原文冲突处，**以 dist.md 实测为准**（C-6/C-7） |
-| `docs/research/modern-engines-zh.md` | §8.4「XDV 就是我们的格式、A/B/C 无需改代码」、§8.5 结论 1 | **必须加限定**（C-3）：只对 xdv 档 + 页哈希解析代码成立 |
+| `docs/archive/research/modern-engines-zh.md` | §8.4「XDV 就是我们的格式、A/B/C 无需改代码」、§8.5 结论 1 | **必须加限定**（C-3）：只对 xdv 档 + 页哈希解析代码成立 |
 | `docs/archive/tectonic-integration-plan.md` | §1 路线②、§5 第 2 条（本地 tar）、§1 表格（"运行期完全不联网"） | **原文作废**（C-6/C-7）；建议按本文口径修订该文档。**2026-09 已归档到 `docs/archive/`**（本文 §9.2 另见归档说明行） |
 
 > 本方案只出方案，不改产品代码；上述"需修订"只标注状态，实际修订留给对应文档的维护任务。

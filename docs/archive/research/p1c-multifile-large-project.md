@@ -17,7 +17,7 @@
 
 ## 1. ⑦c 这一步要回答什么
 
-[roadmap §6.2](../research/tex-ide-roadmap-priority.md) 定的 ⑦c 第一步是**只做夹具与口径**，出口条件是"**再据数决定是否优化**"。要补的未知项（[p1 分析](./p1-large-doc-editor-analysis.md) §5.1）：
+[roadmap §6.2](tex-ide-roadmap-priority.md) 定的 ⑦c 第一步是**只做夹具与口径**，出口条件是"**再据数决定是否优化**"。要补的未知项（[p1 分析](./p1-large-doc-editor-analysis.md) §5.1）：
 
 1. 打开全部标签的内存与耗时；
 2. include 图解析（>20 文件时）；
@@ -36,7 +36,7 @@
 | `multi20` | 21 | 5.5 MB | ~288 KB | **主档**：文件数 = 调研症状（20 文件） |
 | `multi40` | 41 | 5.5 MB | ~144 KB | 与 `multi20` **总量相同、文件数翻倍** → 分离"文件数"变量 |
 
-结构是 ctexbook + `\include{chapters/chNN}` + `refs.bib`（可被 xelatex 编译）。章节用 `\include` 而不是 `\input`：与 `bench/multifile` 同构，顺带覆盖 include 图解析。生成器刻意**不用** `\include{子目录/文件}` 之外的坑（见 [troubleshooting](../troubleshooting.md)：子目录 + `-outdir` 会另开一条失败路径）。
+结构是 ctexbook + `\include{chapters/chNN}` + `refs.bib`（可被 xelatex 编译）。章节用 `\include` 而不是 `\input`：与 `bench/multifile` 同构，顺带覆盖 include 图解析。生成器刻意**不用** `\include{子目录/文件}` 之外的坑（见 [troubleshooting](../../troubleshooting.md)：子目录 + `-outdir` 会另开一条失败路径）。
 
 ## 3. 口径固化：`scripts/editor-report.mjs`
 

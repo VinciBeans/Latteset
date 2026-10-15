@@ -3,7 +3,7 @@
 //
 // 用法：
 //   node scripts/render-diagrams.mjs [md 文件] [输出目录] [--png]
-//   默认：docs/architecture-diagram.md -> docs/diagrams
+//   默认：docs/archive/architecture-diagram.md -> docs/diagrams
 //
 // mermaid 解析顺序：$MERMAID_DIST > ./node_modules/mermaid/dist/mermaid.min.js
 // 本仓库未把 mermaid 列为依赖（仅文档渲染用），需要时临时安装：npm i mermaid@12。
@@ -27,7 +27,7 @@ const IS_WIN = process.platform === 'win32';
 const argv = process.argv.slice(2);
 const wantPng = argv.includes('--png');
 const positional = argv.filter((a) => !a.startsWith('--'));
-const mdPath = resolve(positional[0] ?? 'docs/architecture-diagram.md');
+const mdPath = resolve(positional[0] ?? 'docs/archive/architecture-diagram.md');
 const outDir = resolve(positional[1] ?? 'docs/diagrams');
 const rel = (p) => (p.startsWith(process.cwd() + sep) ? p.slice(process.cwd().length + 1) : p);
 

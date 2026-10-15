@@ -1,4 +1,4 @@
-//! XDV 页索引（roadmap §5.7；docs/research/incremental-edit-x-dvi.md 的机制底座）。
+//! XDV 页索引（roadmap §5.7；docs/archive/research/incremental-edit-x-dvi.md 的机制底座）。
 //!
 //! 只回答一个问题：**这次编译的每一页，字节内容与上一次是否相同**。
 //! 三个用途（B/C/A 三个功能点）：
@@ -14,7 +14,7 @@
 //! `prev` 是**上一页 `bop` 的文件偏移**（派生量），任何"前面某页变长"都会让它整体平移，从而把
 //! **内容未变的页**也标成"变了"——42 用例矩阵实测：长度类编辑产生 Σ375 页假阳性、raw 精确率
 //! 仅 9.64%（改 V1 后假阴性 0、V1 集合 = 渲染真值集合 42/42）。机制、口径定义与量化见
-//! `docs/research/page-hash-prev-quant.md`；`scripts/xdv-report.mjs` 仍以 raw 为默认口径（研究工具）。
+//! `docs/archive/research/page-hash-prev-quant.md`；`scripts/xdv-report.mjs` 仍以 raw 为默认口径（研究工具）。
 //!
 //! **容错**：末尾截断、未知 opcode → 丢弃该页（前 N 页仍然可用——页包自包含，见 G2 报告 §3.3）。
 //! 两个边界判据是 2026-09 修 bug 时确定的，复现它们的行为很重要：
@@ -168,8 +168,8 @@ const BOP_LEN: usize = 45;
 /// `prev` 是**上一页 `bop` 的文件偏移**（页 1 为 −1），属**派生量**：任何"前面某页变长"都会让它
 /// 整体平移，从而把**内容未变的页**也标成"变了"——实测（42 用例矩阵）长度类编辑由此产生
 /// Σ375 页假阳性、raw 精确率仅 9.64%。故页哈希口径丢掉这 4 B，**保留** opcode 与 10×i32 计数器
-/// （其中 `c0` = `\count0` 页号）。机制、量化与假阴性证据见 `docs/research/page-hash-prev-quant.md`
-/// 与 `docs/modules.md` 已知债 #26。
+/// （其中 `c0` = `\count0` 页号）。机制、量化与假阴性证据见 `docs/archive/research/page-hash-prev-quant.md`
+/// 与 `docs/dev/modules.md` 已知债 #26。
 const BOP_PREV_LEN: usize = 4;
 
 /// 单页的哈希（口径 **V1**：`bop` 头去掉 `prev`，其余原样）。
@@ -295,7 +295,7 @@ pub struct PartialXdv {
 ///
 /// 用途（roadmap ㉞「流式出图」）：编译期只有前缀，而 `xdvipdfmx`（外部与库内同一套 C）
 /// 要求文件含 postamble —— 补上之后就能"边编边出图"。整条路的成本与实测（合成 9–12 ms、
-/// 进程内转换 92–131 ms/次、页数全对）见 `docs/research/dvi-preview-feasibility.md` §10。
+/// 进程内转换 92–131 ms/次、页数全对）见 `docs/archive/research/dvi-preview-feasibility.md` §10。
 ///
 /// 三条规则都是当年实测踩出来的（Node 原型 `scripts/xdv-partial.mjs` 同款）：
 /// 1. **顺序 = `post` 头 → 字体定义 → `post_post`**。写成"字体定义在 post 之前"会被
@@ -395,7 +395,7 @@ pub fn changed_pages(prev: Option<&[u64]>, cur: &[u64]) -> Vec<u32> {
 /// 页哈希缓存的**口径版本**（写进文件首行；读侧不匹配即当"无法判定"）。
 ///
 /// 2026-09 页哈希口径改为 **V1**（`bop` 头去掉 4 B `prev`，见
-/// `docs/research/page-hash-prev-quant.md` 与 `docs/modules.md` 已知债 #26）：老缓存里存的是 raw
+/// `docs/archive/research/page-hash-prev-quant.md` 与 `docs/dev/modules.md` 已知债 #26）：老缓存里存的是 raw
 /// 口径哈希，与新口径逐页都不相等。这里用**首行标记**把两者一次性区分开——老文件首行是 16 进制
 /// 哈希，读侧取不到 `v1` ⇒ `None` ⇒ 只退化**一轮**（该轮多转换一次 + 视窗全量重绘，随后写回新格式
 /// 即自愈），**不会**被误判成"逐页相同"。反向（回滚老二进制读新文件）同样只退化一轮。
@@ -815,7 +815,7 @@ mod tests {
     }
 
     /// 前面某页变长 ⇒ 后续页的 `prev` 整体平移：V1 只报**那一页**，旧口径会把第 3 页起全部打脏
-    /// （实测 25/26 页，见 `docs/research/page-hash-prev-quant.md` §1）。
+    /// （实测 25/26 页，见 `docs/archive/research/page-hash-prev-quant.md` §1）。
     #[test]
     fn page_growth_only_marks_the_grown_page() {
         let b1: &[u8] = &[1, 2, 3];

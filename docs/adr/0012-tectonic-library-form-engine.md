@@ -2,7 +2,7 @@
 
 **Tectonic 既有的「子进程形态」已落，但库形态（把 `tectonic` 当 crate 嵌进产品）能多拿到的能力，只有绕过高层 `ProcessingSession`、自己驱动三个引擎并自持 I/O 输出层才拿得到。** 本 ADR 记录：产品负责人批准采用**路径 B**，以及由此产生的对 ADR-0010 的结构性偏离（例外 X-5）。
 
-> 依据文档：[Tectonic 库形态集成方案](../tectonic-library-plan.md)（705 行 / sha256 `57C39565…`，已通过 t18 评审）§3.2/§3.4/§4.2/§4.4/§4.7/§8；实测分册 `test_file/research-tectonic-lib/` 下的 `engine-spike.md`（t5）、`io-determinism.md`（t3）、`runtime-compare.md`（t7）、`build-spike.md`（t4）。
+> 依据文档：[Tectonic 库形态集成方案](../archive/tectonic-library-plan.md)（705 行 / sha256 `57C39565…`，已通过 t18 评审）§3.2/§3.4/§4.2/§4.4/§4.7/§8；实测分册 `test_file/research-tectonic-lib/` 下的 `engine-spike.md`（t5）、`io-determinism.md`（t3）、`runtime-compare.md`（t7）、`build-spike.md`（t4）。
 
 ## 背景
 

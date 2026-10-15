@@ -32,7 +32,7 @@ pub trait FileSystem: Send + Sync {
 
     /// 读**二进制**文件（原样字节）。
     ///
-    /// 用途（docs/research/incremental-edit-x-dvi.md 的 B/C/A 三个功能点）：读
+    /// 用途（docs/archive/research/incremental-edit-x-dvi.md 的 B/C/A 三个功能点）：读
     /// `tmp/<stem>.xdv` 算页哈希，判断"这次编译的排版结果与上次是否逐页相同"。
     /// XDV 是二进制流，**不能**走文本读取（有损解码会破坏页字节）。
     ///

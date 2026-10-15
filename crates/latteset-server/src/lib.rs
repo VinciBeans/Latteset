@@ -1,6 +1,6 @@
 //! Latteset 无 GUI 交互层（roadmap ⑥）：**headless 服务 + CLI + MCP**。
 //!
-//! 目标：让 harness / Agent 不经 GUI 直接驱动「读 → 改 → 编译验证 → 修」闭环（[cli-mcp-plan.md]）。
+//! 目标：让 harness / Agent 不经 GUI 直接驱动「读 → 改 → 编译验证 → 修」闭环（用法见 [cli.md]）。
 //!
 //! 设计要点（命令面与 [cli-mcp-plan.md] §1/§2 一致；落地时的三处偏差见该文 §4，旧编号对照见 §6）：
 //!
@@ -15,9 +15,10 @@
 //! 4. **路径/SyncTeX 策略共用 core**：`pdf_path_for_root` / `resolve_inverse`（含 ㉒ 的生成产物回落）
 //!    都在 `latteset_core::synctex`，GUI 命令面与这里调同一份，避免行为漂移（原计划 P0-3）。
 //! 5. **临时文件目录约定**：与 GUI 相同——中间文件 `tmp/`、PDF 副本在项目根、`.synctex.gz` 在 `tmp/`。
-//!    **同一项目不要同时用 GUI 和 CLI 编译**（两路 latexmk 会抢 `tmp/`；见 cli-mcp-plan §5）。
+//!    **同一项目不要同时用 GUI 和 CLI 编译**（两路 latexmk 会抢 `tmp/`；见 docs/cli.md「已知限制」）。
 //!
-//! [cli-mcp-plan.md]: ../../docs/cli-mcp-plan.md
+//! [cli-mcp-plan.md]: ../../docs/archive/cli-mcp-plan.md
+//! [cli.md]: ../../docs/cli.md
 
 use serde::Serialize;
 use std::path::{Path, PathBuf};

@@ -10,7 +10,7 @@
 ## 0. TL;DR（给 T5 的 8 条；其中 F1–F3 会改集成方案原文的结论）
 
 1. **F1｜`-b <本地 .tar>` 在 0.17.0 上不成立**：`detect_bundle` 对本地路径只接受 **目录 / `.zip` / `.ttb`**；传本地 `.tar` 直接报 ``error: `…bundle.tar` doesn't specify a valid bundle.`` **[实测]**。
-   ⇒ `docs/research/tectonic-integration-plan.md` §1 表格「路线②」与 §5 第 2 条（"造一个 bundle，用 `-b <本地tar> -C` 离线编译"）**必须改为 `-b <name>.ttb`**（`bundle create … v1` 的产物）；目录形式只配调试用（还要求目录里有 `SHA256SUM`，且**没有 SEARCH/FILELIST 语义**）。
+   ⇒ `docs/archive/research/tectonic-integration-plan.md` §1 表格「路线②」与 §5 第 2 条（"造一个 bundle，用 `-b <本地tar> -C` 离线编译"）**必须改为 `-b <name>.ttb`**（`bundle create … v1` 的产物）；目录形式只配调试用（还要求目录里有 `SHA256SUM`，且**没有 SEARCH/FILELIST 语义**）。
 2. **F2｜`-C/--only-cached` 不是"绝不联网"**：冷缓存（没有 `hashes/<…>` 摘要文件）时它仍会去拉 `<url>.index.gz`。**[实测]**：
    `tectonic -C -b https://127.0.0.1:9/nope.tar …` → `error: this bundle isn't cached, and we couldn't get it from the internet. Error: error sending request for url (https://127.0.0.1:9/nope.tar.index.gz)`，exit 1。
    ⇒ **"离线"必须由"预置缓存 + `-C`"或"本地 `.ttb`"保证**；三条路线要各自测，不能只测一条。
@@ -24,7 +24,7 @@
 5. **F5｜缓存目录与命名已实测**（预置/清理/卸载/升级的判据全都基于它）：
    `%LOCALAPPDATA%\TectonicProject\Tectonic\cache\formats\<bundle digest>-latex-33.fmt`（**24,451,466 B**）、`…\cache\bundles\data\<digest>\…`（**421 文件 / 35,652,448 B，扁平布局**，如 `article.cls`、`latex.ltx`）、`…\cache\bundles\data\<digest>.index`、`…\cache\bundles\hashes\<sanitize(url)>`（65 B 摘要）与同名 `.lock`（10 B = 上次检查的 epoch 秒）。**[实测]**
    `TECTONIC_CACHE_DIR` 是 **bundles 与 formats 两个缓存的唯一运行期开关**（`crates/io_base/src/app_dirs.rs:82-96`，两处调用点：`cache.rs:129`、`src/config.rs:164`），且**指向不可用路径时立刻报错**（实测 `error: 当文件已存在时，无法创建该文件。 (os error 183)`——**本地化、不含路径**，应用侧必须自己补上下文）。**[实测]**
-6. **F6｜许可是发包阻断项，且风险点已具体化**：Tectonic 本体 MIT（`LICENSE`）没问题；风险集中在 ① bundle 里**被我们的 spec patch 过的 4 个 TL 文件**（`latex.ltx`/`listings.sty`/`fontawesome.sty`/`fithesis-mu-base.sty`，其许可逐项**待审计**，而被修改过的文件在 LPPL 类条款下有明确要求）、② 官方 Windows 构建走 **vcpkg 全静态**（`x64-windows-static-release`，依赖 fontconfig/freetype/harfbuzz[graphite2]/icu），**静态链接把 C 库的许可义务带进我们的发行物**、③ bundle 内 OFL 字体与 LPPL/GPL 宏包（且 bundle 的 `ignore` 列表**剔掉了 TL 的 LICENSE/README/doc/source**，许可证文本不在包里）。**全部标「待审计」**，审计产物 `docs/research/tectonic-bundle-licensing.md` + 发行物 NOTICE。见 §5。
+6. **F6｜许可是发包阻断项，且风险点已具体化**：Tectonic 本体 MIT（`LICENSE`）没问题；风险集中在 ① bundle 里**被我们的 spec patch 过的 4 个 TL 文件**（`latex.ltx`/`listings.sty`/`fontawesome.sty`/`fithesis-mu-base.sty`，其许可逐项**待审计**，而被修改过的文件在 LPPL 类条款下有明确要求）、② 官方 Windows 构建走 **vcpkg 全静态**（`x64-windows-static-release`，依赖 fontconfig/freetype/harfbuzz[graphite2]/icu），**静态链接把 C 库的许可义务带进我们的发行物**、③ bundle 内 OFL 字体与 LPPL/GPL 宏包（且 bundle 的 `ignore` 列表**剔掉了 TL 的 LICENSE/README/doc/source**，许可证文本不在包里）。**全部标「待审计」**，审计产物 `docs/archive/research/tectonic-bundle-licensing.md` + 发行物 NOTICE。见 §5。
 7. **F7｜首跑 189–214 s 与产品现状的 120 s 默认超时直接冲突**（实测数字见 `modern-engines-zh.md §8.2`；超时语义见 `AGENTS.md` roadmap ㉕：**超时不自动重试**）⇒ 首跑（下载/建 format）必须有独立的进度与超时策略，否则用户第一次点「编译」看到的是"超时错误 + 一键提高超时"，而真正需要的是"在下载/编译"。`DIST-5.4` 是 P0。
 8. **F8｜形态建议（非结论）**：形态 B（随包 `tectonic.exe` 子进程驱动）风险最低；但"三件套"必须**钉成一处真相源**——**exe 版本 0.17.0 ↔ bundle 规格 `texlive2024-0312` ↔ `FORMAT_SERIAL`/`_v33` ↔ 预置 formats 的 `-33.fmt` 后缀**。任何一处独立升级都会静默改变行为（见 `DIST-1.2`/`DIST-2.18`）。
 
@@ -185,7 +185,7 @@ tectonic -X bundle create --build-dir ./build ./texlive2024-0312/bundle.toml v1
 | MB-5 | ttb 产物字节 | `<build>/<name>/<name>.ttb` **存在且 > 0**；头部 14 字节 == `tectonicbundle`、u32 版本 == 1、头部第 34..66 字节的 32 B == `content/SHA256SUM` | `pack` 在 `content/` 缺失时**只报错并 exit 0** | `bundle/actions.rs:102-136`、`pack/bundlev1.rs:181-217` **[源码]** |
 | MB-6 | 冒烟（用**运行期**的命令行形态） | ① `tectonic -C -b <ttb> --outfmt xdv` 编 `min-zh`+`thesis` 成功 ② `--outfmt fmt` 能建 latex/plain 格式 ③ 页数与 §8.4 基线一致 | 打包器与运行期是同一份代码，但只测"能建包"证明不了"能编译" | 上游自带 `bundles/tests/test.sh <ttb> {files,classes}`（bash + `realpath`，Windows 需 WSL/Git Bash）**[源码]** |
 | MB-7 | 可复现性 | 同一台机器、同一 tarball+patches，**重跑一次**：`expected_hash` 与 `content/SHA256SUM` 完全相同 | 这是"版本钉法"的前提；否则无法把摘要写进发布清单 | `picker.rs:531-540`（FILELIST 按路径排序）**[源码]**；**ttb 逐字节可复现 [未测]**（gzip 层） |
-| MB-8 | 许可清单随产物 | 每一版 ttb 都产出/更新 `docs/research/tectonic-bundle-licensing.md` 与发行物 NOTICE（§5） | 见 §5 | — |
+| MB-8 | 许可清单随产物 | 每一版 ttb 都产出/更新 `docs/archive/research/tectonic-bundle-licensing.md` 与发行物 NOTICE（§5） | 见 §5 | — |
 
 ### 4.4 谁来维护 / TL 升级怎么办
 
@@ -263,7 +263,7 @@ dd if=<name>.ttb ibs=1 skip=<index_start> count=<index_gzip_len> | gunzip   # �
 
 ### 5.3 必须产出的文档
 
-`docs/research/tectonic-bundle-licensing.md`，**必须含**：
+`docs/archive/research/tectonic-bundle-licensing.md`，**必须含**：
 1. 范围与版本（Tectonic 版本 + bundle 规格名 + `expected_hash` + ttb 的 SHA-256 + 审计日期 + 审计人）；
 2. 清单 A 表（Rust 依赖 → 许可 → 档位 → 义务）；
 3. 清单 B 表（TL 包 → 许可 → 档位 → 义务；含**4 个被 patch 文件**的单独小节与处置）；
@@ -275,7 +275,7 @@ dd if=<name>.ttb ibs=1 skip=<index_start> count=<index_gzip_len> | gunzip   # �
 
 | ID | 检查 | 判定方式（二进制/可 grep） |
 |---|---|---|
-| G-L1 | `docs/research/tectonic-bundle-licensing.md` 存在且**结论小节完整** | 文件存在；文中不含"待审计/未结论"字样出现在"结论"小节（遗留项必须集中在小节 6） |
+| G-L1 | `docs/archive/research/tectonic-bundle-licensing.md` 存在且**结论小节完整** | 文件存在；文中不含"待审计/未结论"字样出现在"结论"小节（遗留项必须集中在小节 6） |
 | G-L2 | 清单 A/B/C 三张表都非空，且**无空许可证字段** | 表行数 > 0；空值计数 == 0 |
 | G-L3 | 发行物含第三方声明（`THIRD-PARTY-NOTICES` 或等价物，安装包内 + About 页可达） | 安装包解包后文件存在；About 页能打开该文件（人工 1 项） |
 | G-L4 | Tectonic 本体许可文本随发行物（MIT 全文 + 版权行） | NOTICE 中含 "the Tectonic Project" 与 MIT 全文 |

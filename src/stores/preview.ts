@@ -29,7 +29,7 @@ export const usePreviewStore = defineStore("preview", () => {
 
   /**
    * 本次编译**变化的页号**（1-based，升序）——roadmap「增量编辑 × DVI」的 B/C 两个功能点
-   * （docs/research/incremental-edit-x-dvi.md）。
+   * （docs/archive/research/incremental-edit-x-dvi.md）。
    */
   const changedPages = ref<number[]>([]);
   /** 本次编译的页数；`0` = **页信息不可判定**（XDV 读不到）——与"零页变化"是两回事。 */

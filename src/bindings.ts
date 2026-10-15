@@ -159,7 +159,7 @@ export type CmdError = { code: "NotFound"; message: string } | { code: "Invalid"
  */
 export type CompileErrorsEvent = ErrorEntry[];
 
-/**  编译模式（CONTEXT.md：连续编译 / 保存触发编译）。 */
+/**  编译模式（docs/glossary.md：连续编译 / 保存触发编译）。 */
 export type CompileMode = "continuous" | "on_save";
 
 /**  编译阶段（modules.md §2.5 事件契约）。 */
@@ -335,10 +335,10 @@ export type DocLanguage =
 /**  TeX 引擎（默认 xelatex，见 design.md）。 */
 export type Engine = "xelatex" | "pdflatex" | "lualatex" | 
 /**
- *  Tectonic（2026-09 引入；方案见 [tectonic-library-plan.md](../../../docs/tectonic-library-plan.md)；
+ *  Tectonic（2026-09 引入；方案见 [tectonic-library-plan.md](../../../docs/archive/tectonic-library-plan.md)；
  *  计划期的一次性集成方案已归档到 `docs/archive/tectonic-integration-plan.md`）。
  * 
- *  形态 = **子进程驱动官方 `tectonic.exe`**（路线①，`docs/research/tectonic-test-plan.md` §1.2 的 D2 裁决）：
+ *  形态 = **子进程驱动官方 `tectonic.exe`**（路线①，`docs/archive/research/tectonic-test-plan.md` §1.2 的 D2 裁决）：
  *  它自带 bundle、**不读用户 TeX Live**，自己出 PDF（`writes_xdv() == false`）⇒ 页级复用 A/B/C
  *  在该引擎下**不可用**（`page_hashes` 恒空 → 前端按"无法判定"保守全量刷新，A 无对应物）。
  */
@@ -475,7 +475,7 @@ export type OutlineNode = {
 /**
  *  pdf-updated 事件载荷。
  * 
- *  `changed_pages` / `pages`（2026-09，docs/research/incremental-edit-x-dvi.md 的 B/C 两个功能点）：
+ *  `changed_pages` / `pages`（2026-09，docs/archive/research/incremental-edit-x-dvi.md 的 B/C 两个功能点）：
  *  本次编译相对**上一次**变化的页号（1-based、升序）。前端语义：
  *  - `pages > 0` 且 `changed_pages` **非空** → 只有这些页需要重绘，其余页复用 canvas 位图；
  *  - `pages > 0` 且 `changed_pages` **为空** → 逐页字节完全相同 → **跳过重载**（新旧 PDF 逐页等价，

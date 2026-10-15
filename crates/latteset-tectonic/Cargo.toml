@@ -2,10 +2,10 @@
 name = "latteset-tectonic"
 version.workspace = true
 edition.workspace = true
-description = "Tectonic 库形态引擎（路径 B：自持输出层驱动引擎 crate；ADR-0012 / docs/tectonic-library-plan.md §3.4）"
+description = "Tectonic 库形态引擎（路径 B：自持输出层驱动引擎 crate；ADR-0012 / docs/archive/tectonic-library-plan.md §3.4）"
 publish = false
 
-# 依赖来源（docs/tectonic-library-plan.md §3.1 的版本钉定）：
+# 依赖来源（docs/archive/tectonic-library-plan.md §3.1 的版本钉定）：
 # 走 **crates.io 发布包**。曾先写成 git tag `tectonic@0.17.0`（7141d67a…），但实测在本机 Windows
 # （默认 MAX_PATH）**取不下来**：cargo 会对 git 依赖 init 子模块，报
 #   failed to update submodule `crates/bridge_harfbuzz/harfbuzz`

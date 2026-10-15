@@ -67,7 +67,7 @@
 
 ## 3. 对既有机制的影响（这才是取舍的关键）
 
-### 3.1 Quick 路径：实测坏了（两种失败模式）→ **已修（2026-09，见 [modules.md](../modules.md) §12 已知债 #25）**
+### 3.1 Quick 路径：实测坏了（两种失败模式）→ **已修（2026-09，见 [modules.md](../../dev/modules.md) §12 已知债 #25）**
 
 > 修法：`Engine::writes_xdv()` 作为唯一闸门（`-no-pdf`、页哈希、`xdvipdfmx` 三处都过它）＋ 页哈希缓存按引擎分文件。
 > 真机验证：engine=lualatex 编辑触发 → `draft=true` 编译成功、项目根得到 LuaLaTeX 自己的 65,813 B PDF（不再是陈旧 XDV 转出来的 40,6xx B）、不写 `.pages`；切回 XeLaTeX → 日志出现 `页哈希与上次逐页相同：跳过 xdvipdfmx 转换`（A 未回归）。
@@ -154,7 +154,7 @@ TeX Live 2026 的 LaTeX 内核（`ltluatex.lua`）向文档暴露 **70+ 个回�
    另外还有两个产品级成本：**首跑 26 s 建字体缓存**、**要求可写的 `TEXMFVAR`**。
    反过来也要记住 §7.4 的一句公道话：**英文文档上 LuaLaTeX 比 XeLaTeX 快**（1878 vs 2341 ms），3.2–3.5× 是**中文/字体层**的差距，不是"引擎代差"。
 3. **真正值得吸收的是"引擎内回调"这条能力**（§3.3）：进程内拦截每一次 I/O、逐页/逐行钩子、结构化错误捕获、SyncTeX 收尾——这些正是上游阶段 6/7 与 G1 报告里我们只能"在进程外绕"的东西。若将来要认真做实时渲染，**"换 LuaLaTeX 拿回调"比"打补丁改 XeTeX"更现实**（无需自维护引擎分支），代价就是上面那三条。
-4. **近期该修的产品缺陷**（本次实测发现）：~~Quick 路径的 `-no-pdf` 与 `xdvipdfmx` 收尾只对 XeLaTeX 成立~~ ✅ **已修（2026-09）**——`Engine::writes_xdv()` 闸门 + 页哈希缓存按引擎分文件，真机验证见 §3.1 顶部与 [modules.md](../modules.md) §12 #25；设置面板 LuaLaTeX 的提示也已写明速度与首次编译代价。
+4. **近期该修的产品缺陷**（本次实测发现）：~~Quick 路径的 `-no-pdf` 与 `xdvipdfmx` 收尾只对 XeLaTeX 成立~~ ✅ **已修（2026-09）**——`Engine::writes_xdv()` 闸门 + 页哈希缓存按引擎分文件，真机验证见 §3.1 顶部与 [modules.md](../../dev/modules.md) §12 #25；设置面板 LuaLaTeX 的提示也已写明速度与首次编译代价。
 
 ## 5. 复现方法
 
@@ -417,7 +417,7 @@ lualatex -fmt="<abs>\partial.fmt" -interaction=nonstopmode -output-directory=tmp
 - 进程启动：`cmd /c exit` 19 ms、`lualatex --version` **16 ms**、`xelatex --version` **495–690 ms** ⇒ 只有 XeTeX 慢；
 - 文件读：400 个宏包文件热读 **178 MB/s**（首遍冷读只有 1.6 MB/s，但那是另一回事）⇒ 磁盘不背锅；
 - 字体：`fc-list` **4.2–4.7 s**、`fc-cache -v` 报 `invalid cache file`、四处候选缓存目录**全都不存在** ⇒ **fontconfig 缓存失效，每次重新扫 3,640 个系统字体**。
-`fc-cache -f` 重建后：极简文档 4799 → **790 ms**、`min-zh` 5380–5765 → **1371 ms**、`fc-list` 4.2 s → 0.7 s。**结论：这是断电的次生故障，不是"电脑变慢"**（详见 [troubleshooting.md](../troubleshooting.md) 同名条目）。
+`fc-cache -f` 重建后：极简文档 4799 → **790 ms**、`min-zh` 5380–5765 → **1371 ms**、`fc-list` 4.2 s → 0.7 s。**结论：这是断电的次生故障，不是"电脑变慢"**（详见 [troubleshooting.md](../../troubleshooting.md) 同名条目）。
 > 期间的所有绝对数字**作废**。修好后同批复测：`thesis` **xe-nopdf 1813 ms vs lua-pdf 5727 ms = 3.2×**、`min-zh` 1609 vs 3837 ms = 2.4×——与 §7.4 记录的 1870/6468（3.5×）一致 ⇒ **§7.4 的结论稳健**。
 
 **② 静默作废的样本**（最危险的一类：跑得"快"其实是失败）
@@ -501,7 +501,7 @@ lualatex -fmt="<abs>\partial.fmt" -interaction=nonstopmode -output-directory=tmp
 3. ⇒ **值得试的方向不是"换引擎"，而是"把 Tectonic 当作免装 TeX Live 的备选后端"**：`-b <本地 bundle>` +
    `-C` 可离线化；`--outfmt xdv` 让现有页级机制原样复用。要落地还需回答：bundle 分发体积/许可、与用户 TL 的宏包差异
    （本机 `tex/luatex`、`context` 等被排除；`.lua` 文件也在 ignore 列表里）、以及首跑下载能不能接受。
-   **落地计划、摩擦点清单与明天的四件事见 [tectonic-integration-plan.md](../archive/tectonic-integration-plan.md)**（2026-09 已归档；原文两处口径已被 test-plan §8 作废，见 [tectonic-test-plan.md](./tectonic-test-plan.md) §9.2）。
+   **落地计划、摩擦点清单与明天的四件事见 [tectonic-integration-plan.md](../tectonic-integration-plan.md)**（2026-09 已归档；原文两处口径已被 test-plan §8 作废，见 [tectonic-test-plan.md](./tectonic-test-plan.md) §9.2）。
 4. **仍未测**：真实学位论文模板（图表/公式密集）上的表现；bibtex/biber 全链路；`--bundle` 指的本地 bundle 实测；
    与 Latteset 现有"打开项目 → 探测根文件 → SyncTeX"链路的端到端适配成本。
 
@@ -526,7 +526,7 @@ lualatex -fmt="<abs>\partial.fmt" -interaction=nonstopmode -output-directory=tmp
 
 ⇒ **页级复用（A/B/C）吃的是 XDV，而不固定 epoch 时 XDV 依然稳定**；固定该变量对 Tectonic 唯一"买"到的是 **PDF 的逐字节可复现**，代价却是把正文日期压成 1970。
 
-**页哈希口径（`bop` 的 prev 指针）**：上表第三行的偏移 43–44 就是 DVI/XDV 每页头 45 B `bop` 的**最后一个 i32 = 前一页 `bop` 的绝对字节偏移**；页 1 变长 ⇒ 页 3 起每页的 prev 跟着移动 ⇒ 25/26 页被判"变化"（**并非每页内容都变了**）。本仓 `crates/latteset-core/src/xdv.rs:211` 的 `hash_page(&bytes[bop..p])` 是**原始口径**（含 prev），已登记为已知债 **#26**（[modules.md](../modules.md) §12.1）。触发频率差别：XeLaTeX 固定 epoch ⇒ 该债几乎不触发；Tectonic 选 (b) ⇒ **会印日期的文档每天触发一次**（而其内容本就该变）。
+**页哈希口径（`bop` 的 prev 指针）**：上表第三行的偏移 43–44 就是 DVI/XDV 每页头 45 B `bop` 的**最后一个 i32 = 前一页 `bop` 的绝对字节偏移**；页 1 变长 ⇒ 页 3 起每页的 prev 跟着移动 ⇒ 25/26 页被判"变化"（**并非每页内容都变了**）。本仓 `crates/latteset-core/src/xdv.rs:211` 的 `hash_page(&bytes[bop..p])` 是**原始口径**（含 prev），已登记为已知债 **#26**（[modules.md](../../dev/modules.md) §12.1）。触发频率差别：XeLaTeX 固定 epoch ⇒ 该债几乎不触发；Tectonic 选 (b) ⇒ **会印日期的文档每天触发一次**（而其内容本就该变）。
 
 **裁决（用户，2026-09-14）：选 (b) —— Tectonic 档不固定 `SOURCE_DATE_EPOCH`。** 落地口径是**按子进程施加**：Tectonic 进程不设（保正文日期）；同一次编译里若还要调外部 `xdvipdfmx`（路线②）则**该进程设 `0`**，㉚ 的逐字节确定性由它承担。现实现是无条件设置（`runner.rs:275`），**接入 Tectonic 时必须改**。附带推论（**待实测**，计划文档 U-31）：路线② 因此有望同时拿到"日期正确 + PDF 逐字节可复现"。逐条计划与判据见 [tectonic-test-plan.md](./tectonic-test-plan.md) §5.4 / E3.7 / E3.8 / P-G19。
 

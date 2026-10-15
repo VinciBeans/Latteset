@@ -4,7 +4,7 @@
 //! （`crates/bundles/src/lib.rs:234-288`，CLI 用同一个函数 `src/bin/tectonic/compile.rs:193`）。
 //! 三条实测坑（t5 §3.2，由本模块在调用**之前**补上分类文案）：
 //! 1. **绝对 Windows 路径会被当成 URL scheme**：`E:\...` 判不出来 ⇒ 必须 `file:///E:/...`
-//!    或**相对路径**（`docs/tectonic-library-plan.md` §5.6 LB-4）；
+//!    或**相对路径**（`docs/archive/tectonic-library-plan.md` §5.6 LB-4）；
 //! 2. **空目录 bundle 静默 open 成功但 0 文件** ⇒ 必须自己判空；
 //! 3. 路径不存在 / 空目录 / 非 bundle，上游**同一句**错误 ⇒ 我们按三类给不同文案（LB-5 / F2b/F2c）。
 

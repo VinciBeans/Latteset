@@ -1,6 +1,6 @@
 # G1「拦截每一次 I/O」深挖：当前项目里有没有廉价等价物
 
-> **状态（2026-09 回写）**：**降级为依赖记录**——字节级 I/O 拦截**不做**（[modules.md](../modules.md) §12.1 #24）；可用部分已落地为**依赖记录通道**：`.fls` + `.fdb_latexmk`（`scripts/fls-report.mjs`），供 ㉝ 精确失效使用（**仍未接线**）。
+> **状态（2026-09 回写）**：**降级为依赖记录**——字节级 I/O 拦截**不做**（[modules.md](../../dev/modules.md) §12.1 #24）；可用部分已落地为**依赖记录通道**：`.fls` + `.fdb_latexmk`（`scripts/fls-report.mjs`），供 ㉝ 精确失效使用（**仍未接线**）。
 > 上游依据：[texpresso-live-rendering-roadmap.md](../texpresso-live-rendering-roadmap.md) §1 前提表（G1）、§阶段 6（seen 水位 + trace + `rollback_add_change`）。
 > 姊妹篇：[g2-byte-offset-resync.md](./g2-byte-offset-resync.md)（输出侧的字节偏移重同步）、[dvi-preview-feasibility.md](./dvi-preview-feasibility.md)（渲染那一半）、[stage2-streaming-feasibility.md](./stage2-streaming-feasibility.md)（流式输出，已落地）。
 > **结论一句话**：G1 的**原义**（拦到每一次读**且拿到字节偏移**）在当前项目里既**拿不到**、也**无处兑现**——它唯一的消费方是 seen 水位回滚，而那要求"引擎进程活着且状态可回退"（G4 fork 快照，Windows 无 `fork()`）。但 G1 的**信息内容**（读了什么）**已经免费躺在磁盘上**：`.fls`（引擎实际打开的文件，编译中增量可尾随）+ `.fdb_latexmk`（latexmk 依赖图，含 bibtex 步骤与 md5），两者互补、**零新增依赖**。它们能换来两件真事：**精确失效**（现在两个方向都是错的，已实测）与**缺失文件的查找轨迹**（kpathsea 调试位，时间开销不可测）。
@@ -82,7 +82,7 @@ TeX Live 文件: 235（已折叠）
 4180ms … 6249ms  19809 B（不再增长；总编译 6281ms）
 ```
 
-**结论**：`.fls` 是**追加写**的（不是收尾一次性落盘），2.1 s 出现、3.9 s 长满，之后 2.3 s 的剩余时间花在 PDF 转换与收尾上。我们已经有 `FileSystem::read_appended(path, offset)` 这套尾随基础设施（[modules.md](../modules.md) §2.6.1 流式输出），**复用成本≈0**：想要"编译期依赖流"，加一条读任务即可。
+**结论**：`.fls` 是**追加写**的（不是收尾一次性落盘），2.1 s 出现、3.9 s 长满，之后 2.3 s 的剩余时间花在 PDF 转换与收尾上。我们已经有 `FileSystem::read_appended(path, offset)` 这套尾随基础设施（[modules.md](../../dev/modules.md) §2.6.1 流式输出），**复用成本≈0**：想要"编译期依赖流"，加一条读任务即可。
 
 一个**实现细节**（实测，容易踩）：**Quick 路径（直调 `xelatex`）不带 `-recorder`，不产 `.fls`**——Quick 编译后 `tmp/main.fls` 的 mtime 保持不变，直到下一次 Full 才更新。要用 `.fls` 做依赖，得给 Quick 的命令行补一个 `-recorder`（成本：一个参数）。
 
@@ -152,7 +152,7 @@ debug32 (ms): 2029, 1686, 2303, 2015, 2801   中位 2029
 stderr 体积 = 1,010,462 字节/趟（≈1 MB）
 ```
 
-**代价不在时间，在体积**。而且有一条**必须注意的耦合**：调试输出走 **stderr**，而 stderr 正是我们流式错误通道的输入之一（[modules.md](../modules.md) §2.6.1）——若常开，1 MB 的 `kdebug:` 文本会灌进流式解析缓冲（需要在 pump 里按行前缀过滤，否则白白扫 1 MB 并可能触发 2 MiB 截断逻辑）。
+**代价不在时间，在体积**。而且有一条**必须注意的耦合**：调试输出走 **stderr**，而 stderr 正是我们流式错误通道的输入之一（[modules.md](../../dev/modules.md) §2.6.1）——若常开，1 MB 的 `kdebug:` 文本会灌进流式解析缓冲（需要在 pump 里按行前缀过滤，否则白白扫 1 MB 并可能触发 2 MiB 截断逻辑）。
 
 ### 3.5 `.synctex.gz` 的 Input 表 —— 文件表完整，页级归属稀疏
 

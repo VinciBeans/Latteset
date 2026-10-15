@@ -105,7 +105,7 @@ let pagesRenderedThisLoad = 0;
 /**
  * 本次 reload **复用旧 canvas、跳过重绘**的页数（插桩）。
  *
- * 依据（docs/research/incremental-edit-x-dvi.md 的功能点 C）：XDV 的页是自包含字节区间，
+ * 依据（docs/archive/research/incremental-edit-x-dvi.md 的功能点 C）：XDV 的页是自包含字节区间，
  * 页哈希相同 ⇔ 该页的排版结果逐字节未变；后端把"变化页集合"随 pdf-updated 一起发来，
  * 未变化的页其 canvas 位图仍然有效 → 不必重画。
  */
@@ -113,7 +113,7 @@ let pagesReusedThisLoad = 0;
 
 // ---------- 草案层（v1）：把刚改动的那一行近似画回预览 ----------
 //
-// 口径（docs/research/realtime-preview-cost.md §6、design.md §延迟预算）：**允许不精确**。
+// 口径（docs/archive/research/realtime-preview-cost.md §6、design.md §延迟预算）：**允许不精确**。
 // 用户改动 → 30ms 去抖 → 在"编译成功后建立的 PDF 文本行索引"里找到**改动前那一行**的位置 →
 // 在该页 overlay 上白底重绘这一行（带草稿下划线）。下一次 `pdf-updated` 清草案、换真画面。
 // **找不到锚点就静默不画**：这条路径绝不阻塞输入、绝不报错、绝不改真实画面。
@@ -223,7 +223,7 @@ function scheduleDraft() {
   const t0 = performance.now();
   draftTimer = setTimeout(() => {
     const path = editor.activePath;
-    // 诊断插桩（静默失败必须可观测；口径见 docs/research/realtime-preview-cost.md）
+    // 诊断插桩（静默失败必须可观测；口径见 docs/archive/research/realtime-preview-cost.md）
     const dbg = {
       fired: true,
       path: path ?? null,

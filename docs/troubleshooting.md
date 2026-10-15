@@ -1,137 +1,36 @@
-# Troubleshooting
+# 排障（Troubleshooting）
 
-## 现象 → 行号（速查）
+操作与环境坑速查：每条按「现象 → 原因 → 处理」写，读者是遇到问题的人（使用者与开发者同一套现场）。
+真机验收与测试链路见 [dev/testing.md](./dev/testing.md)；**已修**条目的原文保留在 [archive/troubleshooting-history.md](./archive/troubleshooting-history.md)。
 
-| 现象 | 小节标题所在行 |
+## 现象 → 小节（速查）
+
+| 现象 | 小节 |
 |---|---|
-| 白屏 / 界面不渲染（dev 白屏、无 GPU、WSLg、HMR） | 28 / 122 / 130 / 144 |
-| 真机验收与 UI 驱动（MCP 清单、Monaco 输入、SyncTeX 精度、Bridge 0.13） | 166 / 180 / 216 / 275 / 393 |
-| Rust 单测 / CI（src-tauri 启动失败、Linux 路径语义） | 292 / 306 |
-| 中文文件名 / 路径 / 编码（含 GBK 源的真实缺陷） | 326 / 350 / 382 / 417 |
-| release 档点「编译」弹出终端黑框 | 423 |
-| `\include{子目录}` + `-output-directory` | 493 |
-| XeLaTeX 每次编译慢 4–5 秒（fontconfig 缓存失效） | 532 |
-| LuaLaTeX 切过去失败 / 第一次特别慢 | 549 |
-| 编译期实时反馈要尾随 `.log`（非 TTY 4KB 块缓冲） | 572 |
-| 错误列表文件名偶尔错一章（日志 `)`/`(` 同行，未修） | 582 |
-| 配置 / 设置文件异常（半截写入、更名后目录变化） | 594 / 633 |
-| `cargo build -p latteset-server` 报拒绝访问 | 610 |
-| 含中文的探针文档不能用 pdflatex | 663 |
-| 库内嵌档 SyncTeX 定位不可用（同步数据里没有真实源文件名） | 683 |
-| headless（CLI / MCP）怎么跑、怎么排障 | 722 |
-| 查「引擎到底读了什么 / 为什么找不到文件」 | 758 |
-| 脚本 / 前端杂项坑（WS 探针、PowerShell 自动变量、format 口令、`<select>` 宽度、死 CSS） | 782 / 799 / 817 / 827 |
-| 精简 bundle 不含 `beamer.cls` | 848 |
-| **子进程 Tectonic 的 Quick 产物整段没有目录**（已改 `-r 1`） | 76 |
-| 外部改文件「既重载又报外部修改」/ dev 档不收敛 | 96 / 108 |
+| 白屏 / 界面不渲染（无 GPU、WSLg、改 `App.vue` 结构后 HMR） | 无 GPU 虚拟机 / WSLg / HMR 白屏 |
+| 编译报错但看不到任何信息；中文文件名 / 路径 / 编码 | 中文文件名与路径 / GBK 源 |
+| `\include{子目录}` 报 `I can't write on file` | `\include{子目录/文件}` + `-output-directory` |
+| XeLaTeX 每次编译慢 4–5 秒 | fontconfig 字体缓存失效 |
+| LuaLaTeX 切过去失败 / 第一次特别慢 | LuaLaTeX 的两个环境前提 |
+| 编译期实时反馈不「实时」 | 非 TTY 4KB 块缓冲 |
+| 错误列表文件名偶尔错一章 | TeX 日志的 `)` 与 `(` 同行 |
+| 外部改 `settings.json` 有时不生效 | 非原子写 settings.json |
+| `cargo build -p latteset-server` 报拒绝访问 | 常驻 `latteset-mcp.exe` 锁二进制 |
+| Rust 单测 `cargo test -p latteset` 加载即退出 | src-tauri 的 WebView2 链接限制 |
+| Linux CI 上路径语义用例红 | Windows 路径语义别当跨平台契约 |
+| 更名后设置回到默认 / 项目根文件覆盖没了 | 更名后的配置目录迁移 |
+| 探针文档含中文 `exit 12` | 探针含中文时不能用 pdflatex |
+| 引擎「找不到文件 / 改了没生效」 | 引擎读了什么：四个通道 |
+| headless（CLI / MCP） | [cli.md](./cli.md) + 常驻二进制锁 |
+| 前端探针 / 脚本的坑（WS 探针、PowerShell 自动变量、format、`<select>`、死 CSS） | 前端与脚本杂项 |
+| 精简 bundle 不含 `beamer.cls` | 实验室 bundle 缺 beamer |
 
-## `npm run tauri dev` 前端全白：Vite dev server 被 15.8 万个被监视文件拖死（2026-09 已修）
-
-**现象**：`npm run tauri dev` 起来后窗口是**彻底空白**（不是首帧竞态——右键 Reload 也白）。日志看起来一切正常：
-
-```
-VITE v6.4.3  ready in 258 ms
-  ➜  Local:   http://localhost:1420/
-     Running DevCommand (`cargo run …`)
-```
-
-**根因（实测定位）**：vite 的 chokidar 把**整个工作区**递归纳入监视，而 `test_file/` 下有 **158,541 个文件**（vcpkg 检出、`vendor/` 824 MB、tectonic 上游源码、各类夹具与编译产物）。这种体量下 dev server **端口在监听、TCP 连接能被接受，但请求路径永远不出响应**：
-
-| 探针 | 结果 |
-|---|---|
-| `netstat -ano \| Select-String ":1420"` | `[::1]:1420 LISTENING`（正常） |
-| `fetch("http://[::1]:1420/")` | 连接被接受 → 无响应 → 客户端超时；服务端侧留 `CLOSE_WAIT` |
-| `npx vite optimize --debug` | **正常**（`Dependencies bundled in 386.12ms`） |
-| `npx vite build` | **正常** |
-| `127.0.0.1:1420` | `ECONNREFUSED`（vite 只绑 `[::1]`，属正常形态，不是根因） |
-
-即 **`vite build` / `optimize` 全好、只有 dev server 的请求路径卡住** ⇒ 排除 esbuild、排除业务代码、排除端口冲突，指向 watcher。
-
-**处置**（`vite.config.ts` → `server.watch.ignored`）：排除不参与前端的巨型目录——
-
-```ts
-ignored: [
-  "**/src-tauri/**",   // Rust 侧，vite 不参与
-  "**/test_file/**",   // 本地素材区（vcpkg / vendor / 上游源码 / 夹具）
-  "**/dist/**",        // 构建产物（tauri build 与 dev 并存时会自我触发）
-  /\.tmpdir[\\/]/,     // 被锁定的临时目录（chokidar 未处理 error 会拖垮 vite）
-]
-```
-
-**复测**：`/` → 200 / 434 B / **57 ms**；`/src/main.ts` → 200 / 8549 B / **81 ms**；`localhost:1420/src/main.ts` → 200 / **157 ms**。
-
-**真机复验（`npm run tauri dev`）**：窗口渲染出完整三栏布局（工具条 / 资源管理器 / 编辑器 / PDF 预览 / 状态栏），dev stdout 出现 3 条 `Server handshake done.`；再经 IPC 走完整链路——`open_project`（`中文测试工程`）→ `compile_now` → `编译成功（无等待请求） draft=false` + `PDF 就绪：… pages=3 changed=3`，预览渲染出 3 页中文 PDF（40,519 B）。
-
-**判据速查**：dev server "起得来但不响应"时，先量被监视的文件数，别急着怀疑 esbuild/端口/业务代码——
-
-```powershell
-(Get-ChildItem <repo> -Recurse -File -Force -ErrorAction SilentlyContinue).Count
-```
-
-**回归自查（加 watch ignore 时的必做项）**：ignore 加多了会**悄悄废掉 HMR**，所以两边都验一次——
-改 `src/` 下的文件，dev stdout 应出现 `[vite] (client) hmr update /src/…`，且**真机窗口内容随之更新**；
-在 `test_file/` 下建/删文件则**不应**产生任何 `[vite]` 行。注意：**vite 只在有客户端连着时才打 `hmr update`**，
-所以"只起 `npm run dev`、不开窗口"时看不到这行，不代表 HMR 失效。
-
-## 子进程 Tectonic 的 Quick 产物**整段没有目录**：`-o tmp` 只是输出目录（2026-09 实测，已修）
-
-**现象**：`engine=tectonic`（子进程档）下每编辑一次，预览会先跳成 **26 页**（正文少了目录）、约 4 s 后才收敛回 **28 页**——页数在 26/28 之间反复抖。xelatex / lualatex 档没有这个现象。
-
-**根因**：Tectonic 的 `-o tmp` **只作输出目录、不作输入目录** ⇒ 单趟档**读不回**上一趟留在 `tmp/` 的 `.toc`/`.aux`，于是这一趟从零重建目录——**目录整段排不进去**。（对照：latexmk 档靠 `-output-directory` 读得回；库形态档靠 `seed_previous_intermediates` 预热内存层。三条路只有 Tectonic 子进程档没有回读机制。）
-
-**判据（可复算，release `tectonic.exe` 0.17.0，同一份 28 页中文夹具、同一条命令形态）**：
-
-| 档 | 耗时 | 页数 | 文本层 | 目录 |
-|---|---|---|---|---|
-| `-r 0`（单趟） | **657 ms** | **26** | 12,624 字 | **没有**（第 2 页只剩页码标记 `i`，正文从第 3 页起） |
-| `-r 1`（两趟） | **1057 ms** | 28 | 13,570 字 | 有（占第 2–3 页） |
-| 默认（收敛，Full 用） | 1495 ms | 28 | 13,570 字 | 有 |
-
-差的 **2 页 / 946 字就是目录**。所以这不是 roadmap ㉘ 说的"目录/交叉引用**页码**落后一趟"——那是**内容缺失**，与承诺不符。
-
-**处置**：`tectonic_command` 的 Quick 档用 `-r 1`（两趟）。代价 +400 ms，Quick 仍明显快于 Full（1057 vs 1495）。真机复验：Quick 出 **28 页 / 13,570 字**，与 Full 逐项一致，预览不再抖。
-
-> **量这个的坑**：`scripts/validate-pdf.mjs` 本身是确定性的（同一文件连跑 5 次同值），但**别在 `tectonic` 刚退出时立刻量**——会读到明显偏小的文本层计数。只采用**可复算**的那一组。
-
-## 外部改文件后「既重载成功、又报外部修改」：重载被当成了用户编辑（2026-09-15 已修）
-
-**症状**（真机 2/2 复现）：文件在编辑器里开着、人没碰键盘，用外部工具写它 → 编辑器**静默重载成功**（新内容进缓冲区），状态栏却同时挂出「外部修改」。该提示的动作是 `acceptExternal`（**放弃本地**）⇒ 误报后一点击就是丢输入。
-
-**定位**：外部重载走 `EditorPane.vue` 的 `model.setValue()`，而 Monaco 的 `setValue` **同步**触发 `onDidChangeModelContent`，应用据此 `markDirty` + `emit("change")`——重载被当成了用户编辑。于是 `editor.ts` 干净分支里「读盘 await 之后的复检」看到 `dirty` 已为真，直接 `externalConflict.add(path)`：脏分支有「再比一次磁盘内容」的判据，这一条没有。连带两个副作用：tab 误判为脏；连续模式下自动保存把**同一份内容**写回磁盘（mtime 被改）→ 磁盘又变一次 → 再触发一轮编译。
-
-**修法**（两条都要）：
-1. `EditorPane.vue`：重载写 model 时用调用栈内的开关（`applyingReload`）屏蔽这次内容变更事件——开关只可能在 `setValue` 期间为真，**结构上不可能吞掉用户输入**；
-2. `editor.ts`：干净分支的复检只认内容（磁盘 == 缓冲 ⇒ 不算冲突），与脏分支对齐。
-
-**验证**（真机，scratch 项目 `test_file/e2e/dedup-status`）：外部写两次 → 无提示、tab 无脏点、**文件 mtime 不变**（没有回写）、编辑器内容照常更新；用 `ed.trigger("mcp","type",…)` 造真实编辑 → tab 标脏 + 自动保存落盘（证明开关没吞掉用户输入）；保持脏缓冲再外部写 → 提示出现、本地输入保住、点提示后采用磁盘版。单测：`editor.spec.ts` 新增两条（见 [modules.md](./modules.md) §5.5），改回旧写法时「不得误报」那条会红。
-
-## `tauri dev` 下编辑触发档不肯收敛、提示还亮着：预算按发布档标定（2026-09-15）
-
-**现象**：库形态（`npm run lib:dev`）里编辑一个 28 页项目，状态栏仍亮「引用待更新」、2 s 后还补一次 Full；同一个项目在 release 下（`cargo run --release -p latteset-tectonic --example bench -- --quick`）**1 趟就收敛、报 `Full`、无提示**。
-
-**原因**：**不是缺陷，是标定口径**。编辑触发档的收敛预算里有一道"第 1 趟必须 <1 s"的闸门，阈值按**发布档**定；而 `dev` profile 下 C 引擎（xetex/xdvipdfmx）按 `-O0` 编译，同一趟慢 **≈4.6×**（实测同项目同改动：release 475 ms / debug 2174 ms）⇒ 闸门先于收敛被触发，退化成 ㉘ 的旧行为。
-
-**怎么确认是这一条**（决策日志一行点名）：
-
-```
-DEBUG 编辑触发档不再追收敛：停在草稿态（交给 ㉘ 的空闲收敛） passes=1 first_pass_ms=2174 elapsed_ms=2174 first_pass_max_ms=1000 max_passes=3 budget_ms=2000
-```
-
-`first_pass_ms > first_pass_max_ms` 即命中（`RUST_LOG=debug`）。**要量真实行为必须 `--release`** —— 同 §6.4 的测量纪律（debug 下库形态数字大 6–8×）。判据与实测见 [tectonic-library-plan.md](./tectonic-library-plan.md) §6.5。
-
-## 改 `App.vue` 的 `<script setup>` 结构后 HMR 可能白屏：刷新一下就好（2026-09 实测）
-
-**现象**：给 `App.vue` 加一个 import + 在 setup 里调一次新 composable（roadmap ⑩ 的主题接线），Vite 只报 `hmr update /src/App.vue`，随后**窗口整个空白**（只剩 body 底色，工具栏/编辑器都不在），console 只有两条空载荷 `ERROR {}`。
-
-**原因**：Vue 的 HMR 对 `<script setup>` 的结构性变化（新增顶层 import/调用）只能做"重新挂载"，而这次中间态没有回到可用状态；`main.ts` 里被搬走的 Monaco 主题定义同理。
-
-**处置**：`location.reload()`（或右键 → Reload）重新引导即可，**不是代码缺陷**——刷新后一切正常（含 `index.html` 的内联首帧脚本）。排查时先看 dev stdout 的 `hmr update` 行确认改的是哪个文件，别急着怀疑自己的改动。
-
-## 白屏：无 GPU 虚拟机环境的首帧呈现竞态
+## 无 GPU 虚拟机白屏：首帧呈现竞态
 
 **现象**：`npm run tauri dev` 启动应用进程时，窗口偶发白屏（webview 页面已加载、JS 正常、devtools Console 无报错，但首帧未呈现）。**右键 → Reload 后立即正常**。
 
 **边界**（实测）：
+
 - 纯前端改动（Vite HMR）不触发
 - Rust 改动触发的进程重启不触发
 - 仅**进程冷启动**时偶发（不是每次）
@@ -139,15 +38,16 @@ DEBUG 编辑触发档不再追收敛：停在草稿态（交给 ㉘ 的空闲收
 
 **已尝试无效**：`WEBKIT_DISABLE_DMABUF_RENDERER=1`、`LIBGL_ALWAYS_SOFTWARE=1`、`WEBKIT_DISABLE_COMPOSITING_MODE=1`。
 
-**处置**：白屏时右键 → Reload。开发环境怪癖，仅影响无 GPU 虚拟机；目标平台 Windows（WebView2/DirectX 硬件路径）预计不受影响，真机验证时复查。
+**处理**：白屏时右键 → Reload。这是无 GPU 虚拟机环境的怪癖；目标平台 Windows（WebView2/DirectX 硬件路径）不受影响。
 
-## 幽灵窗口：WSLg 下 WebKitGTK 完全不渲染（无 GPU 的 Linux/WSL 桌面）
+## WSLg 幽灵窗口：WebKitGTK 完全不渲染
 
 **现象**：`npm run tauri:dev` 进程正常启动（无 panic），窗口创建（window-state 插件有记录、任务栏有缩略图）但内容完全不渲染——静态 HTML 页面、前端代码全部排除后依旧。
 
 **根因**：WSLg（无 GPU）与 WebKitGTK 渲染栈的版本兼容问题。特征为 `libEGL warning` + `ZINK: vkCreateInstance failed`（无 GPU 驱动时 ZINK/Vulkan 初始化失败，软件渲染兜底也未生效），且**与项目代码无关**——全新 Tauri 模板（vanilla/Vue，零业务代码）同样幽灵。
 
-**诊断链路**（遇到同样现象时按此排查，全部实测过）：
+**诊断链路**（全部实测过）：
+
 - 进程存活、`WebKitWebProcess`/`WebKitNetworkProcess` 正常；`WEBKIT_FORCE_SANDBOX=0` 无效
 - 网络层正常：`ss -tnp` 显示 webview 与 vite 已建立 `[::1]:1420` 连接，无代理
 - **决定性实验**：脱离 Tauri 的最小 WebKitGTK 程序（python-gobject）同样不渲染，仅 `libEGL` 警告
@@ -155,155 +55,40 @@ DEBUG 编辑触发档不再追收敛：停在草稿态（交给 ㉘ 的空闲收
 
 **已尝试无效**：`WEBKIT_DISABLE_DMABUF_RENDERER=1`、`WEBKIT_DISABLE_COMPOSITING_MODE=1`、`WEBKIT_FORCE_SANDBOX=0`、`LIBGL_ALWAYS_SOFTWARE=1`、`GDK_BACKEND=x11`、窗口位置钉主屏、CSP 置 null、静态 HTML 页面。
 
-**修复方法（实测有效）**：
+**处理（实测有效）**：
+
 1. **升级 WSL**（Windows 侧 PowerShell/CMD）：`wsl --update`
 2. **重装 WebKitGTK**（WSL 内）：`sudo pacman -S webkit2gtk-4.1`（若版本未变可先 `sudo pacman -Rns webkit2gtk-4.1` 再装）
 
-**处置**：按上两步修复后 `npm run tauri:dev` 正常显示。若仍异常，改用 Windows 真机（WebView2）验证——目标平台不受此问题影响。
+按上两步修复后 `npm run tauri:dev` 正常显示。若仍异常，改用 Windows 真机（WebView2）验证——目标平台不受此问题影响。
 
-**附：WSLg 多显示器窗口跑到外接屏**：window-state 插件会保存并恢复跨屏位置；窗口“消失”时先 `rm ~/.config/com.latteset.app/.window-state.json`。真机多显示器拔出后同样可能出现，后续可加“位置越界则居中”保护。
+**附：WSLg 多显示器窗口跑到外接屏**：window-state 插件会保存并恢复跨屏位置；窗口"消失"时先 `rm ~/.config/com.latteset.app/.window-state.json`。真机多显示器拔出后同样可能出现，后续可加"位置越界则居中"保护。
 
-## GUI/端到端测试链路（WebDriver + pc-control，2026-08）
+## 改 `App.vue` 的 `<script setup>` 结构后 HMR 白屏：刷新一下就好
 
-**方案**：`test_file/e2e/` 用 **WebdriverIO**（`browserName:'wry'` + `tauri:options.application`）驱动 `tauri-driver`（中介）+ `msedgedriver`（Windows，需 `msedgedriver-tool` 安装并匹配 Edge 版本，`--native-driver` 指路径）。`src/App.vue` 提供 `VITE_LATTESET_PROJECT` 钩子自动打开项目（绕过原生目录弹窗，WebDriver 无法驱动）；`PreviewPane.vue` 带重载耗时插桩。
+**现象**：给 `App.vue` 加一个 import + 在 setup 里调一次新 composable，Vite 只报 `hmr update /src/App.vue`，随后**窗口整个空白**（只剩 body 底色，工具栏/编辑器都不在），console 只有两条空载荷 `ERROR {}`。
 
-**关键教训（均实测）**：
-- **手动拉起 debug 二进制 ≠ 可用**：`npm run dev`（只起 vite）+ 手动 `target/debug/latteset.exe`，前端**不渲染**（`button.btn.primary` 找不到）。必须 **`npm run tauri dev`**（正确构建 Rust + 起 vite + 真正调起 Tauri 窗口），问题即消失。
-- **tauri-driver 不打印 "listening"**：`beforeSession` 靠字符串匹配会永久卡住；改成**轮询 127.0.0.1:4444 是否可连**（`net.connect`）。
-- **只读沙箱限制**：vite/esbuild 的 worker 子进程需创建命名管道，`workspace-write` 下会 `EPERM`；需 `danger-full-access` 才能跑 `vite dev`/WebDriver/调起 WebView2 窗口。npm 缓存写 `%LocalAppData%` 也被拒，需把 `NPM_CONFIG_CACHE` 指到工作区。
-- **读取前端控制台**：pc-control 的 `screenshot` 返回 base64，需解码成图片再读；devtools 快捷键（F12/Ctrl+Shift+I）需窗口聚焦才生效。窗口标题不随 `document.title` 改变（Tauri 不同步），**不要**用它做观测通道。
-- **`webview_keyboard` 无法向 Monaco 编辑器插入文本（2026-08-25 实测定级）**：**不是 MCP 服务 bug**（`webview_keyboard type` 能在普通 `<input>` 上写入 `hello`，实测）；**是 Monaco（EditContext 架构）对合成事件不响应的限制**。Monaco 可编辑区是 `.native-edit-context`（DIV，`role=textbox`，走 EditContext）；`press` 只派发 `keydown/keypress/keyup`（**全部 `isTrusted:false`，且不产生 `beforeinput`/`input`**），合成键不触发浏览器默认文本插入（普通 input 上 `press` 同样不插入，实测），故 Monaco 不写入。`type` 靠 set `value` + `input` 事件，仅对原生 input/textarea 有效，且对 Monaco 唯一 textarea `.ime-text-area`（**readonly** 的 IME 缓冲）无效。**凡是涉及 Monaco 文本编辑的自动化，用真实 OS 按键（pc-control，`isTrusted:true` 触发 EditContext 插入，已实测 `Q` 写入），或改用 Monaco `executeEdits` API**（需实例，MCP 触不到）。
-- **e2e 操作要点（2026-08-25 完整 e2e 实测）**：① **pc-control 打字前先 `Ctrl+Space` 关闭中文输入法**——否则 IME 会截走按键转义（实测 `% E2E_MARKER` 被 IME 吞掉/乱插）；② **状态栏「外部修改：文件名」可点击**——点击即从磁盘重载该文件（`acceptExternal`），用于外部修改冲突恢复（v1 无独立「重载」按钮，此 span 即入口）；③ 原生目录对话框流程：`Ctrl+L` 聚焦地址栏 → 粘贴路径 → Enter → 再补 `Enter`（连按确认）即可选中并关闭（实测成功打开 multifile 工程）。
+**原因**：Vue 的 HMR 对 `<script setup>` 的结构性变化（新增顶层 import/调用）只能做"重新挂载"，而这次中间态没有回到可用状态；`main.ts` 里被搬走的 Monaco 主题定义同理。
 
-**注意**：`test_file/e2e/drivers/`（msedgedriver 二进制）与 `test_file/e2e/node_modules/` 已 gitignore。
+**处理**：`location.reload()`（或右键 → Reload）重新引导即可，**不是代码缺陷**——刷新后一切正常（含 `index.html` 的内联首帧脚本）。排查时先看 dev stdout 的 `hmr update` 行确认改的是哪个文件，别急着怀疑自己的改动。
 
-## 真机验收清单（tauri server MCP 驱动）
-
-> 用途：把"改完代码怎么确认真机没问题"固化成可重复的步骤。**性能基准的编译侧由 `scripts/bench.mjs` 自动测**，
-> 本清单负责**只有真实窗口才能验的部分**（预览耗时、点击链路、目视渲染）。前置：`npm run tauri dev`（需提权）
-> + `driver_session action=start`。
-
-**第 0 步（易踩）**：应用**重新构建/重启后**必须 `driver_session action=stop` → `action=start` 重建会话——
-`pluginVersion` 是建会话时抓取的元数据，不重建会一直显示旧值并误判"升级没生效"。
-
-| # | 检查项 | 操作 | 期望 |
-|---|---|---|---|
-| 1 | 项目打开 | `manage_window list` 确认窗口 → `webview_screenshot` | 标题栏显示项目绝对路径；左栏文件树非空 |
-| 2 | 错误列表（roadmap ④） | 点「编译」→ `webview_dom_snapshot` scoped `.error-list` | 条目两行式（原因 + `→` 建议）；头部「已诊断 N」；原始 `.log` 在 `title` |
-| 3 | 错误跳转 | `webview_find_element .entry` 取几何 → `webview_interact` 点第 2 条 → 读 `.cursor-pos` | 状态栏行号变为该条目的 `:行号` |
-| 4 | 根文件选择器（P0-②-1） | 打开多候选工程 → `webview_dom_snapshot` scoped `.picker-panel` → 点 `.file-row` | 弹窗列出候选（title 为绝对路径）；点选后弹窗关闭、`.needs-root` 匹配数归 0 |
-| 5 | 编译出 PDF | 点 `.btn.primary` → `webview_wait_for .page-wrap canvas` → `webview_screenshot` | 预览渲染出页面；页计数 `n / N` 正常 |
-| 6 | **预览耗时（基准）** | `webview_execute_js` 读 `window.__previewLastReload` | 得到 `{fetch,parse,render,total,pagesRendered}`；与 `scripts/bench.mjs` 的输出拼成端到端 |
-| 7 | 反向 SyncTeX | `webview_find_element .page-wrap canvas` 取页几何 → 点击正文区 → 读状态栏 | 编辑器切到对应 `.tex` 且行号≈点击句所在行（`multifile` 实测点第 5 页正文 → `chapters/intro.tex` **Ln 3**，跨文件）。**点目录区**不再打开生成的 `.toc`（roadmap ㉒ 已修）：工具条出现「此处来自自动生成的文件 main.toc…」或「已回落到最近的源码（main.tex:37）」提示 |
-| 8 | 中文路径渲染（P0-①） | 用 `中文测试工程` 夹具重复 1/5 | 中文标题/目录/正文/公式正常渲染，`fetch` 无 404 |
-| 9 | 编辑期草稿 + 空闲收敛（㉘） | 点「编译」建产物 → **在编辑器里敲一行**（见下「如何在应用内输入」）→ 记录状态栏时间线 | `排版中…` → `就绪` + **「引用待更新」** → 约 2s 后再次 `排版中…`（空闲收敛的 Full）→ 提示消失；dev stdout 同 cycle 有 `Quick 编译（单趟直调引擎）` 与 `Full 编译（完整 latexmk 收敛）` |
-| 10 | 超时诊断 + 一键提超时重试（㉕） | 设置面板把超时改 **5s** → 清掉 `tmp/` 制造首编 → 点「编译」→ 读 `.error-list .entry` | 状态栏「失败·超时」；列表一条：原因含「已排版到第 N 页…在推进」（或「还没出现任何页面输出」）+ 建议 + 按钮**「提高到 900s 并重试」**（首编跳档）；点按钮后 `get_settings` 超时变为 900、编译启动并转「就绪」、条目消失。**注意**：这一项会把全局 `settings.json` 的超时改掉，验完记得改回 120 |
-| 11 | SyncTeX 生成产物回落（㉒） | 点 PDF **目录区**（`multifile` 第 3 页中部，x≈20% 页宽 / y≈65–85% 页高）→ 读 `.sync-note` 与标签页 | 工具条提示「此处来自自动生成的文件 main.toc（…）」或「已回落到最近的源码（main.tex:37，向下探测）」；**标签页不得出现 `main.toc`**；提示约 5s 后自动消失 |
-| 12 | 正向 SyncTeX 高亮（⑳，`webview_interact` 无修饰键） | 用 Vite 预打包 URL 动态 import Monaco → `ed.setPosition(...)` → 对编辑器 DOM 派发 `mousedown/mouseup/click`（带 `ctrlKey: true`）→ 读 `.highlight` 的 `display/left/top` | 恰好一个 `.highlight` 为 `display: block` 且落在目标页；编辑器 `onMouseDown(ctrlKey)` 是真实入口，派发等价于用户 Ctrl+点击 |
-| 13 | 非 UTF-8 源文件提示（㉓） | 夹具 `中文GBK工程` → 展开 `子目录` → 点 `gbk.tex` → 读 `.open-error` 与标签页 | 状态栏出现中文提示「…不是 UTF-8 编码…另存为 UTF-8…」；**不开新标签**（此前是无人接的 rejection） |
-| 14 | 源码版模板提示（㉗） | 夹具 `源码版模板工程`（`\documentclass{nosuchthesis}` + `nosuchthesis.ins/.dtx`）→ 点「编译」→ 读第一条错误 | 「缺少文档类文件 nosuchthesis.cls」+「项目里有源码版模板文件 `nosuchthesis.ins`：先执行 `xelatex nosuchthesis.ins`…」（**必须是 `.ins`**，不能是 `.dtx`） |
-| 15 | 外部改 settings.json 生效（㉑） | 夹具 `多候选工程`（先把 `.latteset/settings.json` 置为 `{}` 并让它生效）→ 从**外部**写入 `{"root_file":"main.tex"}` → 看状态栏；随后改回 `{}` | 第一次：日志 `设置热更新：内存 root_file 已同步 from=None to=Some(…)` 且「未确定根文件」消失；改回：`from=Some(…) to=None` 且提示**回来**。**必须用非原子写法**（PowerShell `Set-Content` 就会"截断 → 写入"，正好覆盖竞态），原子替换测不出这条 |
-| 16 | 空目录第一条路：新建向导（㊺ §6.13.1-A） | **空目录**起 dev（`VITE_LATTESET_PROJECT=<空目录>`）→ 点 `.new-file` `＋` → 输 `main.tex` + Enter → 向导里选语言/类型 → 点 `[data-testid=wizard-create]` | **打开空目录时不弹根文件选择器**（只有状态栏那条标签）；向导出现且**预览**随选项变；创建后文件落盘（含 `\documentclass`）、树里出现、编辑器打开、状态栏标签**消失**、日志出现 `打开项目…候选 1 个` → `手动编译` → `编译成功`，预览**自动**出图（不用点「编译」）。关掉设置里「新建文件向导」后重来一次：**不弹向导**、得到 0 B 空文件 |
-| 17 | 无根文档的静默重探测（㊺ §6.13.1-B） | 有 `.tex` 但**没有 `\documentclass`** 的目录 → 确认状态栏出现「未确定根文件 · 点击选择」→ 在编辑器里补上 `\documentclass{article}` + 文档体（输入法见下节）→ 等自动保存（或 Ctrl+S） | 标签**消失**；磁盘上文件已写全；`main.pdf` **自动产出**；日志三段：`不触发编译：尚未确定根文件` → `打开项目…（根文件 Some(…)，候选 1 个）` → `手动编译` → `编译成功`。全程**无弹窗** |
-
-**取预览耗时的一行命令**（第 6 步的具体形态）：
-
-```js
-// webview_execute_js 的 script 参数
-(() => JSON.stringify(window.__previewLastReload))()
-```
-
-### 如何在应用内输入文字（Monaco）
-
-**问题**：`webview_keyboard action=type/press` 敲不进 Monaco（返回 `Illegal invocation`，或按了 Ctrl+End/Enter 后光标纹丝不动）；Monaco 已启用 **EditContext API**（`typeof window.EditContext !== "undefined"`），`textarea` + `document.execCommand("insertText")` 也无效（返回 `false`、textarea 仍为空）。**Monaco 实例也没挂在 window 上**（无 `window.monaco`）。
-
-**可行做法**：Vite dev 把 `monaco-editor` 预打包成一个模块，**按同一 URL 再 import 一次会拿到同一个模块实例**（模块注册表按 URL 去重），于是 `monaco.editor.getEditors()` 能取到**页面里正在用的那个编辑器**：
-
-```js
-// webview_execute_js 的 script 参数（URL 从 performance 里取，?v= 哈希必须一致）
-(async () => {
-  const url = performance.getEntriesByType("resource").map(r => r.name)
-    .find(n => /deps\/monaco-editor\.js/.test(n));
-  const monaco = await import(/* @vite-ignore */ url);
-  const ed = monaco.editor.getEditors()[0];
-  const m = ed.getModel();
-  ed.setPosition({ lineNumber: m.getLineCount(), column: m.getLineMaxColumn(m.getLineCount()) });
-  ed.trigger("mcp", "type", { text: "\n% hello" });   // 走 Monaco 自己的输入路径
-  return m.getValue().slice(-40);
-})()
-```
-
-这会让 `onDidChangeModelContent` 真实触发 → 应用的 `@change` / 防抖自动保存 / watch / 编译链路全部按真机路径走。
-
-**前置条件：窗口必须在前台**（2026-09-15 实测）。`document.hasFocus()` 为 false 时，`webview_keyboard` 的 type/press、`document.execCommand("insertText")`、手工构造的 `InputEvent` **三条路都无效**（textarea 的 value 被写上又立刻被 Monaco 的状态管理器收回）：先 `manage_window action=focus`，再确认 `document.hasFocus() === true`。
-
-**外部改文件不等于用户编辑**：外部写盘走的是「静默重载」分支，不触发 `@change`（真机核对：文件 mtime 不变 ⇒ 没有自动保存回写）。要验编辑器这一环就得用上面的 `ed.trigger("mcp","type",…)`。
-
-**备选入口：直接给 EditContext 发 `textupdate`（2026-09-17 实测可行）**。当 `ed.trigger` 那条路不合适（或只想"像打字一样"灌一段多行文本）时，注意**真正的输入 sink 不是那个 textarea**：
-
-- Monaco 0.56 用的是 **EditContext**：`.monaco-editor .overflow-guard > div.native-edit-context`，该 div 的 `editContext` 才是它监听的对象；`textarea.ime-text-area` 只是 IME 备份（`webview_keyboard action=type` 会把文本写进它，但 **Monaco 不会消费**——value 一直留在那儿、屏幕无变化，这是最容易误判成"敲进去了"的坑）。
-- `ec.updateText(0, len, "…")` **不会**触发 Monaco：它只改 EditContext 自己的文本，不派发 `textupdate`。
-- 可行做法：先**真实点击编辑器**（`webview_interact click` 命中 `.view-lines`），确认 `.monaco-editor.focused` 存在，再
-
-```js
-const ec = document.querySelector('.native-edit-context').editContext;
-ec.dispatchEvent(new TextUpdateEvent('textupdate', {
-  updateRangeStart: 0, updateRangeEnd: 0,          // 插入点（替换范围同理）
-  text: "\\documentclass{article}\n…",             // 多行可以（Monaco 的 type() 认 \n）
-  selectionStart: text.length, selectionEnd: text.length,
-}));
-```
-
-这会走 Monaco 的 `NativeEditContext → viewController.type()` ⇒ `onDidChangeModelContent` **真实触发**（脏标记 → 自动保存 → watch → 编译全链路，与手打完全同路）。判据不要看 `.view-line`（可能还没重渲染）：直接 `(await import(monacoUrl)).editor.getModels()[0].getValue()` 读模型。
-
-**另一个坑：`webview_execute_js` 的 JS 执行有 ~3s 上限**（`timeout` 参数不影响它）。要观测一段 5–15s 的 UI 时间线，别写成"轮询到超时再返回"，改为**装一个常驻探针再分段读**：
-
-```js
-// 第一次调用：装探针（立即返回）
-const bar = document.querySelector(".status-bar"); const log = []; const t0 = Date.now();
-const snap = () => ({ t: Date.now() - t0, phase: bar.querySelector(".phase")?.textContent?.trim(),
-                      draft: bar.querySelector(".draft") ? "引用待更新" : null });
-log.push({ ...snap(), note: "install" }); window.__dshProbe = log;
-new MutationObserver(() => { const s = snap(); const l = log[log.length-1];
-  if (l.phase !== s.phase || l.draft !== s.draft) log.push(s); })
-  .observe(bar, { childList: true, subtree: true, characterData: true });
-// 之后隔几秒用 () => window.__dshProbe 读一次即可
-```
-
-**编译产物的时间戳也能当证据**：`tmp/main.fdb_latexmk` 的 mtime 只在 **latexmk** 跑过时才推进（Quick 单趟直调引擎不碰它），故「Quick 确实没走 latexmk」与「空闲收敛确实跑了 latexmk」都能用它与 `tmp/main.xdv` 的 mtime 对比来核实。
-
-### SyncTeX 精度怎么量（一条命令）
-
-```bash
-node scripts/synctex-report.mjs                    # 默认三组样本（multifile / beamer工程 / bench/large）
-node scripts/synctex-report.mjs --tolerance=5      # 换个"跳到位"容差
-node scripts/synctex-report.mjs --projects=<dir> --recompile
-```
-
-它按 `\section`/`\chapter`/`\frametitle`/`\begin{frame}`/`\label`/`\part` 取样本，逐点做「正向 → 反向」往返，报告成功率与行号差。**当前基线**：正向/反向/同文件 34/34、跳到位 ≤3 行 31/34（≤5 行 34/34）；分档与解释见 [design.md](./design.md) §预览。
-
-**beamer 的 2–4 行偏移不是解析 bug**：把取块规则从「第一个 `Output` 块」换成「最小 H」「首个 H≤40」，**往返结果完全一致**（三组样本逐一相同）——偏移来自 beamer/主题的 synctex 记录粒度。同理，`\only<n>` 覆盖层的内容在非本层页面上没有对应记录，反向映射天然不可确定。
-
-**沙箱注意**：脚本用「stdout 重定向到文件」而不是管道（Node 的 `pipe` 在受限沙箱会 EPERM），因此**无需提权**即可运行。
-
-**失败面排查顺序**：① dev stdout 有无 `打开项目` / `触发编译` / `构造编译请求`（后端链路）；
-② `read_logs(console)` 有无前端异常；③ `ipc_get_backend_state` 确认连接的是本应用。
-
-## Rust 单测：`cargo test -p latteset`（src-tauri）在 Windows 启动即失败
+## src-tauri 的 `cargo test` 在 Windows 启动即失败
 
 **现象**：`cargo test -p latteset --lib` 编译成功，但测试二进制**加载即退出**——`STATUS_ENTRYPOINT_NOT_FOUND (0xc0000139)`，任何测试都未运行。
 
 **根因**：`latteset_lib` 链接了 tauri/wry 的 `webview2-com`。`cargo test` 的测试二进制不做 GUI 初始化，加载阶段解析 WebView2/webview2-com 失败（`STATUS_ENTRYPOINT_NOT_FOUND`，发生在任何测试运行前）。**与业务代码无关**；`cargo check -p latteset --tests` 能正常通过（测试代码编译无误）；本机 WebView2 Runtime 已安装（151.0.4129.107），排除运行时缺失。
 
-**处置**：
+**处理**：
 
-- 纯逻辑单测走 `cargo test -p latteset-core`（无 Tauri 依赖，运行正常，CI 用这个验证纯逻辑）。
-- 前端单测走 `npm run test`（vitest，需提权 `danger-full-access` 跑 esbuild worker）。
-- 基础设施层的用例（`fs` / `runner` / `watch` / `storage`）随 ADR-0010 迁到 `latteset-infra` 后**本机可正常运行**：`cargo test -p latteset-infra`（单测）+ `cargo test -p latteset-infra -- --ignored`（真实 latexmk/synctex 集成用例：成功、内容错误、超时树杀、取消、中文路径双向）。仍留在 src-tauri 的只剩 `commands::pdf_path_for_root`（纯函数，受同一 WebView2 链接限制）。
-- **已穷尽尝试仍失败**：把 `webview2-com-sys-*/out/{arch}/WebView2Loader.dll` 拷到 `target/debug` **及 `target/debug/deps`（测试 exe 同目录）** 并加入 PATH；`dumpbin /imports` 显示静态导入均为系统 DLL、延迟导入仅 `VCRUNTIME140.dll`；`danger-full-access` 提权运行——均仍 `STATUS_ENTRYPOINT_NOT_FOUND`。**非沙箱权限、非 PATH、非运行时缺失**，是 Tauri v2 shell crate 测试二进制的已知 Windows 工具链限制。把 `cargo test -p latteset -- --ignored export_bindings` 当"无 GUI 生成 bindings"的捷径同样不可行（`0xc0000139`）。
-- **推论（DTO 改动后怎么刷新 `src/bindings.ts`）**：`export_bindings` 这条捷径在本机不可用 → **起一次 `npm run tauri dev`**：debug 构建启动时会自动重新导出 `src/bindings.ts`（`lib.rs` 里 `#[cfg(debug_assertions)]` 的 export）。新增 DTO 字段时实测即如此，导出结果与手写预期一致。
+- 纯逻辑单测走 `cargo test -p latteset-core`（无 Tauri 依赖，运行正常；CI 用这个验证纯逻辑）。
+- 前端单测走 `npm run test`（vitest）。
+- 基础设施层用例（`fs` / `runner` / `watch` / `storage`）随 ADR-0010 迁到 `latteset-infra` 后**本机可正常运行**：`cargo test -p latteset-infra`（单测）+ `cargo test -p latteset-infra -- --ignored`（真实 latexmk/synctex 集成用例：成功、内容错误、超时树杀、取消、中文路径双向）。仍留在 src-tauri 的只剩 `commands::pdf_path_for_root`（纯函数，受同一 WebView2 链接限制）。
+- **已穷尽尝试仍失败**：把 `webview2-com-sys-*/out/{arch}/WebView2Loader.dll` 拷到 `target/debug` **及 `target/debug/deps`（测试 exe 同目录）** 并加入 PATH；`dumpbin /imports` 显示静态导入均为系统 DLL、延迟导入仅 `VCRUNTIME140.dll`；提权运行——均仍 `STATUS_ENTRYPOINT_NOT_FOUND`。**非沙箱权限、非 PATH、非运行时缺失**，是 Tauri v2 shell crate 测试二进制的已知 Windows 工具链限制。
+- **推论（DTO 改动后怎么刷新 `src/bindings.ts`）**：`export_bindings` 这条捷径在本机不可用（同一个 `0xc0000139`）→ **起一次 `npm run tauri dev`**：debug 构建启动时会自动重新导出 `src/bindings.ts`（`lib.rs` 里 `#[cfg(debug_assertions)]` 的 export）。
 
-## Linux CI 上 `cargo test -p latteset-core` 红：Windows 路径语义被写进了跨平台用例（2026-09）
+完整测试分工见 [dev/testing.md](./dev/testing.md)。
+
+## Linux CI 上路径语义用例红：Windows 路径语义被写进跨平台用例
 
 **现象**：本机（Windows）173 项全绿，GitHub Actions 的 `ubuntu-latest` 上 `synctex::classify::tests::windows_separators_and_case` 失败，172 passed / 1 failed：
 
@@ -314,25 +99,20 @@ right: Source("E:\\proj\\chapters\\intro.tex")
 
 **根因**：`normalize_lexically` / `classify_inverse_target` 的路径比较是**词法级**的，吃的是 `std::path::Path` 的**平台原生**分隔符语义——Windows 上 `\` 是分隔符（`E:\proj\chapters\intro.tex` 能剥出项目内相对路径），Unix 上 `\` 只是普通字符，整串是**一个文件名**，`starts_with(root)` 为假 → 判 `OutsideProject`。**产品逻辑无误**（Windows 首发，synctex 返回的就是 Windows 路径），红的是把 Windows 专属结论写成跨平台契约的用例。
 
-**处置**（`crates/latteset-core/src/synctex/classify.rs`）：
+**处理**（`crates/latteset-core/src/synctex/classify.rs`）：
 
 - 跨平台部分改用 `std::path::MAIN_SEPARATOR` 拼路径，「项目内源码」与「盘符大小写不 case-fold」在两端都被断言到；
 - 反斜杠形态按平台分叉：`#[cfg(windows)]` 断言 `Source`，`#[cfg(not(windows))]` 断言 `OutsideProject`（锁死"Linux 上绝不误判成可打开的源码"）。
 
-**验证**：本机 `cargo test -p latteset-core` → 173 passed；`rustup target add x86_64-unknown-linux-gnu` 后 `cargo check -p latteset-core --target x86_64-unknown-linux-gnu --tests` 通过（非 Windows 分支可编译）。沙箱内首次 `rustup target add` 与 crates 下载均被 TLS 拦（`SEC_E_NO_CREDENTIALS`），按 §4 边界提权一次后成功。
+**验证**：本机 `cargo test -p latteset-core` → 173 passed；`rustup target add x86_64-unknown-linux-gnu` 后 `cargo check -p latteset-core --target x86_64-unknown-linux-gnu --tests` 通过（非 Windows 分支可编译）。
 
-**规则**：core 单测要能在 Linux CI 上跑，**别把 Windows 路径形态（`\`、`E:\`）当跨平台契约**——要么用 `MAIN_SEPARATOR` 拼，要么 `#[cfg]` 分叉并显式写出两端期望值。（`latteset-infra` 的 `runner` / `storage` 用例含同类 Windows 字面量：读实现可判定 `root_stem` / `latexmk_input` 在 Unix 上会因"整串只当一个文件名"而走回退分支、断言必失败（**未在 Linux 实跑，仅读码判定**）；CI 目前不跑 infra，纳入前需先按此规则过一遍。）
+**规则**：core 单测要能在 Linux CI 上跑，**别把 Windows 路径形态（`\`、`E:\`）当跨平台契约**——要么用 `MAIN_SEPARATOR` 拼，要么 `#[cfg]` 分叉并显式写出两端期望值。（`latteset-infra` 的 `runner` / `storage` 用例含同类 Windows 字面量：如 `root_stem(Path::new(r"C:\proj\main.tex"))` 断言 `"main"`——Unix 上 `file_stem()` 得到 `C:\proj\main`，断言必失败（**未在 Linux 实跑，仅读码判定**）；纳入 CI 的 infra 档之前需先过一遍。）
 
-## 中文文件名/路径兼容性实测
+## 中文文件名与路径：全链路可用
 
-**总结论**：**文件名/路径层面的中文全链路可用**（无阻塞缺陷，回归测试已固化）；唯一实测出的真实缺陷**不在路径，而在日志编码**（见下节）。
+**总结论**：**文件名/路径层面的中文全链路可用**（无阻塞缺陷，回归测试已固化）；唯一实测出的真实缺陷**不在路径，而在日志编码**（见下一节）。
 
-### 实测环境与样本
-
-- TeX Live 2026（`latexmk` / `xelatex` / `pdflatex` / `synctex` 1.5），Windows，活动代码页 **65001**；并在 **`chcp 936`** 下逐项重复——**控制台代码页对结论无影响**（见下 synctex 字节实测）。
-- 样本工程 `test_file/projects/中文测试工程/`（**gitignore**，需手动重建）：中文目录 + 中文文件名 `中文主文件.tex` + 中文子目录 `章节/第一章.tex`（`\include` 引入）+ `ctexart` 中文正文。
-
-### 逐项实测结果（全部通过）
+**实测环境与样本**：TeX Live 2026（`latexmk` / `xelatex` / `pdflatex` / `synctex` 1.5），Windows，活动代码页 **65001**；并在 **`chcp 936`** 下逐项重复——**控制台代码页对结论无影响**。样本工程 `test_file/projects/中文测试工程/`（**gitignore**，需手动重建）：中文目录 + 中文文件名 `中文主文件.tex` + 中文子目录 `章节/第一章.tex`（`\include` 引入）+ `ctexart` 中文正文。
 
 | 环节 | 结果 | 证据 |
 |---|---|---|
@@ -345,11 +125,22 @@ right: Source("E:\\proj\\chapters\\intro.tex")
 | `canonicalize` + `\\?\` 剥离 | ✅ | `\\?\E:\项目\…` → `E:\项目\…`（既有 `strip_verbatim` 对中文安全） |
 | 中文应用配置目录 | ✅ | 模拟 `C:\Users\中文用户\AppData\…`：全局设置与项目覆盖 `.latteset/settings.json` 均原子读写通过 |
 
-**关键编码事实（字节级实测，值得记住）**：`synctex` 的 stdout **恒为 UTF-8**（`中` = `E4 B8 AD`），**与代码页无关**——CP65001 与 CP936 下抓到的字节完全一致。故 `String::from_utf8_lossy(&out.stdout)` 的用法**正确**（曾怀疑它会按代码页输出——已证伪）。
+**关键编码事实（字节级实测）**：`synctex` 的 stdout **恒为 UTF-8**（`中` = `E4 B8 AD`），**与代码页无关**——CP65001 与 CP936 下抓到的字节完全一致。故 `String::from_utf8_lossy(&out.stdout)` 的用法**正确**（曾怀疑它会按代码页输出——已证伪）。
 
-### 真实缺陷：GBK 源文件 + pdflatex → `.log` 含非法 UTF-8 → 错误列表拿不到任何信息
+**GUI 目视复验**（tauri server MCP 驱动真实窗口，夹具 `test_file/projects/中文测试工程`）：
 
-**现象**：源 `.tex` 是 GBK 编码（中文用户遗留文件很常见）时，`.log` 可能**不是合法 UTF-8**，而 `runner` 用严格 `read_to_string` 读日志 → 读取失败 → 前端只拿到「编译失败且无法读取日志（…）：stream did not contain valid UTF-8」，**真正的 TeX 错误一条都看不到**——恰好击中调研里最高频的痛点（错误诊断）。
+| 项 | 结果 | 证据 |
+|---|---|---|
+| **pdf.js 经 asset 协议加载中文路径 PDF 的渲染** | ✅ | `webview_screenshot`：标题「中文路径兼容性测试」、作者/日期、**目录三项中文条目**、章节正文与公式 `E = mc²` 全部正常渲染；3 页连续分页（`1 / 3`）；控制台 `[preview] reload#1 中文主文件.pdf pages=3 bytes=40648 fetch=9ms parse=32ms render=54ms total=94ms pagesRendered=3`——**fetch 走 asset 协议无 404/编码错误** |
+| **SyncTeX 反向跳转（PDF → 源码）** | ✅ | `webview_interact` 点 PDF 正文 → 编辑器切回 `中文主文件.tex` 且光标停在 **Ln 10**（`公式测试：$E = mc^2$。`） |
+
+**点 PDF 目录区会映射到生成文件**（`中文主文件.toc`）：产品行为是生成产物/项目外文件**一律不打开**——先就近回落真实源码（`y ±40/80pt` 探测），回落到就跳并提示「已回落到最近的源码」，落空则只给提示「此处来自自动生成的文件 …，没有对应的源码行」。中文文件名在两种情况下都正确解析——这也反证反向 SyncTeX 的中文链路是通的。
+
+**已知未修**：**编辑** GBK 源文件（`read_file` 严格 UTF-8）会失败并返回英文 IO 错误。若要支持"打开并转码显示 GBK 源文件"，需单独设计（含保存时的编码回写策略）。
+
+## GBK 源文件 + pdflatex → `.log` 非法 UTF-8 → 错误列表拿不到信息
+
+**现象**：源 `.tex` 是 GBK 编码（中文用户遗留文件很常见）时，`.log` 可能**不是合法 UTF-8**；若按严格 `read_to_string` 读日志 → 读取失败 → 前端只拿到「编译失败且无法读取日志（…）：stream did not contain valid UTF-8」，**真正的 TeX 错误一条都看不到**——恰好击中最高频的痛点（错误诊断）。
 
 **实测差异（同一 GBK 源，两个引擎行为不同）**：
 
@@ -358,137 +149,18 @@ right: Source("E:\\proj\\chapters\\intro.tex")
 | `xelatex` | ✅ 合法 | 引擎自己把非法字节替换为 U+FFFD 写进日志（`Invalid UTF-8 byte or sequence at line 3 replaced by U+FFFD.`） |
 | **`pdflatex`** | ❌ **非法** | 实测含 **73 个非法字节**（首个 `0xD6`，offset 1893）——原始 GBK 字节被直接回显 |
 
-**修复**：新增 `latteset_core::log_parser::decode_log(bytes)`——能严格解就严格解，否则 lossy（非法字节 → U+FFFD）；`FileSystem` trait 增 `read_to_string_lossy`（默认退化为严格读取，`TokioFs` 覆盖为 lossy 解码），`runner` 读 `.log` 改走它。
+**现役行为**：`latteset_core::log_parser::decode_log(bytes)`——能严格解就严格解，否则 lossy（非法字节 → U+FFFD）；`FileSystem` trait 的 `read_to_string_lossy`（`TokioFs` 覆盖为 lossy 解码）由 `runner` 读 `.log` 时使用。
 
-**修复后判据（实测）**：同一个非法日志 lossy 解码后，`! LaTeX Error: Invalid UTF-8 byte sequence.` 与 `l.3 ` 等 **ASCII 骨架完好**，`parse_log` 仍能给出消息 + 行号——诊断信息"有损"远好于"没有"。回归测试 `log_parser::decode_tests::invalid_bytes_do_not_lose_error_skeleton` 锁定该行为。
-
-**App 端到端复现与验证**：夹具 `test_file/projects/中文GBK工程/`（gitignore，需重建）——`主文件.tex`（纯 ASCII）+ `子目录/gbk.tex`（**GBK 编码**，含 `\undefinedcommandhere`）+ `.latteset/settings.json` 覆盖 `{"compile":{"engine":"pdflatex"}}`。步骤：
-
-1. `VITE_LATTESET_PROJECT=…\中文GBK工程 npm run tauri dev`；
-2. 触碰 `主文件.tex`（改 mtime）经 watch 触发编译；
-3. 观察 dev stdout。
-
-**实测输出（修复后）**：
+**判据（实测）**：同一个非法日志 lossy 解码后，`! LaTeX Error: Invalid UTF-8 byte sequence.` 与 `l.3 ` 等 **ASCII 骨架完好**，`parse_log` 仍能给出消息 + 行号——诊断信息"有损"远好于"没有"。回归测试 `log_parser::decode_tests::invalid_bytes_do_not_lose_error_skeleton` 锁定该行为。App 端到端复现：夹具 `test_file/projects/中文GBK工程/`（gitignore，需重建）——`主文件.tex`（纯 ASCII）+ `子目录/gbk.tex`（**GBK 编码**，含 `\undefinedcommandhere`）+ `.latteset/settings.json` 覆盖 `{"compile":{"engine":"pdflatex"}}`；`VITE_LATTESET_PROJECT=…\中文GBK工程 npm run tauri dev` 后触碰 `主文件.tex` 经 watch 触发编译，dev stdout 给出：
 
 ```
 DEBUG 构造编译请求: root=…\中文GBK工程\主文件.tex engine=PdfLaTeX
 DEBUG 编译失败：已从 .log 解析出错误条目 count=9 log=…\tmp\主文件.log
 ```
 
-即：非法 UTF-8 日志被容错解码后**成功解析出 9 条错误送达前端**。修复前该路径会退化为 `编译失败且无法读取日志（…）：stream did not contain valid UTF-8`（`warn!` 分支），错误列表**一条都没有**；现在编译失败在 stdout 可见，便于排查。
+即非法 UTF-8 日志被容错解码后**成功解析出 9 条错误送达前端**。
 
 > 注：把"文件名编码"与"内容编码"两个变量隔离——根文件与子文件名均为 ASCII，GBK 只出现在子文件**内容**里；中文**文件名/路径**的验证由 `中文测试工程` 夹具覆盖。
-
-### GUI 目视验证（tauri server MCP 驱动真实窗口）
-
-两项 GUI 目视项用**截图 + DOM + 真实点击**验证（夹具 `test_file/projects/中文测试工程`）：
-
-| 项 | 结果 | 证据 |
-|---|---|---|
-| **pdf.js 经 asset 协议加载中文路径 PDF 的渲染** | ✅ 通过 | `webview_screenshot`：标题「中文路径兼容性测试」、作者/日期、**目录三项中文条目**、章节正文与公式 `E = mc²` 全部正常渲染；3 页连续分页（`1 / 3`）；控制台实测 `[preview] reload#1 中文主文件.pdf pages=3 bytes=40648 fetch=9ms parse=32ms render=54ms total=94ms pagesRendered=3`——**fetch 走 asset 协议无 404/编码错误** |
-| **SyncTeX 反向跳转（PDF → 源码）** | ✅ 通过 | `webview_interact` 点 PDF 正文 → 编辑器切回 `中文主文件.tex` 且光标停在 **Ln 10**（`公式测试：$E = mc^2$。`），即点击的那句正文对应的源码行 |
-
-**点 PDF 目录区会映射到生成文件**（`中文主文件.toc`）：产品行为是生成产物/项目外文件**一律不打开**——先就近回落真实源码（`y ±40/80pt` 探测），回落到就跳并提示「已回落到最近的源码」，落空则只给提示「此处来自自动生成的文件 …，没有对应的源码行」。中文文件名在两种情况下都正确解析——这也反证反向 SyncTeX 的中文链路是通的。
-
-### MCP Bridge 插件 0.13（版本上报与窗口工具的真机复验）
-
-`@hypothesi/tauri-mcp-server@0.13.0` 会对应用侧插件做 skew 检查；插件低于 0.13 时 `driver_session` 报
-`The connected app cannot report its plugin version.`（0.12 的 `get_backend_state` 还没有 `bridge.pluginVersion` 字段）。
-本项目 `src-tauri/Cargo.toml` 用 `tauri-plugin-mcp-bridge = "0.13"`，复验项如下：
-
-| 项 | 结果 | 证据 |
-|---|---|---|
-| 编译 | ✅ | `cargo check` 通过（插件 0.13.0）；capability 无需改动——0.13 的 `permissions/default.toml` 与 0.12 权限项完全一致，新增的窗口命令走既有权限 | 
-| 插件初始化 | ✅ | dev stdout：`[MCP][PLUGIN][INFO] MCP Bridge plugin initialized for 'Latteset' (com.latteset.app) on 0.0.0.0:9223` |
-| 版本上报 | ✅ | `ipc_get_backend_state` → `bridge.pluginVersion = 0.13.0`；`driver_session status` → `pluginVersion 0.13.0` / `serverVersion 0.13.0` / **`versionWarning: null`**（升级前为 `pluginVersion: null` + 警告） |
-| `manage_window` | ✅ | `list` 返回 main 窗口；`resize 1440×900` → `info` 报 2182×1406 物理像素（×1.5 缩放 = 1440×900 逻辑，与 0.13「物理↔CSS 像素换算」修复一致）；新增的 `maximize` 可把最小化窗口恢复正常几何 |
-| 业务链路回归 | ✅ | 打开 `中文测试工程` → 「编译」→ stdout `手动编译: root=…中文主文件.tex` + PDF 生成 → 预览渲染 3 页（控制台 `[preview] reload#1 … pages=3 fetch=14 parse=45 render=60 total=118ms`） |
-| SyncTeX 反向 | ✅ | `webview_interact` 点第一页正文 → 状态栏光标跳到 `中文主文件.tex` **Ln 9**（`\section{第一章：中文标题}`） |
-| JS 执行 / 日志 | ✅ | `webview_execute_js` 返回 `document.title`、预览 canvas 数；`read_logs(console)` 读到 bridge 与 vite 日志 |
-
-**⚠️ 坑：`driver_session status` 的 `pluginVersion` 来自 session 建立时抓取的元数据**（`mcp-server-tauri` 的
-`fetchAppMetadata` 只在 start 时调用一次）。应用重建后仅重启应用**不会**刷新该字段——必须
-`driver_session action=stop` → `action=start` 重新建会话，否则会一直看到旧的 `pluginVersion: null` 与升级警告，
-误判成"升级没生效"。
-
-**⚠️ `focus` 的实测边界**：0.13 的 `manage_window action=focus` 调用返回成功，但**不会把最小化的窗口还原**
-（Windows 下实测 `x/y = -32000` 不变），也不能从别的应用手里抢前台；还原用 `maximize`，或 `resize` 到目标尺寸。
-
-### 仍未覆盖 / 已知未修
-
-- **正向 SyncTeX 高亮**（源码 Ctrl+点击 → PDF 高亮）：`webview_interact` 不支持带修饰键点击，做法是动态 import Monaco 实例后派发 `ctrlKey` 鼠标事件——见「真机验收清单」第 12 项。
-- **已知未修**：**编辑** GBK 源文件（`read_file` 严格 UTF-8）会失败并返回英文 IO 错误。若要支持"打开并转码显示 GBK 源文件"，需单独设计（含保存时的编码回写策略）。
-- 本机 `cargo test -p latteset`（src-tauri）无法运行（见上一节），故 src-tauri 侧的中文用例只能以 `cargo check -p latteset --tests` 编译校验；随 ADR-0010 迁移后，`fs` / `runner` / `storage` 的中文用例已在 `latteset-infra` 下实际运行通过（含 2 个需 latexmk 的 `#[ignore]` 集成用例）。
-
-## release 档「点编译弹出一个终端黑框」（2026-09-16 修）
-
-**症状**：装出来的包（release）里点「编译」会弹一个控制台黑框；`npm run tauri dev` 下**完全看不到**。
-
-**原因**：`src-tauri/src/main.rs` 带 `#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]`
-—— release 档是 **GUI 子系统、没有控制台**，而 Windows 默认会给"控制台子程序"**新建一个**控制台窗口
-（`latexmk` / `xelatex` / `tectonic.exe` / `xdvipdfmx` / `taskkill` / `synctex` 全是控制台程序）。
-debug 档父进程本身就是控制台程序（从终端起），子进程直接**继承**它的控制台 ⇒ 同一个 bug 被藏住，
-这也是它只在 release 暴露的原因。
-
-**修法**：`latteset_infra::proc::command` / `command_std`（Windows 上加 `CREATE_NO_WINDOW`），
-**所有生产路径**改走它们（引擎 / latexmk / xdvipdfmx / taskkill / synctex）。它只影响"要不要分配
-控制台"，stdout/stderr 仍是管道 ⇒ 日志解析、退出码、页哈希、树杀都不变。**别在别处直接
-`Command::new`** —— 漏一处就漏一个黑框。
-
-**复现/验证**（不必先打 release 包，用探针模拟"没有控制台的父进程"）：
-
-```powershell
-cargo build --release -p latteset-infra --example console-window-probe
-$probe = "src-tauri\target\release\examples\console_window_probe.exe"
-
-# ⚠ 量具必须是**可见窗口数**，不是 conhost 进程数（见下）
-Add-Type @"
-using System;using System.Text;using System.Collections.Generic;using System.Runtime.InteropServices;
-public class WinProbe {
-  delegate bool EnumProc(IntPtr h, IntPtr l);
-  [DllImport("user32.dll")] static extern bool EnumWindows(EnumProc cb, IntPtr l);
-  [DllImport("user32.dll")] static extern int GetClassName(IntPtr h, StringBuilder sb, int n);
-  [DllImport("user32.dll")] static extern bool IsWindowVisible(IntPtr h);
-  public static List<string> VisibleConsoles() {
-    var res = new List<string>();
-    EnumWindows((h, l) => {
-      if (!IsWindowVisible(h)) return true;
-      var sb = new StringBuilder(256); GetClassName(h, sb, 256);
-      var c = sb.ToString();
-      if (c == "ConsoleWindowClass" || c == "CASCADIA_HOSTING_WINDOW_CLASS") res.Add(c);
-      return true;
-    }, IntPtr.Zero);
-    return res;
-  }
-}
-"@
-
-foreach ($mode in 'plain','quiet-std','quiet-tokio') {   # 建议再加一个 'none' 当噪声对照
-  Start-Sleep -Seconds 4
-  $before = [WinProbe]::VisibleConsoles().Count; $max = $before
-  $p = Start-Process $probe -ArgumentList $mode -PassThru     # ⚠ 不能加 -NoNewWindow
-  for ($i = 0; $i -lt 14; $i++) { Start-Sleep -Milliseconds 250; $c = [WinProbe]::VisibleConsoles().Count; if ($c -gt $max) { $max = $c } }
-  $p.WaitForExit(); "$mode 可见控制台窗口增量 = $($max - $before)"
-}
-```
-
-实测（本机，release 版探针，每档 4 轮）：`none`（对照）= **0**；`plain` = **+1 可见窗口**；
-`quiet-std` / `quiet-tokio`（产品路径）= **0** ✓。
-
-⚠ 两个量具坑（第一版就量错过，别重蹈）：
-1. **别拿 `conhost` 进程数当判据**：`CREATE_NO_WINDOW` 的语义是"**分配控制台但不给窗口**"，所以进程数
-   仍会 **+1**，但那是个不可见宿主、用户什么也看不到 —— 判据只能是**可见窗口**（上面那段 EnumWindows）。
-2. **别把正在退出的进程算进基线**：`ping` 子进程活 3 秒，两档之间不睡够就会把上一档的残余算进 `before`，
-   `max` 因此偏低（第一版 debug 探针就这样得出过假的"quiet=0"）。每档之间 `Start-Sleep 4`，
-   并且**加一个 `none` 对照档**量背景噪声。
-
-⚠ **探针必须以 `Start-Process`（不加 `-NoNewWindow`）启动**：那样它自己没有控制台、才等价于 GUI 父进程；
-用 `-NoNewWindow` 会继承当前终端的控制台，把问题又藏起来（探针是 `windows_subsystem = "windows"`，
-所以它的输出要用外部计数看，别指望 stdout）。
-
-⚠ **别拿裸 `cargo build --release` 出的 exe 当"release 版"验证**：那样打出来的应用**没有内嵌前端资源**
-（正规路径是 `npx tauri build`，它先跑 `beforeBuildCommand` 再嵌 `dist/`），启动后是个空白窗口、
-不打开项目、也不编译 —— 用它会得出"编译没触发"的假结论（本次就绕了这一圈）。
 
 ## `\include{子目录/文件}` + `-output-directory`：中间目录里必须先有同名子目录
 
@@ -513,7 +185,7 @@ xelatex -interaction=nonstopmode -synctex=1 -output-directory=tmp main.tex   # m
 # → ! I can't write on file `sub/part.aux'.  / ! Emergency stop.  / exit 1
 ```
 
-**为什么合成多文件档（`multifile`）没事**：**latexmk 会在第一趟失败后把子目录建出来并自动重跑一趟**，所以 `tmp/chapters/`、`tmp/sections/` 是 latexmk 建的、第二趟就成功了（对照实测：同一最小工程用 `latexmk -xelatex -outdir=tmp ...` → 第一趟报同样的错、但 `tmp/sub` 被创建、第二轮 `Output written ... / All targets are up-to-date`、exit 0）。hithesis 这一档没有恢复，**嫌疑指向它自带的 `latexmkrc`（覆写 `$pdflatex`、内建 `--shell-escape` 与尾部 `;cp`）与 `-outdir=tmp` 的相互作用**——这正是 roadmap **㉖** 的题目；目前只做到"确认不是超时问题"，**尚未定位到可复现的 rc 最小组合**（用一个精简 rc 复刻其关键行跑最小工程，仍能正常恢复）。
+**为什么合成多文件档（`multifile`）没事**：**latexmk 会在第一趟失败后把子目录建出来并自动重跑一趟**，所以 `tmp/chapters/`、`tmp/sections/` 是 latexmk 建的、第二趟就成功了（对照实测：同一最小工程用 `latexmk -xelatex -outdir=tmp ...` → 第一趟报同样的错、但 `tmp/sub` 被创建、第二轮 `Output written ... / All targets are up-to-date`、exit 0）。hithesis 这一档没有恢复，**嫌疑指向它自带的 `latexmkrc`（覆写 `$pdflatex`、内建 `--shell-escape` 与尾部 `;cp`）与 `-outdir=tmp` 的相互作用**——目前只做到"确认不是超时问题"，**尚未定位到可复现的 rc 最小组合**（用一个精简 rc 复刻其关键行跑最小工程，仍能正常恢复）。
 
 **对产品的两个直接结论**：
 
@@ -525,30 +197,32 @@ xelatex -interaction=nonstopmode -synctex=1 -output-directory=tmp main.tex   # m
 # → Output written on tmp/main.pdf (1 page). / exit 0（tmp/sub 仍不存在也没关系）
 ```
 
-诊断文案里已经写上这条建议（`DiagnosisKind::aux_write_failed`）。
+诊断文案里已写这条建议（`DiagnosisKind::AuxWriteFailed`）。
 
-**2026-09 补充：latexmk 的自动恢复不是普遍成立的。** 自建夹具（10 章 ctexbook，章节用 `\include{chapters/cNN}`，`tmp/` 为空）走 **Full**（latexmk 完整收敛）时并没有恢复：日志停在"写不出中间文件 `chapters/c01.aux`" + `Emergency stop`，latexmk 反复重跑同一处失败，直到 **120s 超时**（上面 §"为什么合成多文件档没事"里的 `tmp/sub` 被创建，在这里没有发生）。两次实验的差异未定位到判据（文档类/中文宏包/页数都可能相关），但"latexmk 会自动建目录并重跑"这句话**不能当作保证**。顺带这也是一次流式反馈的实战价值演示：实时错误在该次编译的 **68s** 就报出了这条诊断，而超时终态要到 **127s** 才出现（提前 59s）。
+**latexmk 的自动恢复不是普遍成立的。** 自建夹具（10 章 ctexbook，章节用 `\include{chapters/cNN}`，`tmp/` 为空）走 **Full**（latexmk 完整收敛）时并没有恢复：日志停在"写不出中间文件 `chapters/c01.aux`" + `Emergency stop`，latexmk 反复重跑同一处失败，直到 **120s 超时**（上面"为什么合成多文件档没事"里的 `tmp/sub` 被创建，在这里没有发生）。两次实验的差异未定位到判据（文档类/中文宏包/页数都可能相关），但"latexmk 会自动建目录并重跑"这句话**不能当作保证**。顺带这也是一次流式反馈的实战价值演示：实时错误在该次编译的 **68s** 就报出了这条诊断，而超时终态要到 **127s** 才出现（提前 59s）。
 
-## XeLaTeX 每次编译都慢 4–5 秒：fontconfig 字体缓存失效（2026-09 实测）
+## XeLaTeX 每次编译慢 4–5 秒：fontconfig 字体缓存失效
 
 **现象**：连 `\documentclass{article}` + 一个字符的极简文档，`xelatex` 也要 **4.8 s**（正常 ~0.8 s）；`xelatex --version` 单是启动就 0.5–0.7 s。**同期 `lualatex` 完全正常**（同一份文档 1.2 s），Lua 层微基准与 `cmd /c exit` 也都在基线 ⇒ **不是 CPU 降频、不是磁盘、不是我们的管线**。
 
-**根因**：XeTeX 在 Windows 上用 **fontconfig** 解析 native font（连它基座 format 里的默认字体都走这条路；见 [fmt 研究](./research/no-fork-alternatives.md) §3.2），而 fontconfig 的缓存文件**坏了或丢了** → 每次运行都**重新扫描 3,640 个系统字体**。
+**根因**：XeTeX 在 Windows 上用 **fontconfig** 解析 native font（连它基座 format 里的默认字体都走这条路；见 [fmt 研究](./archive/research/no-fork-alternatives.md) §3.2），而 fontconfig 的缓存文件**坏了或丢了** → 每次运行都**重新扫描 3,640 个系统字体**。
 
 **判据（两条，几秒钟就能验）**：
+
 - `fc-list` 计时：正常 ~0.7 s；故障时 **4.2–4.7 s**
 - `fc-cache -v`：直接报 `invalid cache file: C:/texlive/<年>/texmf-var/fonts/cache/<hash>-x64.cache-9`
 
 **修法**：跑一次 `fc-cache -f`（TeX Live 自带 `fc-cache.exe`）。修好后本机实测：极简文档 **4799 → 790 ms**、`min-zh` 夹具 **5380–5765 → 1371 ms**，`fc-list` **4.2 s → 0.7 s**。
 
-**缓存为什么会坏**：断电/强杀把缓存文件写了一半（本次就是断电后出现的）、磁盘满、杀软隔离、或手工清了 temp。**只有 XeLaTeX 慢、LuaLaTeX 正常**是本问题的特征（LuaLaTeX 不走 fontconfig）。
-> 对产品的影响：用户的 TeX Live 若处于这种状态，**切到 XeLaTeX 的**用户编辑期每次编译白等 4 s（默认引擎自 2026-09-17 起是 Tectonic，不走 fontconfig，见 [ADR-0014 修订 1](./adr/0014-tectonic-first.md)）。诊断入口就上面两条命令。
+**缓存为什么会坏**：断电/强杀把缓存文件写了一半、磁盘满、杀软隔离、或手工清了 temp。**只有 XeLaTeX 慢、LuaLaTeX 正常**是本问题的特征（LuaLaTeX 不走 fontconfig）。
 
-**DSH 沙箱注意**：缓存写在 `C:/texlive/<年>/texmf-var/fonts/cache`，**在工作区之外** ⇒ 沙箱模式下 `fc-cache` 会 `Permission denied`，缓存永远建不起来、**每次编译都慢**（本次排查期间就被这条卡住过）。需要在提权（`danger-full-access`）下跑一次 `fc-cache -f`，或让应用在正常权限下自建。
+> 对产品的影响：默认引擎是 **Tectonic**（不走 fontconfig，见 [ADR-0014 修订 1](./adr/0014-tectonic-first.md)），所以只有**切到 XeLaTeX** 的用户会在这方面每次编译白等 4 s。诊断入口就上面两条命令。
 
-## LuaLaTeX：切过去之后编译失败 / 第一次特别慢（2026-09 实测）
+**沙箱注意**：缓存写在 `C:/texlive/<年>/texmf-var/fonts/cache`，**在工作区之外** ⇒ 受限沙箱下 `fc-cache` 会 `Permission denied`，缓存永远建不起来、**每次编译都慢**。需要在正常权限（或提权）下跑一次 `fc-cache -f`，或让应用在正常权限下自建。
 
-引擎是设置面板里可选项（`xelatex` / `lualatex` / `pdflatex`），但 LuaLaTeX 有两个**环境前提**，不满足时的报错都长得不像"引擎问题"：
+## LuaLaTeX：切过去之后编译失败 / 第一次特别慢
+
+引擎是设置面板里可选项（`tectonic` / `xelatex` / `lualatex` / `pdflatex`），但 LuaLaTeX 有两个**环境前提**，不满足时的报错都长得不像"引擎问题"：
 
 **① `luaotfload` 需要一个可写的字体缓存目录**（不满足 → 引擎第一句就退出）：
 
@@ -559,27 +233,26 @@ luaotfload | load :     × ".../luaotfload-init.lua:301: system : no writeable c
 !  ==> Fatal error occurred, no output PDF file produced!
 ```
 
-- 缓存落点是 **`TEXMFVAR`**（不是 `TEXMFCACHE`——实测只设后者不够），默认 `~/.texlive<年>/texmf-var`。
-  TeX Live 装在只读位置、或用户配置目录不可写（沙箱/受限账户）时会踩到。
-- 处置：把 `TEXMFVAR` 指到一个可写目录再启动应用（应用会把它继承给引擎）；或给该目录写权限。
+- 缓存落点是 **`TEXMFVAR`**（不是 `TEXMFCACHE`——实测只设后者不够），默认 `~/.texlive<年>/texmf-var`。TeX Live 装在只读位置、或用户配置目录不可写（沙箱/受限账户）时会踩到。
+- 处理：把 `TEXMFVAR` 指到一个可写目录再启动应用（应用会把它继承给引擎）；或给该目录写权限。
 
 **② 第一次编译要建字体库**：全新缓存下第一次编译实测 **25.8 s**（产出 23.6 MB / 35 个文件，`luatex-cache/generic/{names,otl,luatexja}`），之后回落到正常耗时。设置面板的引擎提示已写明这一点。
 
-**③ 速度**：同一份 28 页中文论文单趟 **1870 ms（XeLaTeX）vs 6468 ms（LuaLaTeX）**，约 3.2–3.5×；且中文 LuaLaTeX **不产 DVI/XDV**（`luatexja`：`DVI output is not supported in LuaTeX-ja`），所以页级复用的"跳过转换/只重绘变化页"在它下面**不发生**（下游按"无法判定"保守全量刷新，功能正常、只是没有那层优化）。完整数据见 [现代引擎实测](./research/modern-engines-zh.md)。
+**③ 速度**：同一份 28 页中文论文单趟 **1870 ms（XeLaTeX）vs 6468 ms（LuaLaTeX）**，约 3.2–3.5×；且中文 LuaLaTeX **不产 DVI/XDV**（`luatexja`：`DVI output is not supported in LuaTeX-ja`），所以页级复用的"跳过转换/只重绘变化页"在它下面**不发生**（下游按"无法判定"保守全量刷新，功能正常、只是没有那层优化）。完整数据见 [现代引擎实测](./archive/research/modern-engines-zh.md)。
 
-**④ 探针别忘 `-halt-on-error`**：LuaLaTeX 的启动期 Lua 错误在 `nonstopmode` 下会**无限刷屏**——本次实测把一份日志写到 **226 MB** 才被掐掉。所有非交互探针都要带 `-halt-on-error`。
+**④ 探针别忘 `-halt-on-error`**：LuaLaTeX 的启动期 Lua 错误在 `nonstopmode` 下会**无限刷屏**——实测把一份日志写到 **226 MB** 才被掐掉。所有非交互探针都要带 `-halt-on-error`。
 
-## 引擎输出在非 TTY 下是 4KB 块缓冲：实时反馈要尾随 `.log`（2026-09 实测）
+## 引擎输出在非 TTY 下是 4KB 块缓冲：实时反馈要尾随 `.log`
 
 **现象**：把引擎的 stdout/stderr 接成管道（`Stdio::piped()`）做"边编译边报错"后，短文档的**错误与页标记会一起在进程快结束时才到**——看起来像流式没生效。
 
 **实测**：一次 1471ms 的编译里，首条流式错误出现在 **1394ms**（几乎等于进程退出时刻）。原因是 C 运行时的块缓冲：**stdout/stderr 不是 TTY 时按 4KB 缓冲**，TeX 只在缓冲满（约每 20 页）或退出时才 flush。
 
-**对策（已落地）**：实时通道以 `tmp/<stem>.log` 为主力——**`.log` 是按页 flush 的**，每 200ms 尾随一次即可稳定拿到"排到第几页""刚出现的致命错误"；管道只作补充（两条来源共用同一状态机做页码取最大 + 错误指纹去重）。结论：**"接个管道"不够**，短文档/早错场景下管道几乎给不出提前量。
+**对策（现役行为）**：实时通道以 `tmp/<stem>.log` 为主力——**`.log` 是按页 flush 的**，每 200ms 尾随一次即可稳定拿到"排到第几页""刚出现的致命错误"；管道只作补充（两条来源共用同一状态机做页码取最大 + 错误指纹去重）。结论：**"接个管道"不够**，短文档/早错场景下管道几乎给不出提前量。
 
 **验证入口**：`cargo test -p latteset-infra -- --ignored live_errors`（断言首个流式错误距编译结束 ≥100ms；只接管道时这条会红）。
 
-## 错误列表的文件名偶尔错一章：TeX 日志的 `)` 与 `(` 会打在同一行（2026-09 定位，未修）
+## 错误列表的文件名偶尔错一章：TeX 日志的 `)` 与 `(` 会打在同一行（未修）
 
 **现象**：错误实际写在 `ch_05.tex` 第 164 行，列表显示 `./ch_04.tex:164`，点击跳到 `ch_04.tex`。
 
@@ -589,9 +262,9 @@ luaotfload | load :     × ".../luaotfload-init.lua:301: system : no writeable c
 [64]) (./ch_05.tex
 ```
 
-而 `log_parser::scan` 的文件栈只认**行首** `(` 入栈、行首 `)` 出栈 → `ch_05` 没入栈、`ch_04` 被弹出，此后该文件的错误都归到 `ch_04`。终态与流式共用同一解析器，两条路径都会错。修法要按字符顺序做括号配对（独立任务，记在 [modules.md](./modules.md) §12.1 #22）。
+而 `log_parser::scan` 的文件栈只认**行首** `(` 入栈、行首 `)` 出栈 → `ch_05` 没入栈、`ch_04` 被弹出，此后该文件的错误都归到 `ch_04`。终态与流式共用同一解析器，两条路径都会错。修法要按字符顺序做括号配对（独立任务，记在 [dev/modules.md](./dev/modules.md) §12.1）。
 
-## 外部（非原子）写 settings.json：watcher 会读到半截文件（2026-09 实测，㉑ 顺带修）
+## 外部（非原子）写 settings.json：watcher 会读到半截文件
 
 **现象**：用 PowerShell `Set-Content` / 记事本改 `.latteset/settings.json`（或全局 `settings.json`），应用**有时不响应**——日志里能看到：
 
@@ -603,11 +276,11 @@ DEBUG watch 原始事件: [".latteset\settings.json"] kind=Modify(Any)  ← 第�
 
 **根因**：这类写入是"**截断 → 写入 → 关闭**"三步，watcher 会收到**两个** Modify 事件，中间存在文件为空/被占用的窗口：第一次读拿到空内容（JSON 解析失败），第二次读可能撞上共享冲突（`read_to_string` 直接失败）。旧实现两种情况都只是"忽略这次修改"（后者连日志都没有），用户侧就是「改了没反应」。
 
-**处置（已落地）**：`handle_settings_change` 改为 **3 次 × 150ms 短重试**（每次重试重新读 + 重新解析），最终仍失败才打警告。**验收要点**：必须用非原子写法复现（`Set-Content` 即可），用"先写临时文件再 rename"的原子替换测不出这条。
+**现役行为**：`handle_settings_change` 为 **3 次 × 150ms 短重试**（每次重试重新读 + 重新解析），最终仍失败才打警告。**验收要点**：必须用非原子写法复现（`Set-Content` 即可），用"先写临时文件再 rename"的原子替换测不出这条。
 
 **另注**：应用自己写设置走的是原子写（`atomic_write` + 自写盘 hash 过滤），不受此影响。
 
-## `cargo build -p latteset-server` 报「failed to remove file … 拒绝访问」(os error 5)
+## 常驻 `latteset-mcp.exe` 锁二进制：`cargo build -p latteset-server` 报拒绝访问
 
 **现象**：接了 DSH 的 `mcp-latteset`（或任何常驻的 MCP 客户端）之后，重新构建 headless 会失败：
 
@@ -618,19 +291,17 @@ Caused by: 拒绝访问。 (os error 5)
 
 **根因**：`latteset-mcp.exe` 正**作为常驻进程运行**（stdio MCP server 由 harness 拉起后一直活着），Windows 锁定已加载的可执行文件 → 链接器无法替换它。与代码无关，`cargo build -p latteset`（GUI 应用）不受影响，因为它不产这个二进制。
 
-**处置（按代价排序）**：
+**处理（按代价排序）**：
 
-1. **只验 lib / 不产二进制**：`cargo test -p latteset-server --lib`（⑨ 之外的所有单测都在 lib 里）；
+1. **只验 lib / 不产二进制**：`cargo test -p latteset-server --lib`（协议之外的所有单测都在 lib 里）；
 2. **换 target 目录构建一次**（本机实测可用，代价是依赖图重编一遍）：
    ```powershell
    $env:CARGO_TARGET_DIR='<某个不在 src-tauri 下的目录>'; cargo test -p latteset-server
    ```
-   ⚠️ **别把它放在 `src-tauri/` 里面**——`tauri dev` 的文件监视会看到那些 `.fingerprint` 变化并触发重建（本机踩过），放工作区外或 `%TEMP%`；
+   ⚠️ **别把它放在 `src-tauri/` 里面**——`tauri dev` 的文件监视会看到那些 `.fingerprint` 变化并触发重建，放工作区外或 `%TEMP%`；
 3. 在 DSH 里临时移除 `mcp-latteset` 行（或重启 DSH）再构建。
 
-> 这也是「⑥ + 接线」的副作用之一：headless server 一旦常驻，它的二进制就不可被替换——改 `crates/latteset-server` 的代码后要记着这条。
-
-## 更名 TeXPresso → Latteset：配置目录与项目设置目录都变了（2026-09）
+## 更名 TeXPresso → Latteset：配置目录与项目设置目录都变了
 
 **背景与决策**：原因、命名核查与完整标识符映射见 [ADR-0011](./adr/0011-rename-to-latteset.md)。这里只记操作层面的坑。
 
@@ -654,18 +325,15 @@ Move-Item "$env:APPDATA\com.texpresso.app\*" "$env:APPDATA\com.latteset.app\" -F
 Rename-Item .texpresso .latteset
 ```
 
-**本项目内的配套改动**（避免真机验证时踩空）：`test_file/projects/{multifile,中文GBK工程,多候选工程}/.texpresso/` 已随更名改到 `.latteset/`；这些目录被 `.gitignore` 覆盖，**不在版本库内**，重建夹具时要按新名创建。
+**本项目内的配套事实**：`test_file/projects/{multifile,中文GBK工程,多候选工程}/.latteset/` 是现役位置；这些目录被 `.gitignore` 覆盖，**不在版本库内**，重建夹具时要按新名创建。真机证据：启动日志 `MCP Bridge plugin initialized for 'Latteset' (com.latteset.app)`、运行的是 `target\debug\latteset.exe`、启动后自动出现 `%APPDATA%\com.latteset.app\settings.json`（identifier 生效的直接证据）、`open_project` 日志 `打开项目：…\multifile（根文件 Some(…\main.tex)，候选 1 个）` + `开始监视项目`。
 
-**验证证据（2026-09 真机）**：`npm run tauri dev` 启动日志 `MCP Bridge plugin initialized for 'Latteset' (com.latteset.app)`，运行的是 `target\debug\latteset.exe`，窗口标题 `Latteset`；启动后自动出现 `%APPDATA%\com.latteset.app\settings.json`（identifier 生效的直接证据）；`open_project` 后端日志 `打开项目：…\multifile（根文件 Some(…\main.tex)，候选 1 个）` + `开始监视项目`，即重命名后的设置/监视链路全通。
-
-**另一个坑：文档里不要跟着改「上游项目」的名字**。文档描述的上游 [let-def/texpresso](https://github.com/let-def/texpresso) **必须保持原拼写**——批量替换会造出不存在的 URL（`github.com/let-def/latteset`）和错误的源码符号名（上游真实符号是小写 `texpresso_protocol.c` / `texpresso_fork_with_channel`，不是 `TeXpresso_protocol.c`）。同理 [texpresso-live-rendering-roadmap.md](./texpresso-live-rendering-roadmap.md) 的**文件名保留原名**（它是"对上游的通读"）。
+**另一个坑：文档里不要跟着改「上游项目」的名字**。文档描述的上游 [let-def/texpresso](https://github.com/let-def/texpresso) **必须保持原拼写**——批量替换会造出不存在的 URL（`github.com/let-def/latteset`）和错误的源码符号名（上游真实符号是小写 `texpresso_protocol.c` / `texpresso_fork_with_channel`，不是 `TeXpresso_protocol.c`）。同理 [texpresso-live-rendering-roadmap.md](./archive/texpresso-live-rendering-roadmap.md) 的**文件名保留原名**（它是"对上游的通读"）。
 
 ## 探针文档含中文时不能用 pdflatex（附一条被证伪的假设）
 
-
 **现象**：用 PowerShell 生成探针 `.tex` 后 `latexmk -pdf` **exit 12**，文档内容看起来完全正常。
 
-**真实根因**：探针里含**中文正文**，而 `-pdf`（pdflatex）不支持 CJK → 编译失败。换 `-xelatex` 即 exit 0。这与 P0-② 分析 §3.1 是同一个现象（引擎选错 = 首屏一堆不可读错误）。
+**真实根因**：探针里含**中文正文**，而 `-pdf`（pdflatex）不支持 CJK → 编译失败。换 `-xelatex` 即 exit 0。这与"引擎选错 = 首屏一堆不可读错误"是同一个现象。
 
 **⚠️ 被证伪的假设（记录以免重走）**：一度判断是 `Set-Content -Encoding UTF8` 写入了 **UTF-8 BOM**。实测证伪——
 
@@ -676,62 +344,15 @@ Rename-Item .texpresso .latteset
 
 本机为 **pwsh 7.6.5**：`-Encoding UTF8` 默认即为**无 BOM**（`utf8NoBOM`）。**BOM 不是原因**；把两次差异归因于 BOM 是错的，真正的差异是**内容里有中文**。
 
-**处置**：探针文档含中文时用 `xelatex`/`lualatex`；只有在 **Windows PowerShell 5.1**（非本机 `pwsh`）上才需要担心 `Set-Content -Encoding UTF8` 的 BOM 问题。
+**处理**：探针文档含中文时用 `xelatex`/`lualatex`；只有在 **Windows PowerShell 5.1**（非本机 `pwsh`）上才需要担心 `Set-Content -Encoding UTF8` 的 BOM 问题。
 
 > 与 AGENTS.md §4 的「PowerShell 转义」是同类排查场景：反斜杠过度转义、编码、**引擎选择**都会表现为 exit 12，先确认是哪一个再改。
 
-## 库内嵌档下 SyncTeX 定位不可用：同步数据里没有真实源文件名（2026-09-17 定位 → **同日修复**）
+## headless（CLI / MCP）怎么排障
 
-**症状**：引擎切到「库内嵌」后，Ctrl+点击源码不再跳到 PDF、点 PDF 也不再回到源码 —— 用户视角就是"点了没反应"。CLI 侧的直接读数（这一条是**唯一**能把三种原因区分开的证据）：
+用法、命令表、退出码语义与 harness 接线见 [cli.md](./cli.md)。这里只留现场坑：
 
-```
-latteset-cli --project <项目> forward <项目>\main.tex 100
-{ "error": { "code": "Internal", "message": "SyncTeX：输出解析失败：同步数据里没有这个源文件（…\main.tex）—— 库形态产出的文件可能只有空 Input（…）" } }
-```
-
-**一眼确认**（不必编译两遍）：把 `tmp/<stem>.synctex.gz` 解开看 `Input:` 记录 ——
-
-```powershell
-$gz = "<项目>\tmp\main.synctex.gz"
-$in = [IO.File]::OpenRead($gz)
-$g  = New-Object IO.Compression.GZipStream($in, [IO.Compression.CompressionMode]::Decompress)
-$sr = New-Object IO.StreamReader($g)
-($sr.ReadToEnd() -split "`n") | Where-Object { $_ -like 'Input:*' } | Select-Object -First 8
-$sr.Close(); $in.Close()
-```
-
-| 引擎形态 | `Input:1` 的样子 | `forward` 结果 |
-|---|---|---|
-| **子进程档**（`LATTESET_TECTONIC_LIB=0`） | `Input:1:E:\…\main.tex` ✓ | `{"ok":true,"page":8,…}` ✓ |
-| **库形态**（`LATTESET_TECTONIC_LIB=1`，**修复前**） | `Input:1:texput`、`Input:2..8` 空 ✗ | ✗ "同步数据里没有这个源文件" |
-| **库形态**（**修复后**，2026-09-17 起） | `Input:1:E:\…\main.tex` ✓（其余可为空，解析器跳过空名） | `{"ok":true,"page":8,…}` ✓ 与子进程档**逐字段相同** |
-
-**原因**：库形态把**主文件内存直喂**引擎，而引擎 C 侧在 `start_input()` **之前**就调了 `open_log_file()`（后者把 jobname 定成默认的 `texput`，`xetex-xetex0.c:10874`），于是 `xetex-xetex0.c:11014` 那句"jobname 为空才用主输入名"永不命中；Rust 侧也没有补救口子（`tt_xetex_set_string_variable` 在 0.5.3 是空实现）。
-**修法**（roadmap ㊷ 已落地）：收尾处把同步数据里的主输入记录补成**真实绝对路径**（`crates/latteset-tectonic/src/synctex.rs`，纯数据补丁，捕获表与 `tmp/` 镜像两处都改）——**不改引擎、不动文档结构**，PDF/`.log`/错误归属实测逐字节不变。详见 [roadmap §6.10.1](./research/tex-ide-roadmap-priority.md)。
-**若它又坏了**（症状复发 = 补丁没生效）：看库形态编译日志有没有 `已修补同步数据的主输入记录（㊷…）`；没有的话按上表解 gz 看 `Input:1` —— 若又变回 `texput`，说明引擎换了写法（`patch_outputs` 会打 `warn!`："找不到主输入记录"）。
-**一处仍然存在的形态差异**（**不是故障**）：**目录区域**的反向点击，子进程档回到源码行 `\tableofcontents`，库形态回到生成物 `main.toc`（前端按 ㉒ 显示"此处来自自动生成的文件"）。把主输入名改回 `texput` 结果一字不变 ⇒ 与本补丁无关，是两引擎对目录盒子的记录归属不同。
-
-**别把三种"点了没反应"混起来**（它们的修法完全不同）：
-
-| 原因 | 判别 | 现状 |
-|---|---|---|
-| 同步数据里**没有真实文件名**（本条） | `Input:1:texput` / 空 | **已修**（㊷，2026-09-17）：库形态收尾补上真实路径；复发时看日志有没有那条 `已修补…` |
-| 编译**正把同步数据重写** | `tmp/` 里出现 `*.synctex(busy)` 或查询偶发失败后自愈 | 退避重试（100/200/300 ms），实测能救回来 |
-| **根本没编译过** | `tmp/<stem>.synctex.gz` 不存在 | 现在**立刻**报"同步数据不存在"（roadmap ㊱：此前要白等 645 ms，inverse 更差 3.13 s） |
-
-## headless（CLI / MCP）怎么跑、怎么排障（2026-09，⑥ 落地记录）
-
-**跑起来**（二进制是工作区产物，`cargo build -p latteset-server` 后位于 `src-tauri/target/debug/latteset-{cli,mcp}.exe`）：
-
-```powershell
-latteset-cli --project test_file\projects\multifile compile        # stdout 只有 JSON
-latteset-cli --project <dir> compile | ConvertFrom-Json | % { $_.compile.status, $_.compile.errors }
-latteset-mcp --project <dir>                                        # stdio server（harness 本地拉起）
-```
-
-**四条踩过的坑**：
-
-1. **PowerShell 会吃掉 `$`**：直接把含公式的 LaTeX 当命令行参数传，`$E = mc^2$` 的 `$...$` 被 PowerShell 当变量展开 → 文件里剩下 `E = mc^2`（无数学模式）→ 编译报 `! Missing $ inserted.`。**处置**：用 stdin 写——
+1. **PowerShell 会吃掉 `$`**：直接把含公式的 LaTeX 当命令行参数传，`$E = mc^2$` 的 `$...$` 被 PowerShell 当变量展开 → 文件里剩下 `E = mc^2`（无数学模式）→ 编译报 `! Missing $ inserted.`。**处理**：用 stdin 写——
    ```powershell
    $body = @'
    \section{测试}
@@ -741,23 +362,19 @@ latteset-mcp --project <dir>                                        # stdio serv
    ```
    （单引号 here-string = 不求值；`-` 表示从 stdin 读内容。）
 2. **`write` 不会替你建目录**：父目录不存在 → 报 `NotFound` 并说明"父目录必须已存在"（与 GUI `save_all` 同契约）。先建目录，或先写已存在的目录下的文件。
-3. **退出码语义**：`compile` 的 `0` 只表示 **status=success**；编译未通过是 `1`（**不是**命令出错）。`2` = 用法/路径类错误，`3` = 内部错误。
-4. **配置目录**：默认与 GUI **同一份**（Windows `%APPDATA%\com.latteset.app`），所以 CLI 改了设置 GUI 也会看到；要隔离（测试/CI）用 `--config-dir <dir>` 或 `LATTESET_CONFIG_DIR`。
+3. **配置目录默认与 GUI 同一份**（Windows `%APPDATA%\com.latteset.app`），CLI 改了设置 GUI 也会看到；要隔离（测试/CI）用 `--config-dir <dir>` 或 `LATTESET_CONFIG_DIR`。
+4. **同一项目不要同时用 GUI 和 CLI 编译**：两路 latexmk 抢同一个 `tmp/`。约定 headless 独占。
+5. **MCP 侧自检**：协议没握手成功时先手工喂一行看回什么——
+   ```powershell
+   '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{}}}' |
+     latteset-mcp --project <dir>
+   ```
+   应回 `result.protocolVersion` + `capabilities.tools` + `instructions`。日志（含每一次工具调用）走 **stderr**，stdout 只有协议报文——排查时别把两者混在一个管道里。
+6. **`latteset-mcp.exe` 常驻则不可替换**：见「常驻 `latteset-mcp.exe` 锁二进制」一节。
 
-**并发禁忌**：同一项目**不要**同时用 GUI 和 CLI 编译——两路 latexmk 抢同一个 `tmp/`（先到先写、后到覆盖）。当前约定 headless 独占，没有项目锁。
+## 怎么查「引擎到底读了什么 / 为什么找不到文件」
 
-**MCP 侧自检**：协议没握手成功时先手工喂一行看回什么——
-
-```powershell
-'{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{}}}' |
-  latteset-mcp --project <dir>
-```
-
-应回 `result.protocolVersion` + `capabilities.tools` + `instructions`。日志（含每一次工具调用）走 **stderr**，stdout 只有协议报文——排查时别把两者混在一个管道里。
-
-## 怎么查「引擎到底读了什么 / 为什么找不到文件」（2026-09，G1 研究配套）
-
-排"改了文件没生效""缺文件找不到"时，四个通道都是现成的（结论与实测见 [research/g1-read-interception-feasibility.md](./research/g1-read-interception-feasibility.md)）：
+排"改了文件没生效""缺文件找不到"时，四个通道都是现成的（结论与实测见 [g1-read-interception-feasibility.md](./archive/research/g1-read-interception-feasibility.md)）：
 
 | 想知道 | 用什么 | 开关 | 坑 |
 |---|---|---|---|
@@ -776,19 +393,21 @@ Select-String -Path kpse.err -Pattern 'searching for|returning from generic sear
 
 **两条与产品行为直接相关的结论**（都实测过）：
 
-1. **"改了 `.bib` 没反应"是已知缺陷，不是操作问题**：`watch` 只对 `.tex` 触发（[modules.md](./modules.md) §7），被 `\bibliography` 引用的 `.bib` 改完，`tmp/` 全部产物 mtime 不变（roadmap ㉜）；反向也错——改**未被引用**的 `.tex` 会白编译一次（roadmap ㉝）。
-2. **别常开 `KPATHSEA_DEBUG`**：它的输出走 **stderr**，而应用的流式错误通道也在读 stderr（[modules.md](./modules.md) §2.6.1）——1 MB 的 `kdebug:` 行会灌进解析缓冲；只在做单次诊断性编译时开。
+1. **触发面 = 项目内任何带扩展名的非忽略文件**（roadmap ㉜ 已落地，判据在 core `is_compile_trigger`，见 [dev/modules.md](./dev/modules.md) §7 / §3.3）：改被 `\bibliography` 引用的 `.bib`、图片、`.cls` 等真输入都会触发编译。**仍未做的是精确失效**（roadmap ㉝）：改**未被引用**的 `.tex`（以及 `notes.md` 这类非输入文件）会白编译一次——判据 `.fls` / `.fdb_latexmk` 已在磁盘、`scripts/fls-report.mjs` 已就绪但未接线。
+2. **别常开 `KPATHSEA_DEBUG`**：它的输出走 **stderr**，而应用的流式错误通道也在读 stderr——1 MB 的 `kdebug:` 行会灌进解析缓冲；只在做单次诊断性编译时开。
 
-## 用 WS 探针脚本调前端时踩到的两个坑（2026-09）
+## 前端与脚本杂项（WS 探针 / PowerShell / `<select>` / 死 CSS）
+
+### WS 探针脚本的两条自查
 
 「WS 直驱真机」的探针（`node scripts/editor-report.mjs --eval-file <file>`）很好用——它自己连 MCP Bridge 的 9223，不需要 MCP 会话在场。但有两条**不是产品缺陷、却极难自查**的坑：
 
 1. **探针脚本不能以 `//` 注释开头**：应用的执行器把脚本**包进括号**求值，行注释开头会让整段解析失败——而且失败是**静默**的：返回 `null` 而不是 error（脚本里的 `console.log` 也看不到）。**让第一行就是 `(async () => {`**；`Session.eval` 已对 `//`/`/*` 开头的脚本补前导换行兜底。
-2. **别用 mtime 判"某条命令有没有跑"**：验证"跳过 `xdvipdfmx`"时用 `tmp/<stem>.pdf` 的 mtime 当判据，结果被**空闲收敛**（㉘）干扰——Quick 成功后 2s 的收敛 Full 走 latexmk，它自己会重写该文件，看起来像"Quick 没跳过"。**改用日志行判定**（`跳过 xdvipdfmx 转换与 PDF 拷贝`）才看清真相。
+2. **别用 mtime 判"某条命令有没有跑"**：验证"跳过 `xdvipdfmx`"时用 `tmp/<stem>.pdf` 的 mtime 当判据，结果被**空闲收敛**干扰——Quick 成功后 2s 的收敛 Full 走 latexmk，它自己会重写该文件，看起来像"Quick 没跳过"。**改用日志行判定**（`跳过 xdvipdfmx 转换与 PDF 拷贝`）才看清真相。
 
-顺带一条：探针涉及的 dev 实例只允许一个——端口 1420/9223 被占时新实例会**静默连到旧实例**（日志里看到的项目可能不是你以为的那个）。起实例前先确认端口空闲。
+**一条实例只允许一个**：端口 1420/9223 被占时新实例会**静默连到旧实例**（日志里看到的项目可能不是你以为的那个）。起实例前先确认端口空闲。
 
-**⚠️ 别用 `Test-NetConnection 127.0.0.1 -Port 1420` 判**：vite **只绑 IPv6 回环**（`[::1]:1420`），IPv4 回环上是 `ECONNREFUSED`——而 `Test-NetConnection` 走的是 IPv4，于是在 dev server **完全健康**时也一律报失败。用 `netstat` 看监听：
+**⚠ 别用 `Test-NetConnection 127.0.0.1 -Port 1420` 判**：vite **只绑 IPv6 回环**（`[::1]:1420`），IPv4 回环上是 `ECONNREFUSED`——而 `Test-NetConnection` 走的是 IPv4，于是在 dev server **完全健康**时也一律报失败。用 `netstat` 看监听：
 
 ```powershell
 netstat -ano | Select-String ":1420"     # 期望一行 [::1]:1420 LISTENING；无 LISTENING 才是真没起
@@ -796,35 +415,36 @@ netstat -ano | Select-String ":1420"     # 期望一行 [::1]:1420 LISTENING；�
 
 `Get-NetTCPConnection` 同样不可靠（会给出假阴性）。`[::1]:1420` 的 `TIME_WAIT` 行是正常的客户端残留，不代表有人在监听。
 
-## PowerShell 驱动命令行工具：变量名撞自动变量 + TeX Live 造 format 的三个口令（2026-09-17）
+### PowerShell 自动变量撞名 + TeX Live 造 format 的三个口令
 
-**① 变量名撞自动变量**（PowerShell 变量名**大小写不敏感**；同一天实测踩了三次，报错都不指向真因）：
+**① 变量名撞自动变量**（PowerShell 变量名**大小写不敏感**；实测同一天踩了三次，报错都不指向真因）：
 
 | 写法 | 症状 |
 |---|---|
-| 函数参数 `$Args`（撞 `$args`） | `& xelatex @Args` 变成"**一个参数都不传**地跑 xelatex" ⇒ 工具报用法错、产物为空 |
+| 函数参数 `$Args`（撞 `$args`） | `& xelatex @Args` 变成"**一个参数都不传**"地跑 xelatex ⇒ 工具报用法错、产物为空 |
 | param `$Samples = 3` + 局部 `$samples = @()` | `无法将类型"System.Object[]"的值转换为类型"System.Int32"` |
 | param `$Out = "..."` + 局部 `$out = [ordered]@{}` | `无法对类型为"System.String"的对象进行索引` |
 
-**处置**：脚本里避开 `args / out / samples / input / error / matches / pid / host / home` 这类名字；函数内局部变量加前缀（`$LatexArgs` / `$report` / `$runs`）。
+**处理**：脚本里避开 `args / out / samples / input / error / matches / pid / host / home` 这类名字；函数内局部变量加前缀（`$LatexArgs` / `$report` / `$runs`）。
 
 **② 在 TeX Live 2026 上造自定义 format（`mylatexformat`）的正确口令**：
+
 - `xetex -initialize …` 是 **MiKTeX** 写法；TeX Live 用 **`xetex -ini`**，并且**必须带 `-etex`**（否则 `! LaTeX requires e-TeX`）；
 - `mylatexformat.ltx` 要传**裸文件名**（让 kpathsea 找）；给绝对路径会 `Please type another input file name` 然后什么都 dump 不出来；
 - PowerShell 里带 `&` 的参数（`"&xelatex"`）走 `cmd /c "…"` 最稳（`&` 是 PS 的调用运算符）；
-- ⚠ **但即便口令全对，本机造出来的 format 加载即崩**（`xelatex -fmt=<name>` 退出码 `-1073741819` = `0xC0000005` 访问违例，日志 0 字节；**最小 `article` 同样崩**）⇒ 别在这条路上投入。完整侦察（两条路线、四个导言区、字节对拍）见 [roadmap §6.12](./research/tex-ide-roadmap-priority.md)。
+- ⚠ **但即便口令全对，本机造出来的 format 加载即崩**（`xelatex -fmt=<name>` 退出码 `-1073741819` = `0xC0000005` 访问违例，日志 0 字节；**最小 `article` 同样崩**）⇒ 别在这条路上投入。完整侦察（两条路线、四个导言区、字节对拍）见 [tex-ide-roadmap-priority.md](./archive/research/tex-ide-roadmap-priority.md) §6.12。
 
-## 原生 `<select>` 的弹层宽度 = 最长选项的宽度（2026-09-17 真机反馈）
+### 原生 `<select>` 的弹层宽度 = 最长选项的宽度
 
 **症状**：设置 → 引擎页的「TeX 引擎」下拉，弹层**横向冲出设置面板**（选项文本写成 `引擎名 — 整句说明`，Tectonic 那条约 100 字，弹层就按它撑宽）。
 
 **根因**：`<select>` 自身的宽度由 CSS 定（这里是 424 px），但**弹层是原生渲染的**，宽度按最长 `<option>` 的文本算 —— CSS 管不到它。
 
-**处置**：**别把说明写进 `<option>` 文本**。选项只留名字（本项实测：最长 8 字符 ⇒ 弹层不可能超过 select 自身宽度），说明放到 select 下方的 `.field-hint`（与「主题」「编译模式」两组同一范式）。面板里的 `<select>` 都按这条写。
+**处理**：**别把说明写进 `<option>` 文本**。选项只留名字（实测：最长 8 字符 ⇒ 弹层不可能超过 select 自身宽度），说明放到 select 下方的 `.field-hint`（与「主题」「编译模式」两组同一范式）。面板里的 `<select>` 都按这条写。
 
 **验证口径**：`webview_screenshot` **拍不到原生弹层**（WebView2 的 select popup 是独立窗口，截图与被点前逐像素相同 ⇒ 别拿截图当"弹层正常"的证据）。用几何证明：读 `Array.from(sel.options).map(o => o.textContent)` 取最长项字符数 + `sel.getBoundingClientRect().width`。
 
-## Vue SFC：写在 `</style>` 之后的规则是**死 CSS**，构建不会报错（2026-09-17 实测）
+### Vue SFC：写在 `</style>` 之后的规则是死 CSS，构建不会报错
 
 **症状**：`FileTree.vue` 的新建入口 `＋` 紧贴标题文字，`margin-left: auto` 看着"没生效"；行内输入框呈浏览器默认样式。
 
@@ -843,9 +463,9 @@ Get-ChildItem src -Recurse -Filter *.vue | ForEach-Object {
 }
 ```
 
-**处置**：把规则挪回 `<style scoped>` 内。判据不看截图看几何（`webview_execute_js` 读 `getBoundingClientRect` 与 `getComputedStyle(btn).marginLeft`）：按钮右缘应等于面板右缘减内边距、`marginLeft` 应是**算出来的 px 值**（`auto` 被解析掉）而不是 `auto`。
+**处理**：把规则挪回 `<style scoped>` 内。判据不看截图看几何（`webview_execute_js` 读 `getBoundingClientRect` 与 `getComputedStyle(btn).marginLeft`）：按钮右缘应等于面板右缘减内边距、`marginLeft` 应是**算出来的 px 值**（`auto` 被解析掉）而不是 `auto`。
 
-## 实验室的精简 bundle 不含 `beamer.cls`：选「幻灯片」会编不过（2026-09-17 实测，非缺陷）
+## 实验室的精简 bundle 不含 `beamer.cls`：选「幻灯片」会编不过（非缺陷）
 
 **症状**：向导里选「幻灯片」建出的骨架，在本机（引擎 = Tectonic 库内嵌 + `LATTESET_TECTONIC_BUNDLE=test_file/tectonic-bundle`）编译**失败得很快（0.35 s）**，错误列表一条：
 
@@ -855,7 +475,8 @@ Get-ChildItem src -Recurse -Filter *.vue | ForEach-Object {
 
 **原因**：`test_file/tectonic-bundle` 是**为离线复现手工裁出来的最小 bundle**（424 个文件）——`ctexart.cls`/`book.cls`/`article.cls`/`amsmath.sty` 都在，**`beamer.cls` 不在**。骨架本身没问题：同一份 `slides.tex` 用 **TeX Live 2026 的 `xelatex`** 编译得到 `Output written on slides.pdf (1 page)`、exit 0；上游标准（网络）bundle 也含 beamer。
 
-**处置**：
+**处理**：
+
 - **不要去改骨架**（`core::newfile` 的 beamer 分支是对的），也**不要**为了这个把 beamer 塞进精简 bundle —— 那会把"最小离线 fixture"变成又一个宏包仓库；
 - 要在本机验幻灯片这条路，就把引擎临时切到 **XeLaTeX**（TeX Live 自带 beamer），或在 `settings.json` 里把 `tectonic.bundle` 指向上游/完整 bundle；
 - 顺带记住操作顺序：`LATTESET_TECTONIC_LIB=1` 是**显式覆盖**（不受"只有 engine=tectonic 才走库形态"那道闸门约束）⇒ **设了它，在设置面板里换成 XeLaTeX 也仍然是 Tectonic 库形态**（实测：日志照旧 `库形态失败…`、`.log` 里还是 Tectonic 的 `LaTeX2e <2021-11-15>`）。要让引擎选择真正生效，得去掉该环境变量再起 dev。

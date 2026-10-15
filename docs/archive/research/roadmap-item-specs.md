@@ -84,7 +84,7 @@
 
 ### 6.4 ⑩ 深色主题 ✅（已完成）/ ⑪ 预览状态保持
 
-- **⑩** ✅ **已完成（2026-09-15）**：Monaco + 自研 Monarch 语法 + 外壳三处一起调（Candy Desk 语系的暗色版，落成"墨紫罗兰纸面 + 抬亮的糖果色 + 硬阴影翻暗投影"）。配置类第一痛点（206 票 / 23 万浏览）。**落地要点**：token 两层（通道变量 + 角色 token，共 59 个）单点定义/单点覆盖；`ui.theme = light | dark | system` 走设置模型（默认 light ⇒ 升级外观不变）；首帧不闪；Monaco 因只吃具体色值而需要独立的深浅两套主题。**对比度实测与过程中修掉的"实底强调 + 白字 2.4:1"见 §1 的 ⑩ 行与 [design.md](../design.md) §界面主题。**
+- **⑩** ✅ **已完成（2026-09-15）**：Monaco + 自研 Monarch 语法 + 外壳三处一起调（Candy Desk 语系的暗色版，落成"墨紫罗兰纸面 + 抬亮的糖果色 + 硬阴影翻暗投影"）。配置类第一痛点（206 票 / 23 万浏览）。**落地要点**：token 两层（通道变量 + 角色 token，共 59 个）单点定义/单点覆盖；`ui.theme = light | dark | system` 走设置模型（默认 light ⇒ 升级外观不变）；首帧不闪；Monaco 因只吃具体色值而需要独立的深浅两套主题。**对比度实测与过程中修掉的"实底强调 + 白字 2.4:1"见 §1 的 ⑩ 行与 [design.md](../../design.md) §界面主题。**
 - **⑪**：pdf.js 无增量更新文档的能力，现方案是"重载 + 恢复滚动/缩放"（design.md §预览）。**判定输入已就位**（2026-09）：§5.7 的**页哈希差分**（XDV 页字节哈希）已与 SyncTeX 对拍一致，且实测"不影响排版的编辑 → **0 页变化**"——于是可以先做零风险的"页哈希全同 → 不刷新预览"（C1），再把"变化页集合"接进 `PreviewPane` 做"只重绘变化页"（C2–3）。它能保证不漏，但 LaTeX 重排时会命中大量页（插入一段 → 其后 108 页变），故 DoD 按"**视觉无跳动**"而不是"只重绘一页"来定。**建议**：先量化真实编辑的命中率分布再投入；夹具与口径已由 ⑦c 备好。见 [增量编辑 × DVI 专项](./incremental-edit-x-dvi.md)。
 
 ### 6.5 ⑫ Tectonic 库形态集成（独立里程碑；原「TinyTeX 捆绑」2026-09 改判）
@@ -99,7 +99,7 @@
   4. 三个 pass（`TexEngine` / `BibtexEngine` / `XdvipdfmxEngine`）可**自己编排**；产物（XDV/`.synctex.gz`）全程在内存；
   5. **结构化状态与错误**（`StatusBackend` / `Result`），不再解析 `.log`（G6 那类"引擎自述≠事实"的坑在库内基本消失）。
 
-- **形态 A 已落地（2026-09，提交 `f69bad2`）**：`crates/latteset-tectonic/`（路径 B：自持 `IoProvider` + 自建 format 趟）已能**真编出中文 PDF**（1 页 / 7590 B，文本层可抽回），**release 实测与子进程同速**：冷缓存 1943 ms（format 1495 + 排版 335 + 转换 114）、热缓存 372–642 ms，对照 `tectonic.exe -r 0` 1857 / 395–458 ms；缓存隔离成立（format 落产品缓存目录、项目目录无 `.fmt`）。默认关闭（`tectonic-lib` 特性 + `LATTESET_TECTONIC_LIB=1`），**失败不回退**。方案与已落地状态见 [tectonic-lib-evidence.md](./tectonic-lib-evidence.md) §6.1（2026-09 自 [tectonic-library-plan.md](../tectonic-library-plan.md) 迁出；原文此处是指向 library-plan §6.1 的坏链 `../../`，本次一并修正），决策记录 [ADR-0012](../adr/0012-tectonic-library-form-engine.md)。**仍未做**：bib 趟 / 页哈希 / 多趟收敛 / 常驻复用（P4）。
+- **形态 A 已落地（2026-09，提交 `f69bad2`）**：`crates/latteset-tectonic/`（路径 B：自持 `IoProvider` + 自建 format 趟）已能**真编出中文 PDF**（1 页 / 7590 B，文本层可抽回），**release 实测与子进程同速**：冷缓存 1943 ms（format 1495 + 排版 335 + 转换 114）、热缓存 372–642 ms，对照 `tectonic.exe -r 0` 1857 / 395–458 ms；缓存隔离成立（format 落产品缓存目录、项目目录无 `.fmt`）。默认关闭（`tectonic-lib` 特性 + `LATTESET_TECTONIC_LIB=1`），**失败不回退**。方案与已落地状态见 [tectonic-lib-evidence.md](./tectonic-lib-evidence.md) §6.1（2026-09 自 [tectonic-library-plan.md](../tectonic-library-plan.md) 迁出；原文此处是指向 library-plan §6.1 的坏链 `../../`，本次一并修正），决策记录 [ADR-0012](../../adr/0012-tectonic-library-form-engine.md)。**仍未做**：bib 趟 / 页哈希 / 多趟收敛 / 常驻复用（P4）。
 
 **代价（先算清再动手）**：拖进 **C 依赖**（harfbuzz 需子模块源码；Windows 官方路线是 vcpkg + 他们的 `cargo-vcpkg` 分支）⇒ CI 明显变重；要重划 **ADR-0010** 的边界（C 链接进哪一层）；引擎与宿主**同进程** ⇒ 崩溃/取消语义要重设计（隔离从"杀子进程"变成"自己不能崩"）。官方 MSVC 二进制**只能**当子进程用。
 
@@ -107,7 +107,7 @@
 
 **与"实时预览"的关系**：200 ms 交互**已由前端草案层独立解决**（提交 `564f39d`，实测改动→草案可见 31–34 ms），**不依赖本里程碑**；库形态买到的是"草案层更准（真字形坐标，而不是从 PDF 文本层反推）+ 纠偏更快（去 I/O、去进程启动）"。
 
-判据与摩擦点见 [tectonic-test-plan.md](./tectonic-test-plan.md)、[tectonic-integration-plan.md](../archive/tectonic-integration-plan.md) §2（2026-09 归档）；成本实测见 [realtime-preview-cost.md](./realtime-preview-cost.md) §6。属"环境引导 + 实时能力"性质，**按独立里程碑推进（必要时另立 ADR），不塞进 Batch 3**。
+判据与摩擦点见 [tectonic-test-plan.md](./tectonic-test-plan.md)、[tectonic-integration-plan.md](../tectonic-integration-plan.md) §2（2026-09 归档）；成本实测见 [realtime-preview-cost.md](./realtime-preview-cost.md) §6。属"环境引导 + 实时能力"性质，**按独立里程碑推进（必要时另立 ADR），不塞进 Batch 3**。
 
 ### 6.6 ㉞ 流式出图：编译期把"已完成页"变成部分 PDF（P1；**产品负责人指定为下一项**）
 
@@ -120,7 +120,7 @@
 - **切片 1 已入库**（`d994691`）：core 合成器 `latteset_core::xdv::synthesize_postamble` + `complete_pages`（+6 单测，含"回指指针必须落在 `post` 上"的守门用例）；Rust 端与 JS 参考实现 `scripts/xdv-partial.mjs` 的字节/页数逐例一致。
 - **切片 2 已落地**：`crates/latteset-tectonic/src/preview.rs` —— 在**趟边界**出图（重跑循环末尾、确定还会再跑一趟时才调）+ 三条闸门（第 1 趟 ≥500 ms / 页数有涨 / 总次数 ≤8）。`bench/large` 冷编实测：**1.72 s 出 121 页**（转换 130 ms）、**4.2 s 出 125 页**（175 ms）、权威 PDF **7.4 s** ⇒ **提前约 5.5 s 可见**，代价 **+326 ms / 总墙钟 +4.4%**（7482 → 7783 ms，A/B 同夹具）。
 - ⚠ **设计修正（原方案被实测推翻）**：立项时写的"旁观线程按节拍看捕获表出图"**不成立** —— 引擎有**进程内全局锁**（`tectonic_bridge_core` 的 `static ENGINE_LOCK`，`with_global_lock` 在整个 C 引擎调用期间持有；上游理由是 C 侧 `setjmp/longjmp` 跨 FFI 是 UB），排版趟与转换**不可能并行**。探测（`crates/latteset-tectonic/examples/engine-lock-probe.rs`，24 逻辑核）：单次 130 ms；**4 线程并发墙钟 533 ms == 单线程跑 4 次 541 ms**（每次 132/265/398/530 = 排队序号整倍数）。实测那版旁观线程的帧落在终态 PDF 之前约 0.1 s（读者什么也看不到）。详见 [DVI 报告 §11](./dvi-preview-feasibility.md)。
-- **切片 3 已完成**（2026-09-16）：独立事件 `compile-preview`（`{path, pages}`）—— core trait `CompileProgress::partial_pdf` → `TauriProgress` → specta 事件/bindings（`src/bindings.ts` 的 `events.compilePreview`）。**真机时间线**（GUI 库形态冷编 125 页，debug）：`status(running)` 14:14:20.5 → **`compile-preview` 121 页** +4.99 s → **125 页** +9.94 s → `pdf-updated`(125 页, changed=125) +14.92 s → `status(success)`；中间态严格早于权威事件、`pages` 单调、权威载荷**未被污染**。<br>⚠ 契约里的坑（已写进 `modules.md` §4）：部分 PDF 的**路径与权威 PDF 不同**，而 `PreviewPane.load()` 按 `path === lastDocPath` 决定是否重建 DOM ⇒ 前端不得把它当"当前文档"塞进同一个槽位（否则每次换帧都重建 DOM、丢滚动位置）。
+- **切片 3 已完成**（2026-09-16）：独立事件 `compile-preview`（`{path, pages}`）—— core trait `CompileProgress::partial_pdf` → `TauriProgress` → specta 事件/bindings（`src/bindings.ts` 的 `events.compilePreview`）。**真机时间线**（GUI 库形态冷编 125 页，debug）：`status(running)` 14:14:20.5 → **`compile-preview` 121 页** +4.99 s → **125 页** +9.94 s → `pdf-updated`(125 页, changed=125) +14.92 s → `status(success)`；中间态严格早于权威事件、`pages` 单调、权威载荷**未被污染**。<br>⚠ 契约里的坑（已写进 `docs/dev/modules.md` §4）：部分 PDF 的**路径与权威 PDF 不同**，而 `PreviewPane.load()` 按 `path === lastDocPath` 决定是否重建 DOM ⇒ 前端不得把它当"当前文档"塞进同一个槽位（否则每次换帧都重建 DOM、丢滚动位置）。
 - **切片 4 已完成**（2026-09-16）：前端「编译中预览」——`load()` 把**身份**（`docIdentity`，判 DOM 复用）与**字节来源**（`sourcePath`，编译中 = 部分 PDF）分开 ⇒ **换字节不换身份**；`canReuse` 关掉复用（部分 PDF 的页来自中间趟，与权威 PDF 的 `changed_pages` 不可混用）；`compile-status` 终态与权威 `pdf-updated` 都收口（首编在预览态里失败/中止也不会把中间态留在屏幕上）；工具栏加「编译中预览 · N 页」（只在真收到帧时出现）。**真机实测**（`bench/large` 125 页冷编，debug）：3 次加载 85/79/78 ms；**14 个页 DOM 节点跨"预览 121 → 预览 125 → 权威 125"全部存活**（无重建）；滚动 **11839 帧 min=max**（零漂移）；**预览帧 0 long task**（全程唯一 1 条 69 ms 出现在首次权威全量重绘，属既有行为）；**中止后 106 ms 退回权威 PDF**。
 - **㉞ 四刀齐活**（切片 1–4 各自提交、各自真机验证）：剩余仅"趟内逐页"这一项能力边界（需另起进程，见上）。
 
@@ -489,7 +489,7 @@ LiveFeedback 三条读任务（stdout / stderr / `.log` 尾随）· watcher 线�
 | 合成重导言区（amsmath+amssymb+amsfonts+hyperref+tikz+booktabs+5 宏） | 337 | 554 | ✗ | 549 | 553 | 2 | 232–236 | **297–303** | — |
 
 - **公式内容不构成成本**：同一导言区下"空跑 / 行内 / 行间 / align"全在噪声内（±15 ms）⇒ 悬停**任意**公式的代价相同；能省的只有"同一公式重复悬停"（见下）。
-- **转换是固定成本，但不是大头**（口径修正后，见 §6.11.9）：1 页片段实测 **78–86 ms**（`typeset` 才是随导言区长大的那一段）。先前这里写的"145–409 ms、是 typeset 的 1.3–2×"是**读了旧字段口径**——`convert_ms` 当时把第 2 趟也算进去了（`phase_ms.1` 只在第 1 趟末打点），修好后 2 趟 = typeset 151 + convert 79 ✓。顺带结掉那条"A 的转换 1 ms 对不上"的疑点：那是 **A 闸门跳过转换**的那一轮（`reused_pdf=true`），旧记录 `tectonic-library-plan.md` V3 同款 ✓。
+- **转换是固定成本，但不是大头**（口径修正后，见 §6.11.9）：1 页片段实测 **78–86 ms**（`typeset` 才是随导言区长大的那一段）。先前这里写的"145–409 ms、是 typeset 的 1.3–2×"是**读了旧字段口径**——`convert_ms` 当时把第 2 趟也算进去了（`phase_ms.1` 只在第 1 趟末打点），修好后 2 趟 = typeset 151 + convert 79 ✓。顺带结掉那条"A 的转换 1 ms 对不上"的疑点：那是 **A 闸门跳过转换**的那一轮（`reused_pdf=true`），旧记录 `docs/archive/tectonic-library-plan.md` V3 同款 ✓。
 - **重复悬停走 A 闸门（已实现，免费用）**：同一 snippet 目录连编 3 次 ⇒ 第 2/3 次 `reused_pdf=true`、`convert_ms=0`、`passes=1`：**232 → 77 ms**（轻）、**744 → 332 ms**（重）。⚠ 前提是**目录保留**；A 当年每次清空重建 ⇒ 吃不到这一档。
 - **整篇对照**（同形态 `--quick`）：`bench/tiny` 259 ms（1 页）、`bench/large` 1873 ms（121 页）、`bench/multifile` 2198 ms（74 页）⇒ 片段 : 全篇 = **1/7.8**（轻）～**1/2.9**（重），与 A 的 "≈1/8" 同量级。
 - **两处失败是数据不是噪声**：`$\R^n$`（`\mathbb`）与 `$\norm{\vx}$`（`\mathbf`/`\lVert`）**排版成功但 XDV→PDF 失败** —— 本地 bundle 缺 `msbm10.pfb` / `cmbx10`（`Cannot proceed without .vf or physical font`）⇒ 见 §6.11.6 第 8 条。
@@ -541,7 +541,7 @@ LiveFeedback 三条读任务（stdout / stderr / `.log` 尾随）· watcher 线�
    - **snippet 目录按公式保留**（吃 A 闸门）：`convert` 归零 ⇒ **90 / 108 / 348 ms**。
 3. **两级快路径（"先最小包试排、失败再退回项目导言区"）需要静态判定，不作为 v1 默认**：M1 下用项目宏的公式 —— `$\R^n$` 直接 **failed 111 ms**（还算便宜），但 `$\mathbb{R}^n$` 是**转换阶段**失败 **264 ms**（本地 bundle 缺 `msbm10.pfb`，见 §6.11.6 第 8 条）⇒ 最坏白付 ~264 ms，而且它会把我们与 LaTeX Workshop 的差异（**真项目导言区**）打掉。真要做得靠**静态判定**：扫公式里的 `\宏` 与环境名，与项目导言区的 `\newcommand`/`\DeclareMathOperator`/`\def` 及 `\usepackage` 清单比对，判定"这个公式是否只用到基础数学" ⇒ **列为后续可选优化**。
 
-**顺带修掉一个度量口径 bug**（本次差点被它误导）：`convert_ms` 原先只在 `passes == 1` 时打点 `phase_ms.1` ⇒ **2 趟时把第二趟的时间算进了"转换"**（M0 夹具：2 趟报 148–151、1 趟报 78–81，而两次的 XDV **同尺寸同内容（444 B）** ⇒ 载荷证明不是转换变慢）。修法：**每趟结束都打点** ⇒ 现在 `typeset_ms` = 全部排版趟、`convert_ms` = 仅那一次转换（修后复核：2 趟 = typeset 151 + convert 79 ✓）。这同时解释了旧记录里两处看似矛盾的数：`tectonic-library-plan.md` V3 的 `convert_ms=1 reused_pdf=true` 正是 **A 闸门跳过转换**的那一轮（所以 A 当年报的"转换 1 ms"不是笔误），而 V5 的 `convert_ms=1928`（28 页）折合每页 ≈69 ms，与本轮 1 页 ≈79 ms 同量级 ✓。
+**顺带修掉一个度量口径 bug**（本次差点被它误导）：`convert_ms` 原先只在 `passes == 1` 时打点 `phase_ms.1` ⇒ **2 趟时把第二趟的时间算进了"转换"**（M0 夹具：2 趟报 148–151、1 趟报 78–81，而两次的 XDV **同尺寸同内容（444 B）** ⇒ 载荷证明不是转换变慢）。修法：**每趟结束都打点** ⇒ 现在 `typeset_ms` = 全部排版趟、`convert_ms` = 仅那一次转换（修后复核：2 趟 = typeset 151 + convert 79 ✓）。这同时解释了旧记录里两处看似矛盾的数：`docs/archive/tectonic-library-plan.md` V3 的 `convert_ms=1 reused_pdf=true` 正是 **A 闸门跳过转换**的那一轮（所以 A 当年报的"转换 1 ms"不是笔误），而 V5 的 `convert_ms=1928`（28 页）折合每页 ≈69 ms，与本轮 1 页 ≈79 ms 同量级 ✓。
 
 **对设计的影响**（已并入 §6.11.4）：片段文档加 `\nofiles`；snippet 目录按公式保留；"最小包"记为**可选快路径**（前提是静态判定）；**降延迟的重心在编译侧，不在前端渲染**。
 
@@ -787,9 +787,9 @@ v1 **只支持同目录改名**（跨目录移动是另一个功能点），目�
 | 4 有 `.tex` 无 `\documentclass` → 标签出现 → 补上并保存 → 标签消失且能编 | ✅ | 建空 `main.tex` ⇒ 标签出现；在编辑器里输入 `\documentclass{article}…` 并保存 ⇒ 磁盘 75 B、`main.pdf` 3011 B **自动产出**、标签消失、预览渲染出 "Hello Latteset" |
 | 5 全程无弹窗打扰 | ✅ | 空目录不再弹根文件选择器；判据 2/3 无任何弹窗；只有"空项目里第一个 .tex"弹一次向导（可关） |
 
-**一条环境事实（不是缺陷）**：本机实验室用的 **精简 bundle**（`test_file/tectonic-bundle`，424 个文件，离线复现用）**不含 `beamer.cls`** ⇒ 选「幻灯片」会得到 `! LaTeX Error: File 'beamer.cls' not found.`（错误列表照常给出、不是静默失败）。**同一份骨架用 TeX Live 2026 的 `xelatex` 编出 1 页（exit 0）** ⇒ 骨架本身是合法 beamer；上游标准 bundle 含 beamer。详见 [troubleshooting.md](../troubleshooting.md)。
+**一条环境事实（不是缺陷）**：本机实验室用的 **精简 bundle**（`test_file/tectonic-bundle`，424 个文件，离线复现用）**不含 `beamer.cls`** ⇒ 选「幻灯片」会得到 `! LaTeX Error: File 'beamer.cls' not found.`（错误列表照常给出、不是静默失败）。**同一份骨架用 TeX Live 2026 的 `xelatex` 编出 1 页（exit 0）** ⇒ 骨架本身是合法 beamer；上游标准 bundle 含 beamer。详见 [troubleshooting.md](../../troubleshooting.md)。
 
-**一处真机反馈（2026-09-17 产品负责人）**：`＋` 原本**紧贴「资源管理器」文字**，应贴在这一列的**右缘**。根因不是 `margin-left:auto` 写错，而是 `FileTree.vue` 里 `.new-file/.new-row/.new-input/.new-error` **四条规则写在了 `</style>` 之后** ⇒ 整段是死 CSS（SFC 编译期不报错、`npm run build` 照过），输入框当时用的是浏览器默认样式。修法：把这段挪回 `<style scoped>` 内。真机几何判据：`.panel-title` 横跨 x 0→256、按钮右缘 **242**（= 右内边距 14 px），`margin-left` 计算值 119 px（auto 生效）；建文件行输入框宽 240 px、`padding 3px 6px`、圆角 4 px。同类坑见 [troubleshooting.md](../troubleshooting.md)。
+**一处真机反馈（2026-09-17 产品负责人）**：`＋` 原本**紧贴「资源管理器」文字**，应贴在这一列的**右缘**。根因不是 `margin-left:auto` 写错，而是 `FileTree.vue` 里 `.new-file/.new-row/.new-input/.new-error` **四条规则写在了 `</style>` 之后** ⇒ 整段是死 CSS（SFC 编译期不报错、`npm run build` 照过），输入框当时用的是浏览器默认样式。修法：把这段挪回 `<style scoped>` 内。真机几何判据：`.panel-title` 横跨 x 0→256、按钮右缘 **242**（= 右内边距 14 px），`margin-left` 计算值 119 px（auto 生效）；建文件行输入框宽 240 px、`padding 3px 6px`、圆角 4 px。同类坑见 [troubleshooting.md](../../troubleshooting.md)。
 
 **英文骨架的占位文字**：首轮真机验收发现英文 book 的目录里冒出"第一节" ⇒ `document_skeleton` 的占位文字改为随语言（`第一节`/`Introduction`、`第一页`/`First frame`），单测钉住"英文骨架里不出现汉字"。
 
@@ -822,7 +822,7 @@ v1 **只支持同目录改名**（跨目录移动是另一个功能点），目�
 - 覆盖**不能把不可用的引擎变成可用**（可用性是探测出来的事实）；
 - **清单里必须始终含有当前设置的那个引擎**：真机实测过反面 —— `LATTESET_TEX_ENGINES='pdf, xelatex'` 时若设置里是 `tectonic`，`<select>` 因为没有匹配项而**显示空白**、说明行也空。修法：前端补一条不可选的只读项并给出原因（"当前设置指定的引擎不在本次构建开放的清单里…"）。
 
-**默认引擎切 Tectonic（ADR-0014 修订 1）**：`Settings::default().compile.engine` 改为 `Tectonic`，**形态位仍是 `lib_form=false`**（子进程档）。**只影响没有 `settings.json` 的新装** —— 老配置写着 `xelatex` 的升级后一字节不变（不静默换引擎）。随之更新的口径：`design.md` 的默认引擎、`modules.md` §12.2、`README.md`；`docs/research/` 下的带日期报告**保留当时的"默认 XeLaTeX"表述**（它们是证据不是现状）。已知代价：本机既没有 `tectonic.exe`、构建又没编入库形态时**首编会失败**（错误文案已可行动；面板上该引擎显示为不可用并给原因）。
+**默认引擎切 Tectonic（ADR-0014 修订 1）**：`Settings::default().compile.engine` 改为 `Tectonic`，**形态位仍是 `lib_form=false`**（子进程档）。**只影响没有 `settings.json` 的新装** —— 老配置写着 `xelatex` 的升级后一字节不变（不静默换引擎）。随之更新的口径：`design.md` 的默认引擎、`docs/dev/modules.md` §12.2、`README.md`；`docs/archive/research/` 下的带日期报告**保留当时的"默认 XeLaTeX"表述**（它们是证据不是现状）。已知代价：本机既没有 `tectonic.exe`、构建又没编入库形态时**首编会失败**（错误文案已可行动；面板上该引擎显示为不可用并给原因）。
 
 **真机验收（2026-09-17，`bench/tiny` 夹具，引擎 Tectonic 库内嵌）**：
 

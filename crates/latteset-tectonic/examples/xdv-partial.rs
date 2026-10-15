@@ -11,7 +11,7 @@
 //! 环境（与产品同一套）：`LATTESET_TECTONIC_BUNDLE` / `LATTESET_TECTONIC_CACHE`。
 //! stdout 只有一行 JSON：页数 / 合成字节 / 合成耗时 / 转换耗时 / PDF 字节数。
 //!
-//! 判据（与 `docs/research/dvi-preview-feasibility.md` §10 同口径）：
+//! 判据（与 `docs/archive/research/dvi-preview-feasibility.md` §10 同口径）：
 //! ① 转换 `ok`；② 产出 PDF 的页数 == 前缀页数；③ 单次转换 ~0.1 s 量级。
 
 use std::io;

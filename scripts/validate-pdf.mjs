@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// PDF 产物校验（方案 §6 的 P2 复核命令；`docs/tectonic-library-plan.md:518`）。
+// PDF 产物校验（方案 §6 的 P2 复核命令；`docs/archive/tectonic-library-plan.md:518`）。
 //
 // 存在理由：`compile` 报 success 只说明引擎没报错，**不等于产物可用**。本脚本独立把 PDF 读回来，
 // 验四件事——① 是不是真 PDF（magic + 可解析）；② 页数对不对；③ 文本层抽得出来、内容对得上

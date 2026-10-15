@@ -257,7 +257,7 @@ impl Scheduler {
             }]),
             _ => {}
         }
-        // 成功：广播 PDF 就绪，并带上**本次变化的页号**（2026-09，docs/research/incremental-edit-x-dvi.md）：
+        // 成功：广播 PDF 就绪，并带上**本次变化的页号**（2026-09，docs/archive/research/incremental-edit-x-dvi.md）：
         // 空变化表 + pages > 0 ⇒ 这次编译的排版结果与上次逐页字节相同 ⇒ 前端可跳过重载（B）、
         // 且只重绘变化页（C）。比对基线是**上一次成功编译**的页哈希（进程内状态，见字段注释）。
         if let CompileOutcome::Success {
@@ -428,7 +428,7 @@ mod tests {
         assert_eq!(st[1].phase, CompilePhase::Success);
     }
 
-    // ---- 页级差异（2026-09，docs/research/incremental-edit-x-dvi.md 的 B/C）----
+    // ---- 页级差异（2026-09，docs/archive/research/incremental-edit-x-dvi.md 的 B/C）----
     //
     // 契约：pdf-updated 事件必须带上"相对上一次成功编译的变化页"。
     // 前端据此跳过无谓重载（空表）或只重绘变化页——所以这三条语义是产品行为的判据。

@@ -1,6 +1,6 @@
 //! SyncTeX **自解析 vs 系统 CLI** 的逐点对拍入口（`scripts/synctex-selfcheck.mjs` 驱动）。
 //!
-//! 为什么要有它：ADR-0008 原本选的是"走系统 `synctex` CLI"，而 `docs/modules.md` 的同步精度基线
+//! 为什么要有它：ADR-0008 原本选的是"走系统 `synctex` CLI"，而 `docs/dev/modules.md` 的同步精度基线
 //! （`scripts/synctex-report.mjs` 的三组样本，往返跳到位 34/34）**是在 CLI 上量的**。把实现换成
 //! 自解析（`SyncTexSelf`）之后，唯一可信的说法是"在**同一批样本**上与 CLI 逐点比过"——本示例就是
 //! 那个比对里属于 Rust 的一侧：一个进程读多条查询，避免每条查询都起一次进程。
