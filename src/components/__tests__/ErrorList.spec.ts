@@ -34,7 +34,7 @@ function timeoutEntry(suggested: number | null): ErrorEntry {
     kind: "timeout",
     diagnosis: {
       kind: "compile_timeout",
-      cause: "编译在 120s 内没有跑完，但日志显示已经排版到第 37 页——是在推进，只是比上限慢",
+      cause: "编译在 120s 内没有跑完，但引擎输出显示已经排版到第 37 页——是在推进，只是比上限慢（首次编译，11 个 .tex 源文件）",
       hint: `把编译超时提高到 ${suggested}s 后重试`,
       suggested_timeout_secs: suggested,
       missing_file: null,
@@ -48,7 +48,7 @@ describe("ErrorList（超时一键重试，roadmap ㉕）", () => {
     const settings = useSettingsStore();
     settings.settings = {
       schema_version: 1,
-      compile: { mode: "continuous", debounce_ms: 500, timeout_secs: 120, engine: "xelatex" },
+      compile: { mode: "continuous", debounce_ms: 500, timeout_secs: 120 },
       root_file: null,
     } as never;
   });

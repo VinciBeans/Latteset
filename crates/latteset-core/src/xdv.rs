@@ -24,7 +24,7 @@ use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 use std::path::{Path, PathBuf};
 
-use crate::types::Engine;
+use crate::types::ENGINE_ID;
 
 /// XDV 结构标记。
 const BOP: u8 = 139;
@@ -405,13 +405,12 @@ pub fn changed_pages(prev: Option<&[u64]>, cur: &[u64]) -> Vec<u32> {
 /// 漏写标记的代价是"永远首轮"，A 面每轮白跑 0.65–0.94 s，所以不允许两处各写一份。
 pub const PAGES_CACHE_VERSION: &str = "v1";
 
-/// 页哈希缓存文件路径：`<tmp>/<stem>.<引擎>.pages`。
+/// 页哈希缓存文件路径：`<tmp>/<stem>.tectonic.pages`。
 ///
-/// 为什么**带引擎名**（2026-09，已知债 #25）：页哈希的口径与引擎绑定。同一个 `main.tex` 换引擎后
-/// 页内容必然不同；若共用一份缓存，跨引擎的"逐页相同"判断就是拿两套口径比大小。今天只有产 XDV 的
-/// 引擎会写它，但按引擎分文件后，将来给别的引擎接**引擎内逐页指纹**时两套哈希不会互相污染。
-pub fn pages_cache_path(tmp_dir: &Path, stem: &str, engine: Engine) -> PathBuf {
-    tmp_dir.join(format!("{stem}.{}.pages", engine.binary_name()))
+/// 引擎段取自 [`ENGINE_ID`]（ADR-0015 之后恒为 `tectonic`）。**文件名不改**：库内嵌形态的 A 闸门
+/// 基线就落在这个路径上，改名会让已有用户的基线全部失效（首轮退化成全量重绘 + 一次多余转换）。
+pub fn pages_cache_path(tmp_dir: &Path, stem: &str) -> PathBuf {
+    tmp_dir.join(format!("{stem}.{ENGINE_ID}.pages"))
 }
 
 /// 解析页哈希缓存文本。
@@ -635,15 +634,17 @@ mod tests {
         assert_eq!(parse_pages_cache(""), None);
     }
 
-    /// 路径**带引擎名**（已知债 #25：页哈希口径与引擎绑定，跨引擎共缓存就是拿两套口径比大小）。
+    /// 路径里的引擎段是**固定字面量** `tectonic`：库内嵌形态的 A 闸门基线依赖这个文件名，
+    /// 改名等于让所有已有基线失效（首轮全量重绘 + 一次多余转换）。
     #[test]
-    fn pages_cache_path_is_engine_scoped() {
+    fn pages_cache_path_pins_tectonic_literal() {
         let tmp = std::path::Path::new("/tmp/x");
-        let xe = pages_cache_path(tmp, "main", Engine::XeLaTeX);
-        let tec = pages_cache_path(tmp, "main", Engine::Tectonic);
-        assert_eq!(xe.file_name().unwrap().to_string_lossy(), "main.xelatex.pages");
-        assert_eq!(tec.file_name().unwrap().to_string_lossy(), "main.tectonic.pages");
-        assert_ne!(xe, tec);
+        let p = pages_cache_path(tmp, "main");
+        assert_eq!(p, std::path::PathBuf::from("/tmp/x/main.tectonic.pages"));
+        assert_eq!(p.file_name().unwrap().to_string_lossy(), "main.tectonic.pages");
+        // 中文 stem 原样保留（Windows 中文工程名）
+        let zh = pages_cache_path(tmp, "中文主文件");
+        assert_eq!(zh.file_name().unwrap().to_string_lossy(), "中文主文件.tectonic.pages");
     }
 
     /// 最小合法 XDV：pre + n 页（每页 = bop + [body] + eop）+ post。

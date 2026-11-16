@@ -20,7 +20,7 @@ Latteset 主界面：左侧文件树、中间编辑区、右侧 PDF 预览。
 
 依赖 **Windows 10/11**、Node.js ≥ 18、Rust（stable-x86_64-pc-windows-msvc，含 VS Build Tools C++ 工具链）。
 
-**TeX 环境**：默认引擎是 **Tectonic**，**不需要预装 TeX Live** —— 它自带宏包集（首次编译联网下载约 60 MB，之后离线复用缓存），有「子进程」与「库内嵌」两种形态，在设置里选。想用 TeX Live 的话切到 **XeLaTeX / LuaLaTeX / pdfLaTeX**（需要 **TeX Live 或 MiKTeX** 提供 `latexmk` 与对应引擎）。设置面板会把每个引擎在**本机是否可用**标出来（缺什么就写缺什么），环境变量 `LATTESET_TEX_ENGINES` 可以收窄可选项（CI / 裁剪发布用）。
+**TeX 环境**：唯一引擎是 **Tectonic**，**不需要预装 TeX Live / MiKTeX** —— 它自带宏包集（默认首次编译联网按需取包，本机缓存约 60–63 MB，之后离线复用；**完整 bundle 约 2.88 GB**，随包分发方案**待重定**，见 [ADR-0016](./docs/adr/0016-ship-bundle-offline.md) 与 [roadmap](./docs/roadmap.md)）。引擎有「子进程」与「库内嵌」两种形态，在设置里选；xelatex / lualatex / pdflatex 与 latexmk 驱动已从产品中删除（[ADR-0015](./docs/adr/0015-tectonic-only-embedded-engine.md)）。**子进程形态要求 PATH 上有 `tectonic`**（产品不代装；缺失时报错文案会指出来）；库内嵌形态则随构建打进产品进程。
 
 ```bash
 npm install && npm run tauri dev   # 开发构建；发布打包用 npm run tauri build
@@ -35,17 +35,17 @@ npm install && npm run tauri dev   # 开发构建；发布打包用 npm run taur
 1. 启动应用，点「打开项目」，选择一个含 `.tex` 的文件夹（仓库内示例：`test_file/projects/multifile/`，多文件 + 跨文件引用结构）。
 2. 编辑 `main.tex` → 自动编译 → 右侧 PDF 实时更新（首次自动「适应宽度」）。
 3. `Ctrl+点击` 源码 → PDF 对应位置高亮；点击 PDF → 跳回源码。
-4. 点「编译」手动编译；「⚙ 设置」调整引擎、编译模式、超时等。
+4. 点「编译」手动编译；「⚙ 设置」调整编译模式、超时、Tectonic 形态、宏包集与缓存目录。
 
 ## 实时编译
 
 - **双模式触发**：**连续编译**（默认，输入停顿约 500ms 即编译，无需保存）+ **保存触发编译**，随时切换；另有手动「编译」按钮。
-- **编辑期快速出图**：编辑触发单趟草稿编译（实测比完整 latexmk 快约 40% 中位），停手 2s 自动补一次完整编译把目录/引用页码追上——期间状态栏提示「引用待更新」。
-- **编译中就有反馈**：状态栏显示「已排版 N 页」并随引擎输出实时递增；错误列表在**编译还没结束**时就报出致命错误（`Overfull` 这类警告留到最终清单）——长文档不必干等到最后才知道出错。
+- **编辑期快速出图**：编辑触发跑 **Tectonic 两趟**（`-r 1`），停手 2s 自动补一次完整收敛（Full）把目录/引用页码追上——期间状态栏提示「引用待更新」。⚠ 旧的"比完整 latexmk 快约 40%"是 latexmk 时代的读数，那条驱动已删除，**不是** Tectonic 两档的收益。
+- **编译中就有反馈**：状态栏显示「已排版 N 页」并随引擎输出实时递增；失败后在错误列表给出结构化条目（含诊断；`Overfull` 这类警告留到最终清单）。⚠「错误在编译结束前就出现」是 latexmk 时代的能力，Tectonic 下未复测。
 - **调度与失败语义**：合并队列（待编译只保留最新一条）、超时自动终止（默认 120s、上限 1800s）、手动终止；超时与内容错误都**不自动重试**，超时进错误列表给证据化诊断 + 一键「提高到 Ns 并重试」。
 - **错误列表**：解析 `.log`，把原始报错翻译成「原因 + 怎么改」（匹配不到就退回原文 + 行号）；同源去重/截断（错误雪崩不刷屏），点击跳转源码行。
 
-> 说明：`latexmk`「增量」是对整份文档重跑一遍 xelatex 单遍（引擎特性），不跳过未改动文件；超大文档的单遍耗时可能超延迟预算，详见 [ADR-0005](./docs/adr/0005-latexmk-first-incremental-next.md)。
+> 说明：驱动层与其它引擎已按 [ADR-0015](./docs/adr/0015-tectonic-only-embedded-engine.md) 删除；历史上 latexmk 的「增量」是对整份文档重跑一遍 xelatex 单遍（不跳过未改动文件）——那条结论保留在 [ADR-0005](./docs/adr/0005-latexmk-first-incremental-next.md)。Tectonic 的收敛由引擎自己完成。外部工具：**biber 不自带**（子进程形态下 Tectonic 会调用本机 biber，**版本须与文档用的 biblatex 匹配**，否则失败；库内嵌形态不调用），**makeindex / glossaries 不会自动跑**（索引/术语表为空）；三类都会在检出时给状态栏提示与替代做法，不会静默失败。
 
 ## 编辑与预览
 
@@ -58,7 +58,7 @@ npm install && npm run tauri dev   # 开发构建；发布打包用 npm run taur
 - **文件夹即项目**：打开文件夹 → 文件树 → 多标签页；自动保存（防抖）+ 外部修改检测与冲突提示。
 - **在软件内管理文档**：文件树支持新建文件/目录、删除（二次确认 + 目录递归）、改名、搜索；空项目里建第一份 `.tex` 时会问一次「文档语言 / 类型 / 标题」（中文 ctex 类或标准类，短文/报告/书/幻灯片），直接生成一份**能编译的最小骨架**，不想要这一步可在「设置 → 编译」里关掉。
 - **根文件**：正则启发式自动探测（含 `\documentclass` 的顶层 .tex），可手动覆盖；**还没有根文档**时状态栏给出可点提示，并且每次保存都会静默重探一次——补上 `\documentclass` 保存即成主文件并自动出图。
-- **设置**：引擎（**Tectonic 默认**，可切 XeLaTeX / LuaLaTeX / pdfLaTeX；选项由后端给，本机不可用的会禁用并说明缺什么）、编译模式、防抖、超时、根文件覆盖；全局 + 项目（`.latteset/settings.json`）两层，改即生效。选 Tectonic 后可再选**子进程**或**库内嵌**形态、宏包集来源与缓存目录。
+- **设置**：引擎**固定为 Tectonic**（不再有引擎下拉/可用性清单，`LATTESET_TEX_ENGINES` 已删除；旧配置里的 `compile.engine` 会被忽略并在状态栏给一次提示、留 `settings.json.v1.bak`）、编译模式、防抖、超时、根文件覆盖；全局 + 项目（`.latteset/settings.json`）两层，改即生效。引擎页只剩 **子进程 / 库内嵌**形态、宏包集来源与缓存目录。
 
 ## 命令行与 MCP（无 GUI，面向自动化）
 
@@ -66,13 +66,13 @@ GUI 之外，同一套核心也能被脚本与 AI Agent 直接驱动：`crates/l
 
 ```bash
 cargo build -p latteset-server            # 产物在工作区 target/debug（未打进安装包）
-latteset-cli --project <项目目录> compile # 退出码 0=编译通过，1=编译未通过
+latteset-cli --project <项目目录> compile # 默认完整 Tectonic 收敛；--quick 两趟（-r 1）。退出码 0=编译通过，1=编译未通过
 latteset-mcp --project <项目目录>         # 供 harness / Agent 拉起（stdio）
 ```
 
-用法、工具清单与限制见 [docs/cli.md](./docs/cli.md)。
+用法、工具清单与限制见 [docs/cli.md](./docs/cli.md)。编译报告里的 `engine` 字段保留、值恒为 `"tectonic"`；`settings` 输出含 `notices`（一次性提示）。
 
-- **同一项目不要同时用 GUI 和 CLI 编译**：两路 latexmk 会抢同一个 `tmp/`；约定 headless 独占。
+- **同一项目不要同时用 GUI 和 CLI 编译**：两路 `tectonic` 会抢同一个 `tmp/`；约定 headless 独占。
 
 > 开发、设计与路线见 [docs/](./docs/)（导航）、[glossary.md](./docs/glossary.md) 与 [roadmap.md](./docs/roadmap.md)。
 

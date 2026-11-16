@@ -1,14 +1,15 @@
-//! Latexmk 执行器（modules.md §2.6 / 设计决策 D2；位于基础设施层，ADR-0010）。
+//! 编译执行器（modules.md §2.6 / 设计决策 D2；位于基础设施层，ADR-0010）。
 //!
-//! 超时检测、进程树杀、PDF 拷贝全在这里；调度器无时钟、无进程概念。
+//! **驱动外部 `tectonic`（子进程形态）** —— ADR-0015 之后引擎只剩 Tectonic，latexmk 驱动路径与
+//! 其它引擎的命令构造已删除。超时检测、进程树杀、PDF 拷贝全在这里；调度器无时钟、无进程概念。
 //!
-//! **流式输出**（roadmap「阶段 2」）：引擎的 stdout/stderr 接管道并**逐行读**——页标记
-//! `[N]` 增量汇总成"已排版 N 页"事件，输出文本节流解析成"编译中的错误"事件。
+//! **流式输出**（roadmap「阶段 2」）：进程的 stdout/stderr 接管道并**逐行读**——页标记
+//! `[N]`（Tectonic 的 `-p`）增量汇总成"已排版 N 页"事件；输出文本节流解析成"编译中的错误"事件。
 //! 终态仍以 `.log` 为准（`parse_log` 是权威），流式期间报的是**非权威中间态**；
 //! 且流式错误**只报致命错误、不报警告**（理由见 [`entries_from_log`]）。
 
 use async_trait::async_trait;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use latteset_core::log_parser::{
@@ -17,7 +18,9 @@ use latteset_core::log_parser::{
 };
 use latteset_core::project::{collect_tex_files, FileSystem};
 use latteset_core::scheduler::{CompileProgress, CompileRunner};
-use latteset_core::types::{CompileKind, CompileOutcome, CompileRequest, Engine, ErrorEntry, ErrorKind};
+use latteset_core::types::{
+    CompileKind, CompileOutcome, CompileRequest, ErrorEntry, ErrorKind, ENGINE_ID,
+};
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, warn};
@@ -29,22 +32,30 @@ const OUT_DIR: &str = "tmp";
 
 /// 流式错误解析的节流间隔：既不让解析吃 CPU，也不让错误"迟到"太多。
 const LIVE_ERROR_INTERVAL: Duration = Duration::from_millis(500);
-/// 尾随 `.log` 的轮询间隔（引擎按页 flush，故这个量级足够跟手）。
+/// 尾随 `.log` 的轮询间隔。
+///
+/// 注意：Tectonic 的 `.log` **收尾才落盘**，编译期间这条轮询多半读不到东西（见 [`LiveFeedback`]）；
+/// 它保留为**补充/兜底**（某些引擎或平台会把日志边写边落盘），终态解析不依赖它。
 const LOG_POLL_INTERVAL: Duration = Duration::from_millis(200);
+/// 超时路径的**收尾读任务**等待上限：进程已死 → 管道很快 EOF；上限只防"孙子进程仍持有写端"。
+const PUMP_DRAIN_TIMEOUT: Duration = Duration::from_millis(600);
+/// 超时证据取捕获输出的**尾部**（字符数）：只要最后几屏——够判"有没有页输出/有没有致命错误"。
+/// 全量缓冲最多 2 MiB（[`LIVE_ERROR_BUFFER`]），全量重扫没有意义。
+const TIMEOUT_OUTPUT_TAIL: usize = 8 << 10;
 /// 流式错误解析保留的输出上限（超出后只保留尾部——页标记是单调的，历史文本对进度无用）。
 const LIVE_ERROR_BUFFER: usize = 1 << 21; // 2 MiB
 
-/// 编译器实现（`CompileRunner` 的唯一实现）。
+/// 编译器实现（`CompileRunner` 的唯一实现）：驱动外部 `tectonic` 可执行文件。
 ///
-/// 名字是历史遗留：㉘ 之后它按 [`CompileKind`] 驱动**两条**命令——`Full` 用 latexmk、
-/// `Quick` 直调引擎单趟。改名会牵动架构图 SVG 与三处文档，暂留此名。
-pub struct LatexmkRunner {
+/// 历史：ADR-0015 之前它按 [`CompileKind`] 驱动两条命令（`Full` 用 latexmk、`Quick` 直调引擎），
+/// 名字叫 `LatexmkRunner`。引擎统一后只剩 Tectonic 一条路径，故改名并删除那条分支。
+pub struct SubprocessRunner {
     pub fs: Arc<dyn FileSystem>,
     /// 编译进行中的反馈通道（默认 [`latteset_core::scheduler::NoProgress`]）。
     pub progress: Arc<dyn CompileProgress>,
 }
 
-impl LatexmkRunner {
+impl SubprocessRunner {
     /// 构造：`progress` 传 `Arc::new(NoProgress)` 即关闭流式反馈（headless/测试）。
     pub fn new(fs: Arc<dyn FileSystem>, progress: Arc<dyn CompileProgress>) -> Self {
         Self { fs, progress }
@@ -53,14 +64,27 @@ impl LatexmkRunner {
 
 /// 编译进行中的反馈状态机（**唯一**写者：外部把新文本 `feed` 进来）。
 ///
-/// 两个来源都喂它：① 引擎 stdout/stderr 管道；② `tmp/<stem>.log` 的尾随读取。
-/// 为什么两个都要（实测）：stdout 在非 TTY 下是 **4KB 块缓冲**——短文档的错误要等到进程结束
-/// 才 flush；而 `.log` 是**按页 flush** 的，所以"边编译边报"以日志为主、管道为辅。
+/// 两个来源都喂它：① 引擎 stdout/stderr 管道（**主来源**）；② `tmp/<stem>.log` 的尾随读取
+/// （**补充**，见 [`tail_log`]）。
+///
+/// 实测口径（Tectonic，2026-11 review E4 复核）：页进度走 `-p` 打在 **stdout 的 `[N]`**；
+/// `.log` 是**收尾才落盘**的（`--keep-logs`）——编译期间 `tmp/<stem>.log` 往往一个字节都没有，
+/// 超时/取消树杀时更是如此。所以：
+/// - "边编译边报"的实时通道是**管道**，不是日志；
+/// - 超时/取消诊断的证据也必须取**已捕获的 stdout/stderr**（见 [`SubprocessRunner::timeout_entry`]），
+///   只读 `.log` 会拿到空证据；
+/// - `.log` 仍是**终态**解析的权威来源（进程正常退出后它才完整）。
+///
 /// 同一份内容可能从两个来源各来一次 → 页码单调（重复无害），错误按指纹去重。
 struct LiveFeedback {
     progress: Arc<dyn CompileProgress>,
     scanner: PageMarkerScanner,
     buffer: String,
+    /// 流式通道观测到的最大页码（**事实**：引擎打过 `[N]`）。
+    ///
+    /// 单独留一份是因为超时快照可能取不到完整尾部：树杀与管道 EOF 之间有竞态，
+    /// 最后的 `[N]` 可能落在尾部窗口之外。页证据不该因此丢失（review E4 的原始症状）。
+    max_page: Option<u32>,
     dirty: bool,
     last_parse: Instant,
     last_emitted: Option<u64>,
@@ -72,6 +96,7 @@ impl LiveFeedback {
             progress,
             scanner: PageMarkerScanner::new(),
             buffer: String::new(),
+            max_page: None,
             dirty: false,
             last_parse: Instant::now() - LIVE_ERROR_INTERVAL,
             last_emitted: None,
@@ -88,6 +113,8 @@ impl LiveFeedback {
             return;
         }
         if let Some(pages) = self.scanner.push(text) {
+            // `PageMarkerScanner` 只升不降：直接记最大页
+            self.max_page = Some(pages);
             self.progress.pages(pages);
         }
         self.buffer.push_str(text);
@@ -131,6 +158,14 @@ impl LiveFeedback {
         }
         self.buffer.chars().skip(total - max_chars).collect()
     }
+
+    /// 超时/取消路径的证据快照：已捕获输出的尾部 + 流式观测到的最大页码。
+    ///
+    /// 两者一起取是**为了不依赖竞态**：树杀到管道 EOF 之间，最后一段 `[N]` 可能还没进缓冲，
+    /// 但 `max_page` 是先前 `feed` 时就记下的（引擎确实打过这个页标记）——页证据不会丢。
+    fn evidence_snapshot(&self, max_chars: usize) -> (String, Option<u32>) {
+        (self.tail(max_chars), self.max_page)
+    }
 }
 
 /// 流式读取一条管道（stdout/stderr）：逐行喂 [`LiveFeedback`]。
@@ -145,10 +180,12 @@ where
     }
 }
 
-/// 尾随 `tmp/<stem>.log`（**按页 flush**，是流式反馈的主力来源）。
+/// 尾随 `tmp/<stem>.log`（**补充来源**，不是主力：Tectonic 的日志收尾才落盘）。
 ///
 /// 用 [`FileSystem::read_appended`] 只读新增字节；每 [`LOG_POLL_INTERVAL`] 一次。
 /// `stop` 由调用方在编译收尾时置位（终态解析以整份 `.log` 为准）。
+/// 编译期间读不到文件是**正常**的（日志还没落盘），此时实时反馈完全依赖管道；
+/// 收尾那次补读仍然有价值：日志落盘后能补上管道缓冲里丢掉的中段内容。
 async fn tail_log(
     fs: Arc<dyn FileSystem>,
     log_path: std::path::PathBuf,
@@ -210,26 +247,6 @@ fn fingerprint(entries: &[ErrorEntry]) -> u64 {
     h.finish()
 }
 
-/// 页哈希缓存路径（与 XDV 同目录：`tmp/<stem>.<引擎>.pages`）。
-///
-/// 为什么放**磁盘**而不是 runner 内存（功能点 A 的设计取舍）：runner 保持无状态（`&self` 不可变、
-/// 一次调用完全独立，见 modules.md §2.6）；而且这份基线能被 Quick 与 Full 两条路径共享——
-/// 若各自记在内存里，两者交替时会把对方的产物当成"变了"，白白多转换一次。
-///
-/// 为什么**带引擎名**（2026-09，已知债 #25）：页哈希的口径与引擎绑定。同一个 `main.tex` 换引擎后，
-/// 页内容必然不同；若共用一份缓存，跨引擎的"逐页相同"判断就是拿两套口径比大小。今天只有 XeLaTeX
-/// 产哈希（`Engine::writes_xdv`），但按引擎分文件后，将来给 LuaLaTeX 接**引擎内逐页指纹**
-/// 时两套哈希不会互相污染。
-/// 页哈希缓存路径。
-///
-/// **口径在 core**（[`latteset_core::xdv::pages_cache_path`]）：库形态档的 runner 在
-/// `latteset-tectonic`，按 ADR-0012 **不依赖 infra**，所以"带引擎名 + 首行口径标记"这套约定
-/// 必须有一处共同的定义（2026-09 提到 core）——两处各写一份就会漂移，而漂移的代价是
-/// "永远首轮"（A 面每轮白跑 0.65–0.94 s）。
-fn pages_cache_path(tmp_dir: &Path, stem: &str, engine: Engine) -> PathBuf {
-    latteset_core::xdv::pages_cache_path(tmp_dir, stem, engine)
-}
-
 fn root_stem(root_file: &Path) -> String {
     root_file
         .file_stem()
@@ -237,55 +254,11 @@ fn root_stem(root_file: &Path) -> String {
         .unwrap_or_else(|| "main".to_string())
 }
 
-/// 中和模板自带 `latexmkrc` 的两条设置（roadmap ㉖，2026-09-17 定位 + 判决实验）。
-///
-/// 真凶不是 `\include` 的 aux 子目录，而是 rc 里的 **`$preview_continuous_mode = 1;`**（= latexmk 的
-/// `-pvc`）：latexmk 编译完（或报错后）**都不退出**，停在那里等文件变化、CPU 归零 ⇒ 我们的 runner
-/// 只能等到超时 ⇒ 用户看到的是「超时」而不是真正的内容错误；实测它还会顺手**拉起外部 PDF 预览器**
-/// （`Running 'start start "tmp/main.pdf"'`）。
-///
-/// 为什么用 `-e`：它在 latexmk **读完 rc 之后**才执行 ⇒ 能覆盖 rc 的赋值，而模板的其它设置
-/// （`$pdflatex` 覆写、`--shell-escape`、`splitindex`…）一概不动（与本项目已用过的
-/// `-e '$biber=0;…'` 同一机制）。
-pub const LATEXMK_RC_NEUTRALIZE: &str = "$preview_continuous_mode=0;$pdf_update_method=0;";
-
-/// 预建 `\include{子目录/…}` 需要的输出子目录（roadmap ㉖）。
-///
-/// 只扫根文件里的 `\include{…}` / `\input{…}` 字面量（宏拼接的动态名跳过），目录已存在就无事发生。
-/// 失败只记 `debug!`：这一步是**预防**，不该让编译本身失败。
-fn ensure_include_subdirs(root_file: &Path, project_root: &Path) {
-    let Ok(source) = std::fs::read_to_string(root_file) else {
-        return;
-    };
-    let out_dir = project_root.join(OUT_DIR);
-    let mut made = 0usize;
-    for needle in ["\\include{", "\\input{"] {
-        for (idx, _) in source.match_indices(needle) {
-            let after = &source[idx + needle.len()..];
-            let Some(end) = after.find('}') else { continue };
-            let target = after[..end].trim();
-            // 含 `\` 的目标多半是宏名（`\jobname` 之类）而不是字面路径 —— 跳过（保守，不猜）。
-            if target.is_empty() || target.contains('\\') {
-                continue;
-            }
-            let Some(dir) = Path::new(target).parent() else { continue };
-            if dir.as_os_str().is_empty() {
-                continue;
-            }
-            if std::fs::create_dir_all(out_dir.join(dir)).is_ok() {
-                made += 1;
-            }
-        }
-    }
-    if made > 0 {
-        debug!(dirs = made, "预建输出子目录（`\\include` 的 aux 落点）");
-    }
-}
-
-/// latexmk 输入参数：相对项目根的完整路径（不能用 stem——嵌套根文件如 `css/thesis.tex`/// 只取 stem 会跑成 `latexmk thesis.tex`，在项目根下不存在）。统一用正斜杠，避免 Windows
-/// 反斜杠在 latexmk 内被当作转义。latexmk jobname 取输入文件名 basename，故产物仍是
-/// `tmp/<stem>.pdf`，与 `pdf_dst`/`pdf_src` 的 stem 计算保持一致。
-fn latexmk_input(root_file: &Path, project_root: &Path) -> String {
+/// Tectonic 的输入参数：相对项目根的完整路径（**不能只用 stem**——嵌套根文件如 `css/thesis.tex`
+/// 只取 stem 会变成 `thesis.tex`，在项目根下不存在）。统一正斜杠：Windows 反斜杠在 TeX 的
+/// 路径解析里是转义字符。Tectonic 的 jobname 取输入文件名 basename，故产物仍是 `tmp/<stem>.pdf`，
+/// 与 `pdf_dst` 的 stem 计算一致。
+fn input_path(root_file: &Path, project_root: &Path) -> String {
     root_file
         .strip_prefix(project_root)
         .unwrap_or(root_file)
@@ -293,81 +266,7 @@ fn latexmk_input(root_file: &Path, project_root: &Path) -> String {
         .replace('\\', "/")
 }
 
-/// 编译命令构造（modules.md §2.6 算法）：cwd = 项目根，相对 input/include 才能解析。
-///
-/// 抽成独立函数是为了**可单测**（参数与环境变量都能直接断言，不必真的起进程）。
-///
-/// `bundle` 是 Tectonic 的 bundle 获取策略（P0/t14，见 [`crate::tectonic`]）；非 Tectonic 引擎
-/// 不看它。生产路径由 `compile()` 探测后传入，测试按需显式传两档。
-fn compile_command(req: &CompileRequest, kind: CompileKind, bundle: BundlePolicy) -> tokio::process::Command {
-    let mut cmd = match kind {
-        // Quick：直调引擎一趟（实测比完整 latexmk 快 40% 中位，见 design.md §延迟预算实测附节）。
-        // 与 latexmk 的差异只在外层机制与收敛趟；产物路径与 Full 一致（都在 tmp/<stem>.pdf）。
-        //
-        // `-no-pdf`（2026-09，功能点 A）：直调引擎**只产 XDV**，PDF 改为由我们在收尾时按需调
-        // `xdvipdfmx` 转换——这样"页哈希与上次逐页相同"时就能整个跳过转换（省 0.65–0.94s/次）。
-        // latexmk 内部走的也是这条序列（`xelatex -no-pdf` → `xdvipdfmx -E -o …`，见 design.md）。
-        CompileKind::Quick => {
-            if req.engine == latteset_core::types::Engine::Tectonic {
-                tectonic_command(req, true, bundle)
-            } else {
-                let mut c = crate::proc::command(req.engine.binary_name());
-                // `-no-pdf`（2026-09，功能点 A）**只对 XeTeX 成立**：直调引擎只产 XDV，PDF 改由收尾时
-                // 按需调 `xdvipdfmx` 转换（"页哈希逐页相同"就整个跳过转换，省 0.65–1.4s/次，见 §已知债 #25）。
-                // 换别的引擎加这个参数只会坏事——实测（2026-09）：pdflatex 报 `unrecognized option
-                // '-no-pdf'`（Quick 直接跑不起来），lualatex 静默忽略它（照样写 PDF，白等一趟）。
-                // 非 XeTeX 引擎的 Quick 就是"引擎单趟直写 PDF"，收尾不做转换（见 finish_success）。
-                if req.engine.writes_xdv() {
-                    c.arg("-no-pdf");
-                }
-                c.arg("-interaction=nonstopmode")
-                    .arg("-synctex=1")
-                    .arg(format!("-output-directory={OUT_DIR}"))
-                    .arg(latexmk_input(&req.root_file, &req.project_root));
-                c
-            }
-        }
-        CompileKind::Full => {
-            if req.engine == latteset_core::types::Engine::Tectonic {
-                tectonic_command(req, false, bundle)
-            } else {
-                // ㉖：起 latexmk 之前按根文件的 `\include`/`\input` 列表预建输出子目录 ——
-                // `\include{body/intro}` 要写 `tmp/body/intro.aux`，而 xelatex **不建**输出目录的子目录
-                // （latexmk 一般会在第一趟失败后补建再重跑，但遇到 rc 的 pvc / 错误停止就不补）⇒
-                // 报 `! I can't write on file 'body/intro.aux'` 然后 Emergency stop。
-                ensure_include_subdirs(&req.root_file, &req.project_root);
-                let mut c = crate::proc::command("latexmk");
-                c.arg(req.engine.latexmk_flag())
-                    .arg(format!("-outdir={OUT_DIR}"))
-                    // ㉖：中和模板 rc 里的 `$preview_continuous_mode = 1`（= `-pvc`，latexmk 永不退出）。
-                    .arg("-e")
-                    .arg(LATEXMK_RC_NEUTRALIZE)
-                    .arg("-synctex=1")
-                    .arg("-interaction=nonstopmode")
-                    .arg(latexmk_input(&req.root_file, &req.project_root));
-                c
-            }
-        }
-    };
-    // 构建确定性（roadmap ㉚，2026-09 实测）：不设这个变量时，同一份源码连跑两次产出的 PDF
-    // **不是**逐字节相同的——差异只在 trailer 的 `/ID`（64 字节），而 XeTeX 用它做**内容无关**的
-    // 随机/时间种子。设成固定值后实测两份 PDF SHA-256 完全一致（见 scripts/check-determinism.mjs）。
-    // 这是"输出 diff / 只重排变化页"这类优化的前提：字节不同就分不清"真变了"还是"ID 抖了"。
-    // 副作用实测：**XeTeX 的 `\today` 不受它影响**（仍打印构建当天日期），PDF 里也不会因此多出
-    // `/CreationDate`——所以固定成 0（reproducible-builds 惯例）只影响 ID，不污染文档内容。
-    //
-    // **按引擎分档（2026-09-14 裁决 D4，别改回无条件设置）**：Tectonic 把这个变量当**引擎时间源**
-    // 喂给 `\today` —— 设 0 时**正文**会印成 `1970 年 1 月 1 日`（实测；而 XeTeX 只动 PDF `/ID`、
-    // 正文零变化）。所以 **Tectonic 进程不设**它；不设时 Tectonic 的 XDV 仍逐字节稳定（264,736 B），
-    // 页哈希判据不受影响。依据与代价见 docs/archive/research/tectonic-test-plan.md §5.4 D4 与
-    // docs/archive/research/page-hash-prev-quant.md。
-    if req.engine != latteset_core::types::Engine::Tectonic {
-        cmd.env("SOURCE_DATE_EPOCH", EPOCH_FOR_REPRODUCIBLE_BUILD);
-    }
-    cmd
-}
-
-/// Tectonic 命令（路线①；`docs/archive/research/tectonic-test-plan.md` §1.2 / INT-20）。
+/// Tectonic 命令（`docs/archive/research/tectonic-test-plan.md` §1.2 / INT-20）。
 ///
 /// 参数按测试方案定为**必带**（`-C` 例外，见下）：
 /// - `-C`（仅当 `bundle == CachedOnly`）：只用缓存资源（离线，不联网下载）。**不能无条件加**——
@@ -379,16 +278,15 @@ fn compile_command(req: &CompileRequest, kind: CompileKind, bundle: BundlePolicy
 /// - `-p`：页进度走 **stdout 的 `[N]`** —— 这是 Tectonic 下唯一的实时页通道；
 /// - `-r 1`（仅 Quick）：**两趟**（`-r N` = 再跑 N 趟）。⚠ **单趟（`-r 0`）会丢整段目录**：
 ///   Tectonic 的 `-o tmp` **只是输出目录、不作为输入目录**，所以它**读不回**上一趟留在 `tmp/` 的
-///   `.toc`/`.aux`（对照：latexmk 靠 `-output-directory` 读得回，库形态档靠
-///   `seed_previous_intermediates` 预热），单趟档每趟都从零重建目录。
+///   `.toc`/`.aux`（库形态档靠 `seed_previous_intermediates` 预热），单趟档每趟都从零重建目录。
 ///   实测（release `tectonic.exe` 0.17.0、同夹具同命令形态、`-k` 保留中间产物）：
 ///   `-r 0` = **26 页 / 12,624 字**（第 2 页只剩页码标记，正文从第 3 页起 = 没有目录），
 ///   `-r 1` = **28 页 / 13,570 字**（目录占第 2–3 页，与收敛档逐项一致）。
 ///   Quick 的语义是"目录/交叉引用**页码**落后一趟"（roadmap ㉘）；单趟档丢的是整段目录，不是页码。
 ///   两趟 1057 ms（单趟 657、收敛 1495），Quick 仍明显快于 Full；
-/// - `-o tmp`：产物目录与其它引擎一致（`tmp/<stem>.pdf`）。
+/// - `-o tmp`：产物落在 `tmp/<stem>.pdf`（`finish_success` 再原子拷贝到项目根）。
 fn tectonic_command(req: &CompileRequest, quick: bool, bundle: BundlePolicy) -> tokio::process::Command {
-    let mut c = crate::proc::command(req.engine.binary_name());
+    let mut c = crate::proc::command(ENGINE_ID);
     if bundle == BundlePolicy::CachedOnly {
         c.arg("-C");
     }
@@ -401,31 +299,28 @@ fn tectonic_command(req: &CompileRequest, quick: bool, bundle: BundlePolicy) -> 
     if quick {
         c.arg("-r").arg("1");
     }
-    c.arg(latexmk_input(&req.root_file, &req.project_root));
+    c.arg(input_path(&req.root_file, &req.project_root));
     c
 }
 
-/// 固定时间戳（0 = 1970-01-01，reproducible-builds 惯例）：只用来让引擎的 `/ID` 不随时钟抖动。
-const EPOCH_FOR_REPRODUCIBLE_BUILD: &str = "0";
-
 #[async_trait]
-impl CompileRunner for LatexmkRunner {
+impl CompileRunner for SubprocessRunner {
     async fn compile(&self, req: CompileRequest, cancel: CancellationToken) -> CompileOutcome {
         let stem = root_stem(&req.root_file);
         let tmp_dir = req.project_root.join(OUT_DIR);
         let pdf_dst = req.project_root.join(format!("{stem}.pdf"));
 
-        // 输出目录由**产品自建**（tectonic-test-plan P-G4，2026-09 实测）：
-        // latexmk / `xelatex -output-directory` 会自己建 `tmp/`，但 **Tectonic 不会**——
-        // 目录不存在时它直接 `error: output directory "tmp" does not exist`（exit 1），
-        // 而且**连 .log 都不落盘** ⇒ 用户看到的是"编译失败且无法读取日志"这种没有信息量的报错。
-        // 三个引擎都走这一步（幂等；真建不出来时后面的编译自会以更具体的方式失败）。
+        // 输出目录由**产品自建**：Tectonic **不会**建 `tmp/` 本身——目录不存在时它直接
+        // `error: output directory "tmp" does not exist`（exit 1）且**连 .log 都不落盘**
+        // （U-14 实测，`test_file/u14/REPORT-u14.md`）⇒ 用户看到的是"编译失败且无法读取日志"
+        // 这种没有信息量的报错。它自己会建**子目录**（`tmp/chapters/`、`tmp/a/b/`，含中文），
+        // 所以这里只需要建 `tmp/` 这一层（幂等；真建不出来时后面的编译自会以更具体的方式失败）。
         if let Err(e) = tokio::fs::create_dir_all(&tmp_dir).await {
             debug!(dir = %tmp_dir.display(), "创建输出目录失败（继续尝试编译）：{e}");
         }
 
-        // 强度决策（roadmap ㉘）：编辑触发的 Quick 走「直调引擎单趟」；其余走完整 latexmk。
-        // 但 **Quick 需要已有构建产物**才有意义（单趟依赖上一趟的 .aux/.toc）；首次编译无 aux 时
+        // 强度决策（roadmap ㉘）：编辑触发的 Quick 跑「两趟」，其余跑完整收敛。
+        // 但 **Quick 需要已有构建产物**才有意义（依赖上一趟的 .aux/.toc）；首次编译无 aux 时
         // 单趟会产出「引用全是 ??」的 PDF——故此处自动升级为 Full。
         // 探测失败（权限/竞态）按「无产物」保守处理：升级为 Full 只是更慢，不会出错。
         let had_aux = self.fs.exists(&tmp_dir.join(format!("{stem}.aux"))).await.unwrap_or(false);
@@ -435,34 +330,27 @@ impl CompileRunner for LatexmkRunner {
             kind = CompileKind::Full;
         }
 
-        // Tectonic 的 bundle 获取策略（P0/t14）：**只有拿到缓存正向证据才加 `-C`**——冷缓存加它
-        // 等于"拒绝联网取 bundle"，首编必失败。判定依据与证据见 crate::tectonic。
-        let bundle = if req.engine == latteset_core::types::Engine::Tectonic {
-            let probe = tectonic::probe();
-            debug!(
-                policy = ?probe.policy,
-                cache_ready = probe.cache_ready,
-                cache_dir = ?probe.cache_dir,
-                forced = ?probe.forced,
-                "Tectonic bundle 策略"
-            );
-            probe.policy
-        } else {
-            BundlePolicy::CachedOnly
-        };
+        // bundle 获取策略（P0/t14）：**只有拿到缓存正向证据才加 `-C`**——冷缓存加它等于
+        // "拒绝联网取 bundle"，首编必失败。判定依据与证据见 crate::tectonic。
+        let probe = tectonic::probe();
+        debug!(
+            policy = ?probe.policy,
+            cache_ready = probe.cache_ready,
+            cache_dir = ?probe.cache_dir,
+            forced = ?probe.forced,
+            "Tectonic bundle 策略"
+        );
+        let bundle = probe.policy;
 
         // 命令构造（modules.md §2.6 算法）：cwd = 项目根，相对 input/include 才能解析
-        let mut cmd = compile_command(&req, kind, bundle);
-        match kind {
-            CompileKind::Quick => debug!(engine = req.engine.binary_name(), "Quick 编译（单趟直调引擎）"),
-            CompileKind::Full if req.engine == latteset_core::types::Engine::Tectonic => {
-                debug!(engine = "tectonic", "Full 编译（Tectonic 自带收敛，不经 latexmk）")
-            }
-            CompileKind::Full => debug!(engine = req.engine.latexmk_flag(), "Full 编译（完整 latexmk 收敛）"),
-        }
+        let mut cmd = tectonic_command(&req, kind == CompileKind::Quick, bundle);
+        debug!(
+            engine = ENGINE_ID,
+            kind = kind.as_str(),
+            "启动编译（Tectonic 子进程；Full = 引擎自带收敛）"
+        );
         cmd.current_dir(&req.project_root)
             // 流式输出（roadmap「阶段 2」）：接管道逐行读——页进度与"编译中的错误"都从这里来。
-            // 此前是 Stdio::null()：引擎输出被整个丢弃，编译期既没有进度也没有实时错误。
             .stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::piped())
             // 进程孤儿防护：若编译 future 被丢弃（应用退出/任务取消），随 future 一并杀掉子进程。
@@ -471,19 +359,11 @@ impl CompileRunner for LatexmkRunner {
 
         let mut child = match cmd.spawn() {
             Ok(c) => c,
+            // Tectonic 未装时的文案必须**指对方向**：不是"TeX Live 未安装"——它自带 bundle、
+            // 本来就不依赖 TL；它也不会命中 bundle/缓存失败那条路径（那是 spawn 成功之后的失败）。
             Err(e) => {
                 return CompileOutcome::IoError {
-                    message: match (kind, req.engine) {
-                        // INT-16：Tectonic 未装时的文案必须**指对方向**（不是"TeX Live 未安装"——
-                        // 它自带 bundle、本来就不依赖 TL）；它也不会命中 bundle/缓存失败那条路径
-                        // （那是 spawn 成功之后的失败，见 compile() 收尾的 tectonic 文案）。
-                        (_, latteset_core::types::Engine::Tectonic) => format!(
-                            "无法启动 tectonic（Tectonic 需单独安装、且要在 PATH 里）：{e}"
-                        ),
-                        (CompileKind::Quick, _) =>
-                            format!("无法启动 {}（TeX Live 未安装？）：{e}", req.engine.binary_name()),
-                        (CompileKind::Full, _) => format!("无法启动 latexmk（TeX Live 未安装？）：{e}"),
-                    },
+                    message: format!("无法启动 tectonic（Tectonic 需单独安装、且要在 PATH 里）：{e}"),
                 }
             }
         };
@@ -513,8 +393,20 @@ impl CompileRunner for LatexmkRunner {
                     warn!(pid, "编译超时（{}s），树杀进程", req.timeout.as_secs());
                     kill_tree(pid);
                 }
+                // 证据通道（review E4）：Tectonic 的 `.log` 是**收尾才落盘**的，被树杀时
+                // `tmp/<stem>.log` 常常是零字节；而进程是 piped 的，`-p` 的页标记与 stderr
+                // 都已经在内存缓冲里。所以这里**先等读任务把管道读干净**再取快照——
+                // 顺序反了会漏掉最后一段输出（树杀 → EOF 之间还在管道里）。
+                stop.store(true, std::sync::atomic::Ordering::Relaxed);
+                while let Some(pump) = pumps.pop() {
+                    let _ = tokio::time::timeout(PUMP_DRAIN_TIMEOUT, pump).await;
+                }
+                let (output_tail, observed_pages) =
+                    feedback.lock().await.evidence_snapshot(TIMEOUT_OUTPUT_TAIL);
                 // roadmap ㉕：超时不静默重试，改为**现场采集证据**给出可操作诊断
-                let entry = self.timeout_entry(&req, &stem, &tmp_dir, had_aux).await;
+                let entry = self
+                    .timeout_entry(&req, &stem, &tmp_dir, had_aux, &output_tail, observed_pages)
+                    .await;
                 CompileOutcome::Timeout { entry }
             }
             _ = cancel.cancelled() => {
@@ -526,10 +418,18 @@ impl CompileRunner for LatexmkRunner {
             }
             status = child.wait() => match status {
                 Ok(s) if s.success() => {
-                    // 成功收尾抽成方法：里面可能"跳过转换"提前返回，而 select 分支里**不能直接 return**
-                    // （会跳过下面的 stop/join 收尾，泄漏读任务）。
-                    match self.finish_success(&req, &tmp_dir, &stem, kind, &pdf_dst).await {
-                        Ok(outcome) => outcome,
+                    // 成功收尾留在 select 分支内：分支里不能直接 `return`（会跳过下面的
+                    // stop/join 收尾，泄漏读任务），所有收尾动作都在这里完成。
+                    match self.finish_success(&tmp_dir, &stem, kind, &pdf_dst).await {
+                        Ok(outcome) => {
+                            // 成功路径的"外部工具"提示：biber / makeindex / glossaries 缺失不会让
+                            // Tectonic 失败（它只跳过那一步），用户看到的会是"编译成功但引用/索引不对"。
+                            for msg in external_tool_notices(self.fs.as_ref(), &tmp_dir, &stem).await {
+                                warn!(stem, "{msg}");
+                                self.progress.notice(msg);
+                            }
+                            outcome
+                        }
                         Err(message) => CompileOutcome::IoError { message },
                     }
                 }
@@ -562,7 +462,7 @@ impl CompileRunner for LatexmkRunner {
                     }
                 }
                 Err(e) => CompileOutcome::IoError {
-                    message: format!("等待 latexmk 失败：{e}"),
+                    message: format!("等待 tectonic 失败：{e}"),
                 },
             },
         };
@@ -576,9 +476,7 @@ impl CompileRunner for LatexmkRunner {
         // Tectonic 的 bundle/网络失败**只写 stderr**（连 `tmp/<stem>.log` 都不落），上面那条
         // ".log 是权威"的路径会报成「编译失败且无法读取日志」这种没有操作信息的兜底文案。
         // 收尾后拿捕获的输出尾部换成可执行文案（标记与文案见 crate::tectonic）。
-        if req.engine == latteset_core::types::Engine::Tectonic
-            && matches!(outcome, CompileOutcome::IoError { .. } | CompileOutcome::ContentError { .. })
-        {
+        if matches!(outcome, CompileOutcome::IoError { .. } | CompileOutcome::ContentError { .. }) {
             let tail = feedback.lock().await.tail(4 << 10);
             if let Some(message) = tectonic::bundle_failure_message(bundle, &tail) {
                 warn!(policy = ?bundle, "Tectonic 取 bundle 失败：已换成可执行文案");
@@ -589,87 +487,25 @@ impl CompileRunner for LatexmkRunner {
     }
 }
 
-impl LatexmkRunner {
-    /// 读 `tmp/<stem>.xdv` 算**页哈希**（顺序 = 页号）。
+impl SubprocessRunner {
+    /// 成功收尾：`tmp/<stem>.pdf` **原子拷贝**到项目根。
     ///
-    /// **只对产 XDV 的引擎有意义**（[`Engine::writes_xdv`]，已知债 #25）——调用方必须先过那道闸，
-    /// 否则会把上一次 XeLaTeX 留下的陈旧 XDV 当成本次产物。
+    /// 原子化：先写 `{stem}.pdf.tmp` 再 rename ⇒ 拷贝失败时旧 PDF 保留（不被截断/损坏）。
     ///
-    /// 为什么需要它（docs/archive/research/incremental-edit-x-dvi.md）：XDV 的页是自包含的字节区间，
-    /// 页哈希相同 ⇔ 该页的排版结果逐字节未变。于是"这次编译到底改了什么"可以被精确判定，
-    /// 下游据此跳过无谓工作——B：不发 `pdf-updated`；C：只重绘变化页；A：跳过 `xdvipdfmx` 转换。
-    ///
-    /// 契约：**不做错误上报**（它是优化判据，读不到只是"这次退化为全量刷新"）；返回空表
-    /// 表示**无法判定**，调用方不要把它当成"零页变化"。
-    async fn page_hashes(&self, tmp_dir: &Path, stem: &str) -> Vec<u64> {
-        let path = tmp_dir.join(format!("{stem}.xdv"));
-        match self.fs.read_bytes(&path).await {
-            Ok(bytes) => latteset_core::xdv::page_hashes(&bytes),
-            Err(e) => {
-                // Quick 与 Full 都会产出 XDV；走到这里通常是"引擎没跑完就失败"或工作目录被清空
-                debug!(path = %path.display(), "读 XDV 失败，页级差异不可判定：{e}");
-                Vec::new()
-            }
-        }
-    }
-
-    /// 成功收尾：页哈希 →（必要时）`xdvipdfmx` 转换 → 拷贝到项目根 → 缓存页哈希。
-    ///
-    /// 功能点 A（docs/archive/research/incremental-edit-x-dvi.md §2.2）就在这里落地：Quick 路径改用
-    /// `-no-pdf` 后不再自己转 PDF，于是"本次 XDV 页哈希与上次**逐页相同**"时可以：
-    /// **跳过转换与拷贝，直接复用项目根已有的 PDF**（省 0.65–1.4s/次）。
-    /// Full（latexmk）自己会转换，不受影响。
-    ///
-    /// **引擎闸门**（已知债 #25）：页哈希与 `xdvipdfmx` 转换**只对 [`Engine::writes_xdv`] 为真的
-    /// 引擎成立**。非 XeTeX 引擎走"引擎自己写 PDF → 直接拷贝"这一条最朴素的路——不转换、不算哈希
-    /// （`page_hashes` 为空 ⇒ 下游按"无法判定"保守全量刷新）。
+    /// **页哈希恒为空**：子进程形态的 Tectonic 走默认 PDF 档，**永不落 `.xdv`**（即使 `-k`，
+    /// XDV→PDF 的转换也在内存文件表里完成）⇒ 页级差异不可判定，`PdfUpdated.pages == 0`，
+    /// 前端全量刷新（这是该形态的既有行为）。页哈希与 A/B/C 只在**库内嵌形态**里有
+    /// （XDV 在内存捕获表里，见 `latteset-tectonic`）。
     ///
     /// 返回 `Err(message)` → 调用方包装成 `IoError`。
     async fn finish_success(
         &self,
-        req: &CompileRequest,
         tmp_dir: &Path,
         stem: &str,
         kind: CompileKind,
         pdf_dst: &Path,
     ) -> Result<CompileOutcome, String> {
-        // 页级差异的判据（B/C/A 三个功能点共用）：读本次产出的 XDV 算页哈希。
-        // 读不到 → 空表 = "无法判定"，一切优化路径都不走（保守）。
-        //
-        // **只对产 XDV 的引擎做**（已知债 #25）：非 XeTeX 引擎不写 `.xdv`，而 `tmp/` 里可能**留着**
-        // 上一次 XeLaTeX 的陈旧 XDV——若不设这道闸，收尾会把陈旧 XDV 当成本次产物：轻则多转换一次，
-        // 重则**用陈旧 XDV 的转换结果覆盖掉引擎刚写好的 PDF**（实测：LuaLaTeX 自己出 109,732 B，
-        // 被覆盖成 70,193 B 的 XeLaTeX 产物，还报"成功"）。
-        let page_hashes = if req.engine.writes_xdv() {
-            self.page_hashes(tmp_dir, stem).await
-        } else {
-            Vec::new()
-        };
-        let cache_path = pages_cache_path(tmp_dir, stem, req.engine);
-        let prev = self.read_pages_cache(&cache_path).await;
-        let unchanged = !page_hashes.is_empty() && prev.as_deref() == Some(page_hashes.as_slice());
         let pdf_src = tmp_dir.join(format!("{stem}.pdf"));
-
-        if kind == CompileKind::Quick && req.engine.writes_xdv() {
-            // 复用条件：内容逐页未变 **且** 项目根确实已经有上一次的 PDF（用户可能手删过）
-            let reusable = unchanged && tokio::fs::try_exists(pdf_dst).await.unwrap_or(false);
-            if reusable {
-                debug!(
-                    pages = page_hashes.len(),
-                    "页哈希与上次逐页相同：跳过 xdvipdfmx 转换与 PDF 拷贝（复用现有产物）"
-                );
-                self.write_pages_cache(&cache_path, &page_hashes).await;
-                return Ok(CompileOutcome::Success {
-                    pdf_path: pdf_dst.to_path_buf(),
-                    kind,
-                    page_hashes,
-                });
-            }
-            self.convert_xdv(tmp_dir, stem, &req.project_root).await?;
-        }
-
-        // tmp/<stem>.pdf → 项目根（design.md 产物位置）
-        // 原子拷贝：先写临时文件再 rename，失败时旧 PDF 保留（不被截断/损坏）。
         let pdf_tmp = pdf_dst.with_extension("pdf.tmp");
         let copy = async {
             tokio::fs::copy(&pdf_src, &pdf_tmp).await?;
@@ -684,67 +520,11 @@ impl LatexmkRunner {
                 pdf_dst.display()
             ));
         }
-        self.write_pages_cache(&cache_path, &page_hashes).await;
         Ok(CompileOutcome::Success {
             pdf_path: pdf_dst.to_path_buf(),
             kind,
-            page_hashes,
+            page_hashes: Vec::new(),
         })
-    }
-
-    /// 调 `xdvipdfmx` 把 `tmp/<stem>.xdv` 转成 `tmp/<stem>.pdf`（Quick 路径专用）。
-    ///
-    /// 为什么需要它：Quick 用了 `-no-pdf` 就没人转 PDF 了——而"按需转换"正是跳过转换的前提。
-    /// Full 路径由 latexmk 内部完成同一件事（`xdvipdfmx -E -o …`）。
-    async fn convert_xdv(&self, tmp_dir: &Path, stem: &str, project_root: &Path) -> Result<(), String> {
-        let xdv = tmp_dir.join(format!("{stem}.xdv"));
-        let pdf = tmp_dir.join(format!("{stem}.pdf"));
-        let out = crate::proc::command("xdvipdfmx")
-            .arg("-q")
-            .arg("-o")
-            .arg(&pdf)
-            .arg(&xdv)
-            .current_dir(project_root)
-            // 与 latexmk 那条路径保持一致（㉚ 构建确定性）
-            .env("SOURCE_DATE_EPOCH", EPOCH_FOR_REPRODUCIBLE_BUILD)
-            .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::piped())
-            .output()
-            .await
-            .map_err(|e| format!("无法启动 xdvipdfmx（TeX Live 未安装？）：{e}"))?;
-        if !out.status.success() {
-            let err = String::from_utf8_lossy(&out.stderr);
-            let tail: Vec<&str> = err.lines().filter(|l| !l.trim().is_empty()).take(5).collect();
-            return Err(format!(
-                "xdvipdfmx 转换失败（exit={:?}）：{}",
-                out.status.code(),
-                if tail.is_empty() { "（无 stderr 输出）".to_string() } else { tail.join(" / ") }
-            ));
-        }
-        Ok(())
-    }
-
-    /// 读上一次的页哈希缓存（`tmp/<stem>.<引擎>.pages`）。
-    ///
-    /// 解析口径在 core（[`latteset_core::xdv::parse_pages_cache`]）：**首行必须是口径标记**；
-    /// 老格式（首行直接是 16 进制哈希）与任何截断/损坏都当 `None` = **无法判定** →
-    /// 不做任何"跳过"优化（保守，只多转换一轮）。
-    async fn read_pages_cache(&self, path: &Path) -> Option<Vec<u64>> {
-        let text = self.fs.read_to_string(path).await.ok()?;
-        latteset_core::xdv::parse_pages_cache(&text)
-    }
-
-    /// 写页哈希缓存（失败只记 debug：它是优化判据，不该让编译失败——最坏结果是下次多转换一次）。
-    ///
-    /// 文本由 core 生成（[`latteset_core::xdv::format_pages_cache`]）：首行口径标记 `v1`，
-    /// 其后每页一行 `{h:016x}`；空表**不写**（免得把"无法判定"当成"零页"带给下一轮）。
-    async fn write_pages_cache(&self, path: &Path, hashes: &[u64]) {
-        let Some(body) = latteset_core::xdv::format_pages_cache(hashes) else {
-            return;
-        };
-        if let Err(e) = self.fs.write(path, &body).await {
-            debug!(path = %path.display(), "写页哈希缓存失败（下次会多转换一次）：{e}");
-        }
     }
 
     /// 源码版模板提示（roadmap ㉗）：编译报"缺 `.cls`"时，看看项目里是不是只有 `.ins`/`.dtx`。
@@ -794,20 +574,29 @@ impl LatexmkRunner {
     /// 超时错误条目（roadmap ㉕）：采集**可观察证据** → 证据化诊断 → [`ErrorEntry`]。
     ///
     /// 证据三条：① 本次是否首编（开始时有无 `.aux`）；② 项目 `.tex` 源文件数；
-    /// ③ `.log` 里已排版到第几页（推进证据，见 [`pages_typeset`]）。
+    /// ③ 已排版到第几页（推进证据，见 [`pages_typeset`]）。
     /// 三项都是"看得见的事实"，诊断文案不据此猜测因果（宁可说"可能"，也不断言"卡住"）。
-    /// 日志另交给 [`diagnose_timeout`]：里面若已有致命错误，超时就只是症状（提高超时救不了）。
+    /// 证据文本另交给 [`diagnose_timeout`]：里面若已有致命错误，超时就只是症状（提高超时救不了）。
+    ///
+    /// **证据来源**（review E4）：`.log` **不是**可靠来源——Tectonic 的日志收尾才落盘
+    /// （`--keep-logs`），超时树杀时它常常是零字节或残缺。所以这里吃两路：
+    /// `tmp/<stem>.log`（有内容就优先）＋ `output_tail`（进程 piped 的 stdout/stderr 尾部），
+    /// 再加 `observed_pages`（流式通道已经确认过的 `[N]`，防止尾部窗口漏掉它）。
+    /// 合并后 `[N]` 页标记、致命错误都能被看见，不再每次都落到"日志无页输出/可能卡住"。
     async fn timeout_entry(
         &self,
         req: &CompileRequest,
         stem: &str,
         tmp_dir: &Path,
         had_aux: bool,
+        output_tail: &str,
+        observed_pages: Option<u32>,
     ) -> ErrorEntry {
         let log_path = tmp_dir.join(format!("{stem}.log"));
         // 树杀刚发出，日志可能只落盘了一部分；读得到多少算多少（best-effort）
         let log = self.fs.read_to_string_lossy(&log_path).await.unwrap_or_default();
-        let pages = pages_typeset(&log);
+        let evidence_text = timeout_evidence_text(&log, output_tail, observed_pages);
+        let pages = pages_typeset(&evidence_text);
         let tex_files = collect_tex_files(self.fs.as_ref(), &req.project_root)
             .await
             .ok()
@@ -819,13 +608,15 @@ impl LatexmkRunner {
             first_build: !had_aux,
             tex_files,
         };
-        // 诊断看两样东西：本次运行的日志（里面可能已有致命错误 → 超时只是症状）与上面的证据
-        let diagnosis = diagnose_timeout(&log, &evidence);
+        // 诊断看两样东西：本次运行的证据文本（里面可能已有致命错误 → 超时只是症状）与上面的证据
+        let diagnosis = diagnose_timeout(&evidence_text, &evidence);
         debug!(
             timeout_secs,
             first_build = evidence.first_build,
             tex_files = ?tex_files,
             pages = ?pages,
+            log_bytes = log.len(),
+            output_chars = output_tail.chars().count(),
             kind = ?diagnosis.kind,
             "编译超时，已采集诊断证据"
         );
@@ -837,9 +628,9 @@ impl LatexmkRunner {
             facts.push(format!("{n} 个 .tex 源文件"));
         }
         if let Some(p) = pages {
-            facts.push(format!("日志已排版到第 {p} 页"));
+            facts.push(format!("已排版到第 {p} 页"));
         } else {
-            facts.push("日志无页输出".to_string());
+            facts.push("日志与输出均无页输出".to_string());
         }
         ErrorEntry {
             message: format!(
@@ -854,8 +645,197 @@ impl LatexmkRunner {
     }
 }
 
+/// 超时诊断的证据文本：`.log` 优先，捕获的进程输出补在后面（并去噪），
+/// 再用`observed_pages` 兜住"尾部窗口没截到 `[N]`"的情况。
+///
+/// 为什么必须合并（review E4 实测）：文档排完第 1 页后进入长循环，1 s 超时；
+/// 流式 `[1]` 页标记早已从 stdout 到了内存，但 `tmp/` 里**连 `.log` 都没有**（收尾才落盘）⇒
+/// 只读 `.log` 时诊断永远说"日志里还没出现任何页面输出"。合并后同一次超时能正确说
+/// "已排版到第 1 页，是在推进只是比上限慢"。
+///
+/// `observed_pages` 是流式通道**已经上报过**的最大页码：树杀 → 管道 EOF 之间有竞态，
+/// 最后一段 `[N]` 可能还没进缓冲就被取了尾部。既然引擎确实打过这个标记，就把它补成一行
+/// `[N]` 交回给同一套解析（不新造判据，也不改变语义）。
+fn timeout_evidence_text(log: &str, output_tail: &str, observed_pages: Option<u32>) -> String {
+    let tail = denoise_output_tail(output_tail);
+    let mut text = if log.trim().is_empty() {
+        tail
+    } else if tail.is_empty() {
+        log.to_owned()
+    } else {
+        let mut text = String::with_capacity(log.len() + tail.len() + 1);
+        text.push_str(log);
+        if !text.ends_with('\n') {
+            text.push('\n');
+        }
+        text.push_str(&tail);
+        text
+    };
+    if let Some(observed) = observed_pages {
+        let in_text = pages_typeset(&text);
+        if in_text.map_or(true, |p| observed > p) {
+            text.push_str(&format!("[{observed}]\n"));
+        }
+    }
+    text
+}
+
+/// 进程输出尾部的轻量去噪：去 ANSI 序列与 `\r`（Tectonic 的进度行会用回车原地刷新），
+/// 丢掉纯空白行。**不动** `[N]` 页标记与错误文本——它们正是证据本身。
+fn denoise_output_tail(output: &str) -> String {
+    let mut out = String::with_capacity(output.len());
+    for line in output.lines() {
+        let cleaned = strip_ansi(line).replace('\r', "");
+        let trimmed = cleaned.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        out.push_str(trimmed);
+        out.push('\n');
+    }
+    out
+}
+
+/// 去掉 CSI/OSC 转义序列（`ESC [ … m` 之类）。只处理尾部证据用的最小集合。
+fn strip_ansi(line: &str) -> String {
+    if !line.contains('\u{1b}') {
+        return line.to_owned();
+    }
+    let mut out = String::with_capacity(line.len());
+    let mut chars = line.chars().peekable();
+    while let Some(c) = chars.next() {
+        if c != '\u{1b}' {
+            out.push(c);
+            continue;
+        }
+        match chars.peek() {
+            // CSI：ESC [ … 终止于 0x40..=0x7e
+            Some('[') => {
+                chars.next();
+                for c in chars.by_ref() {
+                    if ('\u{40}'..='\u{7e}').contains(&c) {
+                        break;
+                    }
+                }
+            }
+            // OSC：ESC ] … 终止于 BEL 或 ESC \
+            Some(']') => {
+                chars.next();
+                while let Some(c) = chars.next() {
+                    if c == '\u{7}' {
+                        break;
+                    }
+                    if c == '\u{1b}' {
+                        if chars.peek() == Some(&'\\') {
+                            chars.next();
+                        }
+                        break;
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    out
+}
+
+/// 需要外部工具的三类产物 → 一句可行动提示（顺序即提示顺序）。
+///
+/// 判据是**工具自己的中间产物**：`<stem>.run.xml` 里真的请求了 `<binary>biber</binary>`（biblatex + biber）、
+/// `<stem>.idx`（makeindex）、`<stem>.glo`（glossaries）。
+///
+/// 三类工具的**实际形态不同**（2026-11 复验实测，别混为一谈）：
+/// - **biber**：Tectonic 0.17 的**子进程形态会调用外部 biber**（直跑日志 `note: Running external tool biber ...`，
+///   上游 `driver.rs` 的 `external_tool_pass`）。所以缺 biber / 版本与 bundle 内 biblatex 不匹配时，
+///   这一步会**失败**（编译中断或参考文献为空），不是"静默跳过"；
+/// - **makeindex / glossaries**：Tectonic **不会**自动跑它们（只跳过那一步）⇒ "编译成功但索引/术语表为空"。
+///
+/// 所以提示分两段口径：biber 说"引擎会调用外部 biber、需要本机可用且版本匹配"；索引/术语表说"不会自动运行"。
+/// 都必须在**成功**路径主动提示（ADR-0015 第 4 条：检出即如实说明、不静默降级、不自动切回别的工作流）。
+///
+/// ⚠ 判据**不能只看 `.run.xml` 是否存在**（2026-11 review E2 实测）：biblatex 的
+/// `backend=bibtex` 也写 `.run.xml`，但里面是 `<binary>bibtex</binary>`、`biber` **0 处**，
+/// 参考文献照常生成——只看文件存在就把这类文档误报成"不支持 biber"。上游 Tectonic 自己的判据
+/// 也是扫 XML 里的 `<binary>` 文本（`test_file/tectonic-src/src/driver.rs:2147-2167`），看不到
+/// `biber` 就不跑 biber。
+///
+/// 文案只给**本产品内真实可行的出路**：Tectonic 自带 bundle、不依赖 TeX Live，建议
+/// "换用完整 TeX Live 工具链"在产品里没有对应操作，等于没给出路。
+const EXTERNAL_TOOL_NOTICES: [(&str, &str); 3] = [
+    (
+        "run.xml",
+        "检测到 biber 的构建请求（<stem>.run.xml 里 <binary>biber</binary>）：引擎会调用**外部** biber\
+         （不随本产品分发）——本机没有它、或它的版本与文档用的 biblatex 不匹配时，这一步会失败，\
+         参考文献为空或编译中断（版本差异见输出里的 `Found biblatex control file version …, expected version …`）。\
+         出路：① 参考文献改用内建 bibtex——biblatex 写 \\usepackage[backend=bibtex]{biblatex}，\
+         或改用传统的 \\bibliography{...} + \\bibliographystyle{...}（引擎会跑内建 bibtex，改动最小）；\
+         ② 留在 biber 上就把本机 biber 升级/对齐到 bundle 内的 biblatex 版本；③ 先接受引用显示为空。",
+    ),
+    (
+        "idx",
+        "检测到 makeindex 的索引文件（<stem>.idx）：本引擎不会自动运行 makeindex，生成的 PDF 里索引为空。\
+         出路：暂时去掉 \\makeindex/\\printindex（在正文里手工列出条目），或在命令行对 \
+         <stem>.idx 跑一次 makeindex 后再编译；也可以接受索引为空。",
+    ),
+    (
+        "glo",
+        "检测到 glossaries 的术语表文件（<stem>.glo）：本引擎不会自动运行 makeglossaries，术语表为空。\
+         出路：暂时去掉 \\makeglossaries/\\printglossaries，或在命令行跑一次 makeglossaries 后再编译；\
+         也可以接受术语表为空。",
+    ),
+];
+
+/// 编译成功后检查"需要外部工具"的产物，返回要提示的消息（无命中 = 空表）。
+async fn external_tool_notices(fs: &dyn FileSystem, tmp_dir: &Path, stem: &str) -> Vec<&'static str> {
+    let mut notices = Vec::new();
+    for (ext, msg) in EXTERNAL_TOOL_NOTICES {
+        let path = tmp_dir.join(format!("{stem}.{ext}"));
+        let hit = if ext == "run.xml" {
+            // `.run.xml` 的存在只说明 logreq 写了请求文件，**请求哪个工具**要看内容
+            run_xml_requests_biber(fs, &path).await
+        } else {
+            fs.exists(&path).await.unwrap_or(false)
+        };
+        if hit {
+            notices.push(msg);
+        }
+    }
+    notices
+}
+
+/// `<stem>.run.xml`（logreq 请求文件）是否**真的**请求了 biber。
+///
+/// 判据与上游 Tectonic 等价（`driver.rs:2147-2167`）：扫每个 `<binary>` 元素的文本，
+/// 等于 `biber` 才算 biber 请求；`bibtex` 就继续看下一个。
+/// 读不到 / 没有闭合标签 → **不算**（宁可漏报也不误报：误报会把参考文献已生成的文档说成不支持）。
+async fn run_xml_requests_biber(fs: &dyn FileSystem, path: &Path) -> bool {
+    match fs.read_to_string_lossy(path).await {
+        Ok(text) => run_xml_binary_requests_biber(&text),
+        Err(e) => {
+            debug!(path = %path.display(), "读 run.xml 失败，按无 biber 请求处理：{e}");
+            false
+        }
+    }
+}
+
+/// 纯文本判定（见 [`run_xml_requests_biber`]）：`<binary>biber</binary>`。
+fn run_xml_binary_requests_biber(text: &str) -> bool {
+    const OPEN: &str = "<binary>";
+    const CLOSE: &str = "</binary>";
+    let mut rest = text;
+    while let Some(start) = rest.find(OPEN) {
+        rest = &rest[start + OPEN.len()..];
+        let Some(end) = rest.find(CLOSE) else { return false };
+        if rest[..end].trim() == "biber" {
+            return true;
+        }
+        rest = &rest[end + CLOSE.len()..];
+    }
+    false
+}
+
 /// 进程树杀（modules.md §2.6）：
-/// Windows：`taskkill /T /F /PID`（Child::kill 只杀直接子进程，latexmk 的子进程会存活）。
+/// Windows：`taskkill /T /F /PID`（Child::kill 只杀直接子进程，子进程会存活）。
 /// Unix：先试进程组（-pid），失败再试直接 kill（best-effort，与 LaTeX Workshop 相同的已知局限）。
 fn kill_tree(pid: u32) {
     // 阻塞的进程/进程组调用移到阻塞线程池，避免卡住 async 执行器（超时/取消路径的热路径）。
@@ -880,403 +860,23 @@ fn kill_tree(pid: u32) {
 }
 #[cfg(test)]
 mod tests {
-    //! 真实环境集成测试（`#[ignore]`：需要系统安装 latexmk + synctex）。
-    //!
-    //! 在有 TeX Live/MiKTeX 的机器上运行：`cargo test -p latteset-infra -- --ignored`
-    //! 这是 Windows 验收清单的自动化抓手（modules.md §8），验证：
-    //! - latexmk 真实编译全链路（命令构造/产物位置/PDF 拷贝）；
-    //! - 内容错误 → .log 解析链路；
-    //! - 超时树杀 / 取消终止；
-    //! - SyncTeX CLI 输出契约（ADR-0008 最大风险点）。
+    //! 两层用例：
+    //! - **不需要外部程序**（默认就跑）：命令构造（argv / `-C` 分档）、路径与 stem、成功收尾的
+    //!   原子拷贝、外部工具提示。ADR-0015 之后的命令断言只针对 Tectonic；
+    //!   依赖 latexmk / xelatex / xdvipdfmx 的断言随那些路径一起删除了。
+    //! - **真实编译**（`#[ignore]`，需要 PATH 上有 `tectonic`）：成功 / 内容错误 / 超时树杀 /
+    //!   取消 / Quick 升级 Full / 中文路径 / 流式页进度。
+    //!   跑法：`cargo test -p latteset-infra -- --ignored`（没装 tectonic 时用例自行跳过）。
 
     use super::*;
     use crate::synctex::SyncTexCli;
+    use latteset_core::scheduler::NoProgress;
+    use latteset_core::synctex::{SourcePosition, SyncTexPosition, SyncTexProvider};
     use std::path::PathBuf;
     use std::time::Duration;
-    use latteset_core::synctex::{SourcePosition, SyncTexProvider, SyncTexPosition};
 
     struct TempProject {
         dir: std::path::PathBuf,
-    }
-
-    // ---- 命令构造（不需要 latexmk，任何机器都能跑）----
-
-    fn sample_req() -> CompileRequest {
-        CompileRequest {
-            root_file: PathBuf::from("/proj/css/thesis.tex"),
-            project_root: PathBuf::from("/proj"),
-            engine: latteset_core::types::Engine::XeLaTeX,
-            timeout: Duration::from_secs(120),
-            kind: CompileKind::Quick,
-        }
-    }
-
-    fn argv(cmd: &tokio::process::Command) -> Vec<String> {
-        cmd.as_std()
-            .get_args()
-            .map(|a| a.to_string_lossy().into_owned())
-            .collect()
-    }
-
-    /// 非 Tectonic 引擎不看 bundle 档（该参数只喂给 `tectonic_command`），这里固定传离线档，
-    /// 让既有 argv 断言保持原口径。Tectonic 的用例直接调 [`compile_command`] 并显式给两档。
-    fn engine_command(req: &CompileRequest, kind: CompileKind) -> tokio::process::Command {
-        compile_command(req, kind, BundlePolicy::CachedOnly)
-    }
-
-    #[test]
-    fn quick_command_calls_engine_directly() {
-        let cmd = engine_command(&sample_req(), CompileKind::Quick);
-        assert_eq!(cmd.as_std().get_program().to_string_lossy(), "xelatex");
-        assert_eq!(
-            argv(&cmd),
-            vec![
-                // -no-pdf（功能点 A）：直调引擎只产 XDV，PDF 改由 finish_success 按需调 xdvipdfmx 转换
-                "-no-pdf",
-                "-interaction=nonstopmode",
-                "-synctex=1",
-                "-output-directory=tmp",
-                // 嵌套根文件用**相对项目根的完整路径**（只取 stem 会在项目根下找不到文件）
-                "css/thesis.tex",
-            ]
-        );
-    }
-
-    /// 已知债 #25：非 XeTeX 引擎**不能**加 `-no-pdf`——pdflatex 会报 `unrecognized option`（Quick
-    /// 直接跑不起来），lualatex 会静默忽略（照样写 PDF，等于白等一趟转换）。
-    #[test]
-    fn quick_command_omits_no_pdf_for_engines_without_xdv() {
-        for (engine, binary) in [
-            (latteset_core::types::Engine::LuaLaTeX, "lualatex"),
-            (latteset_core::types::Engine::PdfLaTeX, "pdflatex"),
-        ] {
-            let mut req = sample_req();
-            req.engine = engine;
-            let cmd = engine_command(&req, CompileKind::Quick);
-            assert_eq!(cmd.as_std().get_program().to_string_lossy(), binary);
-            assert_eq!(
-                argv(&cmd),
-                vec![
-                    "-interaction=nonstopmode",
-                    "-synctex=1",
-                    "-output-directory=tmp",
-                    "css/thesis.tex",
-                ],
-                "{binary} 的 Quick 必须是「引擎单趟直写 PDF」"
-            );
-        }
-    }
-
-    /// Tectonic（2026-09 引入）：自己的命令形态（**不经 latexmk、不走我们的 xdvipdfmx**），参数按
-    /// 测试方案必带；**且不能给它设 `SOURCE_DATE_EPOCH`**（D4 裁决：它把该变量当引擎时间源，
-    /// 设 0 会让正文 `\today` 印成 1970-01-01；XeTeX 只动 PDF `/ID`）。
-    ///
-    /// `-C` 是**条件**参数（P0/t14，LIB-8）：缓存有证据才加；冷缓存/首跑档不能加，否则
-    /// Tectonic 拒绝联网取 bundle、首编必失败（`docs/archive/tectonic-library-plan.md` §6 P0）。
-    #[test]
-    fn tectonic_command_and_epoch_scoping() {
-        let mut req = sample_req();
-        req.engine = latteset_core::types::Engine::Tectonic;
-
-        // 资源就绪档（缓存有可用 bundle）：`-C` 在首位 —— 离线、不联网
-        let quick = compile_command(&req, CompileKind::Quick, BundlePolicy::CachedOnly);
-        assert_eq!(quick.as_std().get_program().to_string_lossy(), "tectonic");
-        assert_eq!(
-            argv(&quick),
-            vec![
-                "-C",
-                "-k",
-                "--keep-logs",
-                "--synctex",
-                "-p",
-                "-o",
-                "tmp",
-                "-r",
-                "1",
-                "css/thesis.tex",
-            ],
-            "Tectonic Quick（缓存就绪）必须是「离线缓存 + 保留中间产物 + 页进度 + **两趟**」——\
-             单趟（`-r 0`）会丢掉整段目录，见 `tectonic_command` 的注释"
-        );
-        // Full = 收敛（不传 -r，用引擎默认趟数）
-        let full = compile_command(&req, CompileKind::Full, BundlePolicy::CachedOnly);
-        assert_eq!(full.as_std().get_program().to_string_lossy(), "tectonic");
-        assert_eq!(
-            argv(&full),
-            vec!["-C", "-k", "--keep-logs", "--synctex", "-p", "-o", "tmp", "css/thesis.tex"]
-        );
-
-        // 首跑档（缓存没证据）：**不含 `-C`**，其余参数逐一相同 —— 让 Tectonic 能按需联网取 bundle。
-        // 反例自证：若 `-C` 变回无条件，下面两条断言必红。
-        for (kind, cold) in [
-            (CompileKind::Quick, compile_command(&req, CompileKind::Quick, BundlePolicy::AllowFetch)),
-            (CompileKind::Full, compile_command(&req, CompileKind::Full, BundlePolicy::AllowFetch)),
-        ] {
-            let cold = argv(&cold);
-            assert!(
-                !cold.iter().any(|a| a == "-C"),
-                "{kind:?} 首跑档不得带 `-C`（带了就永远拿不到 bundle）"
-            );
-            let warm = argv(&compile_command(&req, kind, BundlePolicy::CachedOnly));
-            let mut expected = warm.clone();
-            expected.retain(|a| a != "-C");
-            assert_eq!(cold, expected, "{kind:?} 首跑档与就绪档只差一个 `-C`");
-        }
-
-        // 环境变量分档（D4）：Tectonic 两档都不设 epoch
-        let has_epoch = |c: &tokio::process::Command| {
-            c.as_std()
-                .get_envs()
-                .any(|(k, v)| k.to_string_lossy() == "SOURCE_DATE_EPOCH" && v.is_some())
-        };
-        assert!(!has_epoch(&quick), "Tectonic 不能设 SOURCE_DATE_EPOCH");
-        assert!(!has_epoch(&full), "Tectonic 不能设 SOURCE_DATE_EPOCH");
-        for engine in [
-            latteset_core::types::Engine::XeLaTeX,
-            latteset_core::types::Engine::LuaLaTeX,
-            latteset_core::types::Engine::PdfLaTeX,
-        ] {
-            let mut r2 = sample_req();
-            r2.engine = engine;
-            assert!(
-                has_epoch(&engine_command(&r2, CompileKind::Quick)),
-                "{engine:?} 仍必须固定 epoch（㉚ 的可复现前提）"
-            );
-            assert!(has_epoch(&engine_command(&r2, CompileKind::Full)), "{engine:?} Full 同");
-        }
-    }
-
-    /// Tectonic 端到端（`#[ignore]`，需要装好 `tectonic`）：走**完整 runner 路径**跑一次中文文档，
-    /// 断言"出 PDF + **无页哈希**"——Tectonic 的 PDF 档永不落 `.xdv`，页级复用 A/B/C 在该引擎下不可用
-    /// （下游按"无法判定"保守全量刷新）。命令构造（`-C -k --keep-logs --synctex -p`）由
-    /// [`tectonic_command_and_epoch_scoping`] 断言；这条用例额外复核**本机缓存就绪时 `-C` 档能真跑通**
-    /// （`-C` 是最坏情况：缓存里缺一个宏包就会失败）。
-    #[tokio::test]
-    #[ignore]
-    async fn tectonic_compiles_cjk_pdf_without_page_hashes() {
-        if std::process::Command::new("tectonic").arg("--version").output().is_err() {
-            eprintln!("跳过：未安装 tectonic（或不在 PATH 上）");
-            return;
-        }
-        let project = TempProject::new("tectonic-e2e");
-        project.put(
-            "main.tex",
-            "\\documentclass[12pt]{ctexart}\n\\begin{document}\n你好，世界。Tectonic 端到端用例。\n\\end{document}\n",
-        );
-        let runner = LatexmkRunner::new(
-            std::sync::Arc::new(crate::fs::TokioFs),
-            std::sync::Arc::new(latteset_core::scheduler::NoProgress),
-        );
-        let mut r = req(&project); // Full（收敛）
-        r.engine = latteset_core::types::Engine::Tectonic;
-        // P0（t14）真机证据：走 runner 前先把判定依据打出来（`-- --ignored --nocapture` 可见）。
-        // 冷缓存档：在外层设 `TECTONIC_CACHE_DIR=<空目录>` 跑同一条用例。
-        let probe = crate::tectonic::probe();
-        eprintln!(
-            "Tectonic bundle 策略 = {:?}（cache_ready={}，cache_dir={:?}，forced={:?}）",
-            probe.policy, probe.cache_ready, probe.cache_dir, probe.forced
-        );
-        let out = runner.compile(r, CancellationToken::new()).await;
-        let CompileOutcome::Success { pdf_path, page_hashes, .. } = &out else {
-            panic!("Tectonic 编译应成功，实际：{out:?}");
-        };
-        assert!(pdf_path.exists(), "项目根应有 PDF：{}", pdf_path.display());
-        let size = std::fs::metadata(pdf_path).expect("读 PDF 元数据").len();
-        assert!(size > 1000, "PDF 太小（{size} B），像是失败产物");
-        assert!(
-            page_hashes.is_empty(),
-            "Tectonic 的 PDF 档没有 XDV ⇒ 页哈希必须为空（前端据此按'无法判定'全量刷新）"
-        );
-    }
-
-    /// 已知债 #25：页哈希基线按引擎分文件——换引擎后不能拿旧口径的基线比大小。
-    #[test]
-    fn pages_cache_path_is_engine_scoped() {
-        let tmp = Path::new("/proj/tmp");
-        let xe = pages_cache_path(tmp, "main", latteset_core::types::Engine::XeLaTeX);
-        let lua = pages_cache_path(tmp, "main", latteset_core::types::Engine::LuaLaTeX);
-        assert_eq!(xe, PathBuf::from("/proj/tmp/main.xelatex.pages"));
-        assert_eq!(lua, PathBuf::from("/proj/tmp/main.lualatex.pages"));
-        assert_ne!(xe, lua, "两个引擎的页哈希基线必须互不覆盖");
-    }
-
-    /// 页哈希缓存的**口径标记**（2026-09，已知债 #26 的迁移方案 B）：老格式（首行直接是哈希）
-    /// 必须 fail-closed 成 `None`（只退化一轮），**绝不能**被当成"逐页相同"或"零页变化"。
-    #[tokio::test]
-    async fn pages_cache_requires_scope_marker_and_rejects_legacy() {
-        let project = TempProject::new("pages-cache-scope");
-        let runner = LatexmkRunner::new(
-            std::sync::Arc::new(crate::fs::TokioFs),
-            std::sync::Arc::new(latteset_core::scheduler::NoProgress),
-        );
-        let path = project.dir.join("tmp/main.xelatex.pages");
-        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
-
-        // ① 老格式：首行就是 16 进制哈希（2026-09 之前的 raw 缓存）⇒ 无法判定
-        std::fs::write(&path, "0123456789abcdef\nfedcba9876543210\n").unwrap();
-        assert_eq!(
-            runner.read_pages_cache(&path).await,
-            None,
-            "老格式必须 fail-closed"
-        );
-
-        // ② 空 / 只有标记 / 坏行：都不 panic，一律"无法判定"
-        std::fs::write(&path, "").unwrap();
-        assert_eq!(runner.read_pages_cache(&path).await, None);
-        std::fs::write(&path, "v1\n").unwrap();
-        assert_eq!(
-            runner.read_pages_cache(&path).await,
-            None,
-            "只有标记没有页 = 无法判定"
-        );
-        std::fs::write(&path, "v1\nnot-a-hex\n").unwrap();
-        assert_eq!(
-            runner.read_pages_cache(&path).await,
-            None,
-            "坏行 → 无法判定"
-        );
-
-        // ③ 新格式往返（首行标记 + 每页一行十六进制）
-        runner.write_pages_cache(&path, &[1u64, 0xdead_beef]).await;
-        let text = std::fs::read_to_string(&path).unwrap();
-        assert!(text.starts_with("v1\n"), "首行必须是口径标记：{text:?}");
-        assert_eq!(
-            runner.read_pages_cache(&path).await,
-            Some(vec![1, 0xdead_beef])
-        );
-
-        // ④ 空表不写盘（"无法判定"不能被固化成"零页变化"）
-        let empty = project.dir.join("tmp/empty.pages");
-        runner.write_pages_cache(&empty, &[]).await;
-        assert!(!empty.exists(), "空表不应写缓存");
-    }
-
-    /// 已知债 #26 的**真机回归**（`#[ignore]`，需要 TeX Live）：在真实多页项目上，编辑第 1 页
-    /// 插 1 个汉字只应报**少数几页**变化。旧口径（页哈希含 `bop` 尾部的 `prev`）会报"第 3 页起
-    /// 全部变了"——实验室实测 25/26 页（`docs/archive/research/page-hash-prev-quant.md` §3）。
-    #[tokio::test]
-    #[ignore]
-    async fn page_growth_edit_marks_few_pages_on_real_project() {
-        if !latexmk_available() {
-            eprintln!("跳过：系统未安装 latexmk（需要 TeX Live/MiKTeX）");
-            return;
-        }
-        let project = TempProject::new("prev-scope-real");
-        // 20 个 `\newpage` 段落：每段自成页，插入 1 个汉字只应影响第 1 页
-        let mut tex = String::from("\\documentclass[12pt]{ctexart}\n\\begin{document}\n");
-        for i in 1..=20 {
-            tex.push_str(&format!(
-                "第 {i} 页的内容，用来占满一行并保证分页稳定。\\newpage\n"
-            ));
-        }
-        tex.push_str("\\end{document}\n");
-        project.put("main.tex", &tex);
-
-        let runner = LatexmkRunner::new(
-            std::sync::Arc::new(crate::fs::TokioFs),
-            std::sync::Arc::new(latteset_core::scheduler::NoProgress),
-        );
-        // 1) Full 建产物；2) Quick 立基线
-        assert!(
-            matches!(
-                runner.compile(req(&project), CancellationToken::new()).await,
-                CompileOutcome::Success { .. }
-            ),
-            "Full 应成功"
-        );
-        let CompileOutcome::Success {
-            page_hashes: base, ..
-        } = runner
-            .compile(quick_req(&project), CancellationToken::new())
-            .await
-        else {
-            panic!("基线 Quick 应成功");
-        };
-        assert!(base.len() >= 10, "夹具应有多页，实际 {} 页", base.len());
-
-        // 3) 编辑：第 1 页正文插 1 个汉字（页长 +3B ⇒ 触发 prev 链整体平移）
-        project.put("main.tex", &tex.replacen("第 1 页的内容", "第 1 页的内容啊", 1));
-        let CompileOutcome::Success {
-            page_hashes: after, ..
-        } = runner
-            .compile(quick_req(&project), CancellationToken::new())
-            .await
-        else {
-            panic!("编辑后的 Quick 应成功");
-        };
-
-        let changed = latteset_core::xdv::changed_pages(Some(&base), &after);
-        assert!(changed.contains(&1), "插入点所在页必须被判变化：{changed:?}");
-        assert!(
-            changed.len() <= 3,
-            "只应报编辑处附近的少数页，实际 {} 页（共 {} 页）：{changed:?}；\
-             旧口径含 bop.prev 时会报第 3 页起全部",
-            changed.len(),
-            after.len()
-        );
-    }
-
-    #[test]
-    fn full_command_uses_latexmk_with_engine_flag() {
-        let mut req = sample_req();
-        req.engine = latteset_core::types::Engine::LuaLaTeX;
-        let cmd = engine_command(&req, CompileKind::Full);
-        assert_eq!(cmd.as_std().get_program().to_string_lossy(), "latexmk");
-        assert_eq!(
-            argv(&cmd),
-            vec![
-                "-lualatex",
-                "-outdir=tmp",
-                // ㉖：中和模板 rc 的 `$preview_continuous_mode = 1`（否则 latexmk 永不退出）
-                "-e",
-                LATEXMK_RC_NEUTRALIZE,
-                "-synctex=1",
-                "-interaction=nonstopmode",
-                "css/thesis.tex",
-            ]
-        );
-    }
-
-    #[test]
-    fn include_subdirs_are_precreated_under_outdir() {
-        // ㉖：`\include{body/intro}` 要写 `tmp/body/intro.aux`，而 xelatex 不建输出子目录。
-        let root = std::env::temp_dir().join("latteset-infra-include-subdir-test");
-        let _ = std::fs::remove_dir_all(&root);
-        std::fs::create_dir_all(&root).expect("建临时项目根");
-        std::fs::write(
-            root.join("main.tex"),
-            "\\documentclass{article}\n% \\include{commented/out}\n\\include{body/intro}\n\\input{extra/part}\n\\input{\\jobname-extra}\n",
-        )
-        .expect("写根文件");
-
-        ensure_include_subdirs(&root.join("main.tex"), &root);
-
-        assert!(root.join("tmp/body").is_dir(), "`\\include` 带子目录 ⇒ 要预建 tmp/body");
-        assert!(root.join("tmp/extra").is_dir(), "`\\input` 带子目录同样要预建");
-        assert!(
-            !root.join("tmp/\\jobname-extra").exists(),
-            "宏名（含反斜杠）不猜、不建目录"
-        );
-        // 顶层文件（没有子目录）不该造出多余目录
-        std::fs::write(root.join("main.tex"), "\\include{top}\n").expect("改根文件");
-        ensure_include_subdirs(&root.join("main.tex"), &root);
-        assert!(!root.join("tmp/top").exists(), "没有子目录的 include 不该建目录");
-        let _ = std::fs::remove_dir_all(&root);
-    }
-
-    #[test]
-    fn both_paths_pin_source_date_epoch_for_reproducible_pdf() {
-        // roadmap ㉚：不固定这个变量时，同一份源码两次编译的 PDF 只差 trailer 的 /ID（实测 64 字节），
-        // 会让"输出 diff / 只重排变化页"分不清"真变了"和"ID 抖了"。
-        for kind in [CompileKind::Quick, CompileKind::Full] {
-            let cmd = engine_command(&sample_req(), kind);
-            let epoch = cmd
-                .as_std()
-                .get_envs()
-                .find(|(k, _)| k.to_string_lossy() == "SOURCE_DATE_EPOCH")
-                .map(|(_, v)| v.map(|v| v.to_string_lossy().into_owned()));
-            assert_eq!(epoch, Some(Some("0".to_string())), "{kind:?} 路径必须固定 SOURCE_DATE_EPOCH");
-        }
     }
 
     impl TempProject {
@@ -1299,8 +899,8 @@ mod tests {
         }
     }
 
-    fn latexmk_available() -> bool {
-        std::process::Command::new("latexmk")
+    fn tectonic_available() -> bool {
+        std::process::Command::new("tectonic")
             .arg("--version")
             .stdout(std::process::Stdio::null())
             .stderr(std::process::Stdio::null())
@@ -1309,158 +909,449 @@ mod tests {
             .unwrap_or(false)
     }
 
-    fn lualatex_available() -> bool {
-        std::process::Command::new("lualatex")
-            .arg("--version")
-            .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null())
-            .status()
-            .map(|s| s.success())
-            .unwrap_or(false)
-    }
-
-    fn req(project: &TempProject) -> CompileRequest {
-        CompileRequest {
-            root_file: project.dir.join("main.tex"),
-            project_root: project.dir.clone(),
-            engine: latteset_core::types::Engine::XeLaTeX,
-            timeout: test_timeout(),
-            kind: CompileKind::Full,
-        }
-    }
-
-    /// 集成用例的超时（默认 60s，与历史口径一致）。
+    /// 集成用例的超时（默认 60s）。
     ///
     /// 可用 `LATTESET_TEST_TIMEOUT_SECS` 放长：**冷缓存的 Tectonic 首编**要联网取 bundle
-    /// （实测约 65 MB，几十秒到几分钟），60s 的夹具直接撞超时，量不出"取到 bundle 后能编过"。
+    /// （实测约 65 MB，几十秒到几分钟），60s 的夹具直接撞超时。
     fn test_timeout() -> Duration {
         Duration::from_secs(
             std::env::var("LATTESET_TEST_TIMEOUT_SECS").ok().and_then(|v| v.parse().ok()).unwrap_or(60),
         )
     }
 
+    fn sample_req() -> CompileRequest {
+        CompileRequest {
+            root_file: PathBuf::from("/proj/css/thesis.tex"),
+            project_root: PathBuf::from("/proj"),
+            timeout: Duration::from_secs(120),
+            kind: CompileKind::Quick,
+        }
+    }
+
+    fn req(project: &TempProject) -> CompileRequest {
+        CompileRequest {
+            root_file: project.dir.join("main.tex"),
+            project_root: project.dir.clone(),
+            timeout: test_timeout(),
+            kind: CompileKind::Full,
+        }
+    }
+
     /// 同一项目上的 Quick 请求（编辑触发的强度）。
     fn quick_req(project: &TempProject) -> CompileRequest {
-        CompileRequest {
-            kind: CompileKind::Quick,
-            ..req(project)
-        }
+        CompileRequest { kind: CompileKind::Quick, ..req(project) }
     }
 
-    /// 功能点 A（docs/archive/research/incremental-edit-x-dvi.md §2.2）：页哈希与上次**逐页相同**时，
-    /// Quick 路径跳过 `xdvipdfmx` 转换与 PDF 拷贝。
-    ///
-    /// 判据用 `tmp/main.pdf` 的 mtime：转换没跑 ⇒ 文件不会被重写。
-    #[tokio::test]
-    #[ignore]
-    async fn skips_conversion_when_page_hashes_unchanged() {
-        if !latexmk_available() {
-            eprintln!("跳过：系统未安装 latexmk（需要 TeX Live/MiKTeX）");
-            return;
-        }
-        let project = TempProject::new("skip-convert");
-        project.put(
-            "main.tex",
-            "\\documentclass{article}\n\\begin{document}\nStable content for skip test.\n\\end{document}\n",
-        );
-        let runner = LatexmkRunner::new(
-            std::sync::Arc::new(crate::fs::TokioFs),
-            std::sync::Arc::new(latteset_core::scheduler::NoProgress),
-        );
-        let tmp_pdf = project.dir.join("tmp/main.pdf");
+    fn argv(cmd: &tokio::process::Command) -> Vec<String> {
+        cmd.as_std()
+            .get_args()
+            .map(|a| a.to_string_lossy().into_owned())
+            .collect()
+    }
 
-        // 1) Full：建产物 + 写页哈希缓存
-        let first = runner.compile(req(&project), CancellationToken::new()).await;
-        assert!(matches!(first, CompileOutcome::Success { .. }), "预期成功：{first:?}");
+    // ---- 命令构造（不需要装 tectonic，任何机器都能跑）----
 
-        // 2) 第一次 Quick：与 Full 的页哈希可能不同（收敛趟差异）→ 允许转换；这一步确立 Quick 基线
-        let second = runner.compile(quick_req(&project), CancellationToken::new()).await;
-        assert!(matches!(second, CompileOutcome::Success { .. }), "预期成功：{second:?}");
-        tokio::time::sleep(Duration::from_millis(1100)).await; // 避开文件系统 mtime 粒度
-        let before = std::fs::metadata(&tmp_pdf).expect("tmp/main.pdf 应存在").modified().unwrap();
+    /// Tectonic argv 的唯一契约：Quick 两趟（`-r 1`）、Full 用引擎默认趟数（无 `-r`）、
+    /// `-C` 只在缓存就绪档出现（冷缓存加它 = 拒绝联网取 bundle，首编必失败）。
+    #[test]
+    fn tectonic_command_argv_by_kind_and_bundle_policy() {
+        let req = sample_req();
+        let warm_quick = vec![
+            "-C", "-k", "--keep-logs", "--synctex", "-p", "-o", "tmp", "-r", "1", "css/thesis.tex",
+        ];
+        let warm_full =
+            vec!["-C", "-k", "--keep-logs", "--synctex", "-p", "-o", "tmp", "css/thesis.tex"];
 
-        // 3) 第二次 Quick：同源同强度 → 页哈希必然相同 → 必须跳过转换
-        let third = runner.compile(quick_req(&project), CancellationToken::new()).await;
-        let CompileOutcome::Success { page_hashes, .. } = &third else {
-            panic!("预期成功：{third:?}");
-        };
-        assert!(!page_hashes.is_empty(), "应产出页哈希，否则'跳过'的判据不成立");
-        let after = std::fs::metadata(&tmp_pdf).expect("tmp/main.pdf 应存在").modified().unwrap();
+        let quick = tectonic_command(&req, true, BundlePolicy::CachedOnly);
+        assert_eq!(quick.as_std().get_program().to_string_lossy(), "tectonic");
         assert_eq!(
-            after, before,
-            "页哈希未变时不应重写 tmp/main.pdf（说明 xdvipdfmx 被跳过了）"
+            argv(&quick),
+            warm_quick,
+            "Quick（缓存就绪）必须是「离线缓存 + 保留中间产物 + 页进度 + **两趟**」——\
+             单趟（`-r 0`）会丢掉整段目录，见 `tectonic_command` 的注释"
         );
-        // 项目根的 PDF 也必须还在（跳过转换 = 复用上一次的产物）
-        assert!(
-            project.dir.join("main.pdf").exists(),
-            "跳过转换后项目根的 PDF 必须仍然存在"
-        );
+
+        let full = tectonic_command(&req, false, BundlePolicy::CachedOnly);
+        assert_eq!(full.as_std().get_program().to_string_lossy(), "tectonic");
+        assert_eq!(argv(&full), warm_full, "Full 不传 `-r`（用引擎默认的收敛趟数）");
+        assert!(!argv(&full).iter().any(|a| a == "-r"), "Full 不能带 `-r`");
+
+        // 首跑档（缓存没证据）：**不含 `-C`**，其余参数逐一相同。
+        // 反例自证：若 `-C` 变回无条件，下面断言必红。
+        for (quick_flag, warm) in [(true, warm_quick.clone()), (false, warm_full.clone())] {
+            let cold = argv(&tectonic_command(&req, quick_flag, BundlePolicy::AllowFetch));
+            let expected: Vec<String> = warm.iter().skip(1).map(|s| (*s).to_owned()).collect();
+            assert!(
+                !cold.iter().any(|a| a == "-C"),
+                "首跑档不得带 `-C`（带了就永远拿不到 bundle）：{cold:?}"
+            );
+            assert_eq!(cold, expected, "首跑档与就绪档只差一个 `-C`");
+        }
+
+        // D4：Tectonic 把 SOURCE_DATE_EPOCH 当**引擎时间源**（设 0 ⇒ 正文 `\today` 印成
+        // 1970-01-01）⇒ 绝不设它。XeLaTeX 的"固定 epoch 换 PDF /ID 稳定"那条路径已随引擎删除。
+        let has_epoch = |c: &tokio::process::Command| {
+            c.as_std()
+                .get_envs()
+                .any(|(k, v)| k.to_string_lossy() == "SOURCE_DATE_EPOCH" && v.is_some())
+        };
+        assert!(!has_epoch(&quick), "Tectonic 不能设 SOURCE_DATE_EPOCH");
+        assert!(!has_epoch(&full), "Tectonic 不能设 SOURCE_DATE_EPOCH");
     }
 
-    /// 已知债 #25 的回归：`engine=lualatex` 的 Quick 必须走"**引擎自己写 PDF → 直接拷贝**"，
-    /// 既不调 `xdvipdfmx`、也不读 XDV（读了就会把上一次 XeLaTeX 留下的陈旧 XDV 当成本次产物）。
-    ///
-    /// 两种原bug现场都覆盖：
-    /// ① 目录里**有**陈旧 XDV（先跑一次 XeLaTeX）——旧代码会拿它算页哈希并转出 PDF 覆盖 LuaLaTeX 的产出；
-    /// ② 目录里**没有** XDV（把 `.xdv` 删掉再跑）——旧代码会 `xdvipdfmx: Could not open specified DVI` 报失败。
-    ///
-    /// 前置：LuaLaTeX 要求**可写的 `TEXMFVAR`**（luaotfload 字体缓存；首次会花 ~26s 建库）。
-    /// 本机默认落在 `~/.texlive<年>/texmf-var`，沙箱/只读配置下不可写 → 跑本用例时用环境变量指到可写目录。
+    #[test]
+    fn root_stem_variants() {
+        assert_eq!(root_stem(Path::new(r"C:\proj\main.tex")), "main");
+        assert_eq!(root_stem(Path::new("css/thesis.tex")), "thesis");
+        assert_eq!(root_stem(Path::new("main")), "main"); // 无扩展名回退
+    }
+
+    #[test]
+    fn input_path_keeps_nested_relative_path() {
+        // H2 回归：嵌套根文件必须用相对项目的完整路径，而非仅 stem（否则在项目根下找不到文件）
+        let root = Path::new(r"C:\proj");
+        assert_eq!(input_path(Path::new(r"C:\proj\css\thesis.tex"), root), "css/thesis.tex");
+        assert_eq!(input_path(Path::new(r"C:\proj\main.tex"), root), "main.tex");
+        // 不在项目根下 → 回退到完整路径（统一正斜杠）
+        assert_eq!(input_path(Path::new(r"D:\other\a.tex"), root), "D:/other/a.tex");
+    }
+
+    #[test]
+    fn chinese_path_input_and_stem() {
+        // 传给引擎的输入必须是相对项目的正斜杠路径，中文原样保留（不得被转义/丢字）
+        let root = Path::new(r"E:\项目\中文测试工程");
+        assert_eq!(
+            input_path(Path::new(r"E:\项目\中文测试工程\中文主文件.tex"), root),
+            "中文主文件.tex"
+        );
+        assert_eq!(
+            input_path(Path::new(r"E:\项目\中文测试工程\章节\第一章.tex"), root),
+            "章节/第一章.tex"
+        );
+        // 产物名沿用 basename 的 stem，中文 stem 需与 pdf_dst 计算一致
+        assert_eq!(root_stem(Path::new(r"E:\项目\中文测试工程\中文主文件.tex")), "中文主文件");
+    }
+
+    // ---- 成功收尾（纯文件操作）----
+
+    fn runner() -> SubprocessRunner {
+        SubprocessRunner::new(Arc::new(crate::fs::TokioFs), Arc::new(NoProgress))
+    }
+
+    /// 收尾 = `tmp/<stem>.pdf` 原子拷贝到项目根；页哈希**恒空**（子进程形态没有 XDV）。
     #[tokio::test]
-    #[ignore = "需要 lualatex + 可写 TEXMFVAR（字体缓存）；对应已知债 #25"]
-    async fn quick_with_lualatex_keeps_its_own_pdf() {
-        if !latexmk_available() || !lualatex_available() {
-            eprintln!("跳过：系统未安装 latexmk / lualatex（需要 TeX Live/MiKTeX）");
-            return;
-        }
-        let project = TempProject::new("lua-quick");
-        project.put(
-            "main.tex",
-            "\\documentclass{article}\n\\begin{document}\nLua engine isolation.\n\\end{document}\n",
-        );
-        let runner = LatexmkRunner::new(
-            std::sync::Arc::new(crate::fs::TokioFs),
-            std::sync::Arc::new(latteset_core::scheduler::NoProgress),
-        );
-        let lua_quick = || CompileRequest {
-            engine: latteset_core::types::Engine::LuaLaTeX,
-            kind: CompileKind::Quick,
-            ..req(&project)
-        };
+    async fn finish_success_copies_pdf_and_reports_no_page_hashes() {
+        let project = TempProject::new("finish-ok");
+        let tmp_dir = project.dir.join("tmp");
+        std::fs::create_dir_all(&tmp_dir).unwrap();
+        std::fs::write(tmp_dir.join("main.pdf"), b"%PDF-1.7 new").unwrap();
+        std::fs::write(project.dir.join("main.pdf"), b"old bytes").unwrap();
 
-        // 现场 ①：XeLaTeX 先编一次，留下陈旧 XDV 与 XeLaTeX 版产物
-        let xe = runner.compile(req(&project), CancellationToken::new()).await;
-        assert!(matches!(xe, CompileOutcome::Success { .. }), "XeLaTeX 基线应成功：{xe:?}");
-        assert!(
-            project.dir.join("tmp/main.xdv").exists(),
-            "前置现场要求：XeLaTeX 必须留下 tmp/main.xdv"
-        );
-
-        let out = runner.compile(lua_quick(), CancellationToken::new()).await;
-        let CompileOutcome::Success { page_hashes, .. } = &out else {
-            panic!("LuaLaTeX 的 Quick 必须成功（引擎写了 PDF，不该因转换失败而报错）：{out:?}");
+        let pdf_dst = project.dir.join("main.pdf");
+        let out = runner()
+            .finish_success(&tmp_dir, "main", CompileKind::Full, &pdf_dst)
+            .await
+            .expect("拷贝应成功");
+        let CompileOutcome::Success { pdf_path, kind, page_hashes } = out else {
+            panic!("预期成功：{out:?}");
         };
+        assert_eq!(pdf_path, pdf_dst);
+        assert_eq!(kind, CompileKind::Full, "实际强度要如实回报");
         assert!(
             page_hashes.is_empty(),
-            "没有 XDV 就不该有页哈希——读到陈旧 XDV 的哈希会让下游拿错口径判'未变'"
+            "子进程形态的 Tectonic 不落 .xdv ⇒ 页哈希必须为空（前端按 pages=0 全量刷新）"
         );
-        let root = std::fs::read(project.dir.join("main.pdf")).expect("项目根应有 PDF");
-        let tmp = std::fs::read(project.dir.join("tmp/main.pdf")).expect("引擎应写出 tmp/main.pdf");
-        assert_eq!(
-            root, tmp,
-            "项目根 PDF 必须就是引擎刚写出的 tmp/main.pdf（不能被陈旧 XDV 的转换结果覆盖）"
-        );
+        assert_eq!(std::fs::read(&pdf_dst).unwrap(), b"%PDF-1.7 new", "项目根应是本次产物");
+        assert!(!project.dir.join("main.pdf.tmp").exists(), "临时文件应已被 rename 掉");
+    }
+
+    /// 拷贝失败时**旧 PDF 必须原样保留**（原子替换的意义：不能让用户手里只剩半份文件）。
+    #[tokio::test]
+    async fn finish_success_keeps_old_pdf_when_source_missing() {
+        let project = TempProject::new("finish-fail");
+        let tmp_dir = project.dir.join("tmp");
+        std::fs::create_dir_all(&tmp_dir).unwrap();
+        let pdf_dst = project.dir.join("main.pdf");
+        std::fs::write(&pdf_dst, b"old bytes").unwrap();
+
+        let err = runner()
+            .finish_success(&tmp_dir, "main", CompileKind::Quick, &pdf_dst)
+            .await
+            .expect_err("源 PDF 不存在 ⇒ 必须报错（不能静默成功）");
+        assert!(err.contains("PDF 拷贝失败"), "{err}");
+        assert_eq!(std::fs::read(&pdf_dst).unwrap(), b"old bytes", "旧 PDF 不得被截断");
+    }
+
+    /// logreq 请求文件的真实形态（`test_file/review/probe-biBtex/tmp/main.run.xml` 摘录）：
+    /// biblatex 会同时写 internal 段与 external 段，**biber 与 bibtex 的区别只在 `<binary>` 的文本**。
+    fn run_xml_with_binary(binary: &str) -> String {
+        format!(
+            r#"<?xml version="1.0" standalone="yes"?>
+<!DOCTYPE requests [
+  <!ELEMENT requests (internal | external)*>
+  <!ELEMENT internal (generic, (provides | requires)*)>
+  <!ELEMENT external (generic, cmdline?, input?, output?, (provides | requires)*)>
+  <!ELEMENT cmdline (binary, (option | infile | outfile)*)>
+  <!ELEMENT generic (#PCDATA)>
+  <!ELEMENT binary (#PCDATA)>
+]>
+<requests version="1.0">
+  <internal package="biblatex" priority="9" active="1">
+    <generic>latex</generic>
+  </internal>
+  <external package="biblatex" priority="5" active="0">
+    <generic>{binary}</generic>
+    <cmdline>
+      <binary>{binary}</binary>
+      <option>-min-crossrefs 2</option>
+      <infile>main</infile>
+    </cmdline>
+  </external>
+</requests>
+"#
+        )
+    }
+
+    /// E2 回归：`backend=bibtex` 的 `.run.xml` **不得**报 biber；真 biber 请求恰好报一条。
+    ///
+    /// 误报的实际代价（review E2 端到端）：`backend=bibtex` 的文档已经生成了 `main.bbl`（参考文献齐全），
+    /// 用户却看到"本引擎不支持 biber、参考文献不会生成"——既误导又推着用户去改本来正确的设置。
+    #[tokio::test]
+    async fn biber_notice_requires_a_biber_request_in_run_xml() {
+        let project = TempProject::new("biber-request");
+        let tmp_dir = project.dir.join("tmp");
+        std::fs::create_dir_all(&tmp_dir).unwrap();
+        let fs = crate::fs::TokioFs;
+        let run_xml = tmp_dir.join("main.run.xml");
+
+        // ① `backend=bibtex` 的真实产物：`.run.xml` 在，但 `<binary>` 是 bibtex
+        std::fs::write(&run_xml, run_xml_with_binary("bibtex")).unwrap();
+        let notices = external_tool_notices(&fs, &tmp_dir, "main").await;
         assert!(
-            !project.dir.join("tmp/main.lualatex.pages").exists(),
-            "无页哈希 → 不应写页哈希缓存（免得下次拿它当基线）"
+            notices.iter().all(|n| !n.contains("biber")),
+            "backend=bibtex 被误报成 biber：{notices:?}"
         );
 
-        // 现场 ②：把 XDV 彻底删掉（干净项目）→ Quick 仍必须成功
-        std::fs::remove_file(project.dir.join("tmp/main.xdv")).unwrap();
-        let clean = runner.compile(lua_quick(), CancellationToken::new()).await;
+        // ② 真 biber 夹具（真实 run.xml 的形态：`<binary>biber</binary>`）→ 恰好一条
+        std::fs::write(&run_xml, run_xml_with_binary("biber")).unwrap();
+        let notices = external_tool_notices(&fs, &tmp_dir, "main").await;
+        assert_eq!(notices.len(), 1, "{notices:?}");
+        assert!(notices[0].contains("biber"), "{}", notices[0]);
         assert!(
-            matches!(clean, CompileOutcome::Success { .. }),
-            "没有 XDV 的干净项目里，LuaLaTeX 的 Quick 也必须成功：{clean:?}"
+            notices[0].contains("backend=bibtex"),
+            "必须给出本产品可行的出路（改成 backend=bibtex）：{}",
+            notices[0]
+        );
+        // 事实口径（2026-11 验收）：Tectonic 0.17 **会调用外部 biber**（`note: Running external tool biber`），
+        // 所以不能说"本产品不自带/不支持/不会自动跑"——真实原因是缺 biber 或版本与 biblatex 不匹配。
+        assert!(
+            notices[0].contains("外部"),
+            "文案必须说清 biber 是外部可执行文件、由引擎调用：{}",
+            notices[0]
+        );
+        assert!(
+            notices[0].contains("版本"),
+            "文案必须说清要版本匹配：{}",
+            notices[0]
+        );
+        for wrong in ["不支持", "不会自动跑", "不自带"] {
+            assert!(
+                !notices[0].contains(wrong),
+                "biber 会被引擎调用，不能说「{wrong}」：{}",
+                notices[0]
+            );
+        }
+
+        // ③ 判定函数本身：只见 `<binary>bibtex</binary>` → false；`biber` → true
+        assert!(!run_xml_binary_requests_biber(&run_xml_with_binary("bibtex")));
+        assert!(run_xml_binary_requests_biber(&run_xml_with_binary("biber")));
+        assert!(
+            !run_xml_binary_requests_biber("<requests><internal package=\"biblatex\"/></requests>"),
+            "没有 external/cmdline 段（例如只有 latex 内部步骤）不算 biber 请求"
+        );
+    }
+
+    /// 成功路径的外部工具提示：三类产物各一条，顺序固定；别的 stem 不算。
+    #[tokio::test]
+    async fn external_tool_notices_detect_biber_index_and_glossary() {
+        let project = TempProject::new("external-tools");
+        let tmp_dir = project.dir.join("tmp");
+        std::fs::create_dir_all(&tmp_dir).unwrap();
+        let fs = crate::fs::TokioFs;
+
+        assert!(
+            external_tool_notices(&fs, &tmp_dir, "main").await.is_empty(),
+            "干净项目不该有提示"
+        );
+
+        std::fs::write(tmp_dir.join("main.run.xml"), run_xml_with_binary("biber")).unwrap();
+        std::fs::write(tmp_dir.join("main.idx"), "x").unwrap();
+        std::fs::write(tmp_dir.join("main.glo"), "x").unwrap();
+        std::fs::write(tmp_dir.join("other.run.xml"), run_xml_with_binary("biber")).unwrap(); // 别的 stem 不算
+
+        let notices = external_tool_notices(&fs, &tmp_dir, "main").await;
+        assert_eq!(notices.len(), 3, "{notices:?}");
+        assert!(notices[0].contains("biber"), "{}", notices[0]);
+        assert!(notices[1].contains("makeindex"), "{}", notices[1]);
+        assert!(notices[2].contains("makeglossaries"), "{}", notices[2]);
+        // 口径区分（2026-11 验收）：biber 由引擎调用（外部可执行），索引/术语表则不自动运行
+        assert!(
+            notices[1].contains("不会自动运行") && notices[2].contains("不会自动运行"),
+            "makeindex/glossaries 确实不会被自动跑，文案要如实这么写：{:?}",
+            &notices[1..]
+        );
+        for n in &notices {
+            assert!(
+                !n.contains("TeX Live"),
+                "Tectonic 自带 bundle：别把「换完整 TeX Live 工具链」当出路（产品里没法操作）：{n}"
+            );
+            assert!(
+                n.contains("（<stem>") || n.contains("<stem>.idx") || n.contains("<stem>.glo"),
+                "要点出是哪个文件：{n}"
+            );
+        }
+    }
+
+    // ---- 超时诊断的证据通道（review E4）----
+
+    /// `.log` 零字节时（Tectonic 的日志收尾才落盘，被树杀时这就是常态），证据必须来自
+    /// **已捕获的 stdout/stderr**：有 `[1]` 页标记 ⇒ "在推进，只是比上限慢"，
+    /// 而不是"日志里还没出现任何页面输出/可能卡住"。
+    #[tokio::test]
+    async fn timeout_evidence_uses_captured_output_when_log_is_empty() {
+        let project = TempProject::new("timeout-output");
+        project.put("main.tex", "\\documentclass{article}\n\\begin{document}\nx\n\\end{document}\n");
+        let tmp_dir = project.dir.join("tmp");
+        std::fs::create_dir_all(&tmp_dir).unwrap();
+        assert!(!tmp_dir.join("main.log").exists(), "前提：超时杀进程时 .log 还没落盘");
+
+        let tail = "note: Running TeX ...\n[1]\nnote: running xdvipdfmx ...\n";
+        let entry = runner()
+            .timeout_entry(&req(&project), "main", &tmp_dir, false, tail, Some(1))
+            .await;
+
+        let diag = entry.diagnosis.expect("超时条目必须带诊断");
+        assert_eq!(
+            diag.kind,
+            DiagnosisKind::CompileTimeout,
+            "有页证据就该判定为「慢」而不是「可能卡住」：{}",
+            diag.cause
+        );
+        assert_eq!(diag.suggested_timeout_secs, Some(900), "首编跳档到 900s");
+        assert!(entry.message.contains("第 1 页"), "message 要带上证据：{}", entry.message);
+        assert!(!entry.message.contains("无页输出"), "{}", entry.message);
+    }
+
+    /// `.log` 有内容时**合并**（不是二选一）：页证据取两者最大值；日志里的致命错误仍然优先
+    /// （那时超时只是症状，提高超时救不了 ⇒ 不给一键提高按钮）。
+    #[tokio::test]
+    async fn timeout_evidence_merges_log_and_captured_output() {
+        let project = TempProject::new("timeout-merge");
+        project.put("main.tex", "\\documentclass{article}\n\\begin{document}\nx\n\\end{document}\n");
+        let tmp_dir = project.dir.join("tmp");
+        std::fs::create_dir_all(&tmp_dir).unwrap();
+
+        std::fs::write(tmp_dir.join("main.log"), "No file main.aux.\n[3]\n").unwrap();
+        let entry = runner()
+            .timeout_entry(&req(&project), "main", &tmp_dir, true, "[1]\n", None)
+            .await;
+        assert!(
+            entry.message.contains("第 3 页"),
+            "日志里的第 3 页不能被输出的第 1 页盖掉：{}",
+            entry.message
+        );
+        assert!(entry.message.contains("增量编译"), "{}", entry.message);
+
+        // 日志自带致命错误 → 超时只是症状
+        std::fs::write(
+            tmp_dir.join("main.log"),
+            "! I can't write on file `body/introduction.aux'.\nl.12 x\n",
+        )
+        .unwrap();
+        let entry = runner()
+            .timeout_entry(&req(&project), "main", &tmp_dir, true, "[2]\n", None)
+            .await;
+        let diag = entry.diagnosis.expect("必须带诊断");
+        assert_eq!(
+            diag.suggested_timeout_secs, None,
+            "已有致命错误时提高超时救不了，不能给一键按钮：{}",
+            diag.cause
+        );
+        assert!(diag.cause.contains("早已失败"), "{}", diag.cause);
+    }
+
+    /// 输出尾部去噪：去掉 ANSI 序列 / `\r` / 空行，但**保留** `[N]` 页标记与错误文本（它们是证据）。
+    #[test]
+    fn output_tail_denoise_keeps_evidence() {
+        let raw = "\u{1b}[2Knote: running\n\r[1]\r\n\n\u{1b}[32m! Undefined control sequence.\u{1b}[0m\n";
+        let cleaned = denoise_output_tail(raw);
+        assert!(!cleaned.contains('\u{1b}'), "{cleaned:?}");
+        assert!(!cleaned.contains('\r'), "{cleaned:?}");
+        assert!(cleaned.contains("[1]"), "{cleaned:?}");
+        assert!(cleaned.contains("! Undefined control sequence."), "{cleaned:?}");
+        assert!(!cleaned.contains("\n\n"), "空行应被丢掉：{cleaned:?}");
+    }
+
+    /// 反馈状态机把流式页标记记成 `max_page`：超时证据不依赖尾部窗口大小。
+    #[test]
+    fn feedback_records_observed_pages_for_timeout_evidence() {
+        let mut fb = LiveFeedback::new(Arc::new(NoProgress));
+        assert_eq!(fb.evidence_snapshot(1 << 10).1, None, "还没输出就没有页证据");
+        fb.feed("note: Running TeX ...\n[1]\n[2]\n", false);
+        let (tail, pages) = fb.evidence_snapshot(1 << 10);
+        assert!(tail.contains("[2]"), "{tail:?}");
+        assert_eq!(pages, Some(2));
+        // 尾部窗口小到截掉页标记，页证据仍在（这正是超时路径要的兜底）
+        let (tiny, pages) = fb.evidence_snapshot(2);
+        assert!(!tiny.contains('['), "前提：窗口确实截掉了标记：{tiny:?}");
+        assert_eq!(pages, Some(2));
+    }
+
+    /// 证据文本合并规则：`.log` 优先，空日志才完全依赖输出；流式观测到的页码作兜底。
+    #[test]
+    fn timeout_evidence_text_prefers_log_when_present() {
+        assert_eq!(timeout_evidence_text("", "[1]\n", None), "[1]\n");
+        assert_eq!(timeout_evidence_text("[3]\n", "", None), "[3]\n");
+        let merged = timeout_evidence_text("log-line\n", "[1]\n", None);
+        assert!(merged.starts_with("log-line"), "{merged:?}");
+        assert!(merged.contains("[1]"), "{merged:?}");
+        let merged = timeout_evidence_text("log-without-newline", "[1]\n", None);
+        assert!(merged.contains("log-without-newline\n[1]"), "{merged:?}");
+
+        // 兜底：尾部没截到 `[N]`（树杀竞态）但流式通道确认过页码 → 补一行标记
+        let rescued = timeout_evidence_text("", "note: running\n", Some(2));
+        assert_eq!(pages_typeset(&rescued), Some(2), "{rescued:?}");
+        // 文本里已经有更大的页 → 不重复补
+        let kept = timeout_evidence_text("[9]\n", "", Some(2));
+        assert_eq!(pages_typeset(&kept), Some(9), "{kept:?}");
+    }
+
+    // ---- 真实编译（#[ignore]：需要 PATH 上有 tectonic）----
+
+    /// Tectonic 端到端：走**完整 runner 路径**跑一次中文文档，断言"出 PDF + **无页哈希**"——
+    /// Tectonic 的 PDF 档永不落 `.xdv`，页级复用 A/B/C 在该形态下不可用（下游 `pages=0` 全量刷新）。
+    #[tokio::test]
+    #[ignore]
+    async fn tectonic_compiles_cjk_pdf_without_page_hashes() {
+        if !tectonic_available() {
+            eprintln!("跳过：未安装 tectonic（或不在 PATH 上）");
+            return;
+        }
+        let project = TempProject::new("tectonic-e2e");
+        project.put(
+            "main.tex",
+            "\\documentclass[12pt]{ctexart}\n\\begin{document}\n你好，世界。Tectonic 端到端用例。\n\\end{document}\n",
+        );
+        let out = runner().compile(req(&project), CancellationToken::new()).await;
+        let CompileOutcome::Success { pdf_path, page_hashes, .. } = &out else {
+            panic!("Tectonic 编译应成功，实际：{out:?}");
+        };
+        assert!(pdf_path.exists(), "项目根应有 PDF：{}", pdf_path.display());
+        let size = std::fs::metadata(pdf_path).expect("读 PDF 元数据").len();
+        assert!(size > 1000, "PDF 太小（{size} B），像是失败产物");
+        assert!(
+            page_hashes.is_empty(),
+            "Tectonic 的 PDF 档没有 XDV ⇒ 页哈希必须为空（前端据此按'无法判定'全量刷新）"
         );
     }
 
@@ -1468,8 +1359,8 @@ mod tests {
     #[tokio::test]
     #[ignore]
     async fn compile_success_and_synctex() {
-        if !latexmk_available() {
-            eprintln!("跳过：系统未安装 latexmk（需要 TeX Live/MiKTeX）");
+        if !tectonic_available() {
+            eprintln!("跳过：未安装 tectonic（或不在 PATH 上）");
             return;
         }
         let project = TempProject::new("success");
@@ -1478,66 +1369,50 @@ mod tests {
             "\\documentclass{article}\n\\begin{document}\nHello Latteset\n\\end{document}\n",
         );
 
-        let runner = LatexmkRunner::new(
-            std::sync::Arc::new(crate::fs::TokioFs),
-            std::sync::Arc::new(latteset_core::scheduler::NoProgress),
+        let outcome = runner().compile(req(&project), CancellationToken::new()).await;
+        let CompileOutcome::Success { pdf_path, .. } = outcome else {
+            panic!("预期成功，得到：{outcome:?}");
+        };
+        assert_eq!(pdf_path, project.dir.join("main.pdf"));
+        assert!(pdf_path.exists(), "PDF 应拷贝到项目根");
+        assert!(project.dir.join("tmp/main.log").exists(), "中间文件应收纳在 tmp/（--keep-logs）");
+        assert!(
+            project.dir.join("tmp/main.synctex.gz").exists(),
+            "--synctex 应产出 synctex 数据"
         );
-        let outcome = runner
-            .compile(req(&project), tokio_util::sync::CancellationToken::new())
-            .await;
 
-        match outcome {
-            CompileOutcome::Success { pdf_path, .. } => {
-                assert_eq!(pdf_path, project.dir.join("main.pdf"));
-                assert!(pdf_path.exists(), "PDF 应拷贝到项目根");
-                assert!(project.dir.join("tmp/main.log").exists(), "中间文件应收纳在 tmp/");
-                assert!(
-                    project.dir.join("tmp/main.synctex.gz").exists(),
-                    "-synctex=1 应产出 synctex 文件"
-                );
-
-                // SyncTeX CLI 输出契约实测（ADR-0008 风险落地）
-                if std::process::Command::new("synctex").arg("--version").output().is_err() {
-                    eprintln!("跳过 SyncTeX 断言：未安装 synctex");
-                    return;
-                }
-                let cli = SyncTexCli;
-                let pos = cli
-                    .forward(
-                        &SourcePosition {
-                            file: project.dir.join("main.tex"),
-                            line: 3,
-                            column: 1,
-                        },
-                        &pdf_path,
-                    )
-                    .await
-                    .expect("正向定位应成功");
-                assert!(pos.page >= 1);
-
-                let back = cli
-                    .inverse(
-                        &SyncTexPosition { page: pos.page, x: pos.x, y: pos.y },
-                        &pdf_path,
-                    )
-                    .await
-                    .expect("反向定位应成功");
-                assert!(back.line >= 1);
-            }
-            other => panic!("预期成功，得到：{other:?}"),
+        // SyncTeX CLI 输出契约实测（ADR-0008 风险落地）——它仍走外部 synctex.exe
+        if std::process::Command::new("synctex").arg("--version").output().is_err() {
+            eprintln!("跳过 SyncTeX 断言：未安装 synctex");
+            return;
         }
+        let cli = SyncTexCli;
+        let pos = cli
+            .forward(
+                &SourcePosition { file: project.dir.join("main.tex"), line: 3, column: 1 },
+                &pdf_path,
+            )
+            .await
+            .expect("正向定位应成功");
+        assert!(pos.page >= 1);
+
+        let back = cli
+            .inverse(&SyncTexPosition { page: pos.page, x: pos.x, y: pos.y }, &pdf_path)
+            .await
+            .expect("反向定位应成功");
+        assert!(back.line >= 1);
     }
 
-    /// Quick 路径（roadmap ㉘）：已有构建产物时直调引擎单趟，命令不经 latexmk。
+    /// Quick 路径（roadmap ㉘）：已有构建产物时跑 Tectonic 两趟，`Success{kind}` 必须报 Quick。
     ///
-    /// 断言「真的跑了引擎」而非「请求被接受」：先 Full 建产物（含 .aux/.toc），
-    /// 再改正文源码走 Quick → Success 必须报 `kind: Quick`，且 PDF/SyncTeX 齐全
+    /// 断言「真的跑了 Quick 档」而非「请求被接受」：先 Full 建产物（含 .aux/.toc），
+    /// 再改正文源码走 Quick → 必须报 `kind: Quick`，且 PDF/SyncTeX 齐全
     /// （后续编辑期的双向定位依赖它）。
     #[tokio::test]
     #[ignore]
-    async fn quick_path_skips_latexmk_and_reports_quick() {
-        if !latexmk_available() {
-            eprintln!("跳过：系统未安装 latexmk（需要 TeX Live/MiKTeX）");
+    async fn quick_path_reports_quick_after_full() {
+        if !tectonic_available() {
+            eprintln!("跳过：未安装 tectonic（或不在 PATH 上）");
             return;
         }
         let project = TempProject::new("quick");
@@ -1545,44 +1420,30 @@ mod tests {
             "main.tex",
             "\\documentclass{article}\n\\begin{document}\n\\tableofcontents\n\\section{One}\\label{s:one}\nSee \\ref{s:one}.\n\\end{document}\n",
         );
-        let runner = LatexmkRunner::new(
-            std::sync::Arc::new(crate::fs::TokioFs),
-            std::sync::Arc::new(latteset_core::scheduler::NoProgress),
-        );
-        let cancel = || tokio_util::sync::CancellationToken::new();
+        let cancel = || CancellationToken::new();
 
         // 1) 首编 = Full（建 tmp/main.aux，Quick 的前置条件）
-        let first = runner.compile(req(&project), cancel()).await;
+        let first = runner().compile(req(&project), cancel()).await;
         assert!(
             matches!(first, CompileOutcome::Success { kind: CompileKind::Full, .. }),
             "首编应为 Full，实得：{first:?}"
         );
         assert!(project.dir.join("tmp/main.aux").exists(), "Full 应产出 .aux");
 
-        // 2) 编辑正文 → Quick（单趟直调 xelatex）
-        // 记录 latexmk 依赖库 mtime：Quick 若误走 latexmk，这一趟必然刷新它。
-        let fdb = project.dir.join("tmp/main.fdb_latexmk");
-        let fdb_before = std::fs::metadata(&fdb).and_then(|m| m.modified()).ok();
+        // 2) 编辑正文 → Quick
         project.put(
             "main.tex",
             "\\documentclass{article}\n\\begin{document}\n\\tableofcontents\n\\section{One}\\label{s:one}\nSee \\ref{s:one}.\nEdited.\n\\end{document}\n",
         );
-        let mut quick = req(&project);
-        quick.kind = CompileKind::Quick;
-        let second = runner.compile(quick, cancel()).await;
+        let second = runner().compile(quick_req(&project), cancel()).await;
         assert!(
             matches!(second, CompileOutcome::Success { kind: CompileKind::Quick, .. }),
-            "有产物时编辑触发应跑单趟并报 Quick，实得：{second:?}"
+            "有产物时编辑触发应跑 Quick 档并如实回报，实得：{second:?}"
         );
         assert!(project.dir.join("main.pdf").exists(), "Quick 也应产出 PDF");
         assert!(
             project.dir.join("tmp/main.synctex.gz").exists(),
             "Quick 也应产出 synctex（定位不能因强度降级而失效）"
-        );
-        assert_eq!(
-            std::fs::metadata(&fdb).and_then(|m| m.modified()).ok(),
-            fdb_before,
-            "Quick 不该动 latexmk 依赖库（.fdb_latexmk mtime 变化 = 误走 latexmk）"
         );
     }
 
@@ -1590,8 +1451,8 @@ mod tests {
     #[tokio::test]
     #[ignore]
     async fn quick_upgrades_to_full_without_artifacts() {
-        if !latexmk_available() {
-            eprintln!("跳过：系统未安装 latexmk（需要 TeX Live/MiKTeX）");
+        if !tectonic_available() {
+            eprintln!("跳过：未安装 tectonic（或不在 PATH 上）");
             return;
         }
         let project = TempProject::new("quick-upgrade");
@@ -1599,13 +1460,9 @@ mod tests {
             "main.tex",
             "\\documentclass{article}\n\\begin{document}\n\\tableofcontents\n\\section{One}\\label{s:one}\nSee \\ref{s:one}.\n\\end{document}\n",
         );
-        let runner = LatexmkRunner::new(
-            std::sync::Arc::new(crate::fs::TokioFs),
-            std::sync::Arc::new(latteset_core::scheduler::NoProgress),
-        );
         let mut quick = req(&project);
         quick.kind = CompileKind::Quick;
-        let outcome = runner.compile(quick, tokio_util::sync::CancellationToken::new()).await;
+        let outcome = runner().compile(quick, CancellationToken::new()).await;
 
         match outcome {
             CompileOutcome::Success { kind, .. } => {
@@ -1627,8 +1484,8 @@ mod tests {
     #[tokio::test]
     #[ignore]
     async fn compile_content_error() {
-        if !latexmk_available() {
-            eprintln!("跳过：系统未安装 latexmk（需要 TeX Live/MiKTeX）");
+        if !tectonic_available() {
+            eprintln!("跳过：未安装 tectonic（或不在 PATH 上）");
             return;
         }
         let project = TempProject::new("error");
@@ -1637,14 +1494,7 @@ mod tests {
             "\\documentclass{article}\n\\begin{document}\n\\undefinedcommandhere\n\\end{document}\n",
         );
 
-        let runner = LatexmkRunner::new(
-            std::sync::Arc::new(crate::fs::TokioFs),
-            std::sync::Arc::new(latteset_core::scheduler::NoProgress),
-        );
-        let outcome = runner
-            .compile(req(&project), tokio_util::sync::CancellationToken::new())
-            .await;
-
+        let outcome = runner().compile(req(&project), CancellationToken::new()).await;
         match outcome {
             CompileOutcome::ContentError { errors } => {
                 assert!(!errors.is_empty(), "应有解析出的错误条目");
@@ -1658,8 +1508,8 @@ mod tests {
     #[tokio::test]
     #[ignore]
     async fn compile_timeout_kills_tree_and_reports_evidence() {
-        if !latexmk_available() {
-            eprintln!("跳过：系统未安装 latexmk（需要 TeX Live/MiKTeX）");
+        if !tectonic_available() {
+            eprintln!("跳过：未安装 tectonic（或不在 PATH 上）");
             return;
         }
         let project = TempProject::new("timeout");
@@ -1668,15 +1518,9 @@ mod tests {
             "\\documentclass{article}\n\\begin{document}\nBig\n\\end{document}\n",
         );
 
-        let runner = LatexmkRunner::new(
-            std::sync::Arc::new(crate::fs::TokioFs),
-            std::sync::Arc::new(latteset_core::scheduler::NoProgress),
-        );
         let mut request = req(&project);
         request.timeout = Duration::from_millis(1); // 必超时
-        let outcome = runner
-            .compile(request, tokio_util::sync::CancellationToken::new())
-            .await;
+        let outcome = runner().compile(request, CancellationToken::new()).await;
 
         match outcome {
             CompileOutcome::Timeout { entry } => {
@@ -1691,18 +1535,118 @@ mod tests {
                     "消息应含实际上限：{}",
                     entry.message
                 );
-                // 树没被杀干净的话这里会留下 latexmk 子进程（kill_tree 的既有断言在别的用例里）
             }
             other => panic!("预期超时，得到：{other:?}"),
         }
+    }
+
+    /// E2 端到端回归（review 夹具 `probe-biBtex`）：`biblatex[backend=bibtex]` **编译成功且
+    /// 参考文献已生成**时，不得出现任何 biber 提示。
+    ///
+    /// 这正是旧判据（只看 `.run.xml` 存在）的误报现场：`.run.xml` 确实存在（logreq 为
+    /// biblatex 写的请求文件），但里面是 `<binary>bibtex</binary>`。
+    #[tokio::test]
+    #[ignore]
+    async fn bibtex_backend_success_emits_no_biber_notice() {
+        if !tectonic_available() {
+            eprintln!("跳过：未安装 tectonic（或不在 PATH 上）");
+            return;
+        }
+        let project = TempProject::new("bibtex-notice");
+        project.put(
+            "refs.bib",
+            "@book{knuth, author={Donald Knuth}, title={The TeXbook}, year={1984}, publisher={AW}}\n",
+        );
+        project.put(
+            "main.tex",
+            "\\documentclass{article}\n\\usepackage[backend=bibtex]{biblatex}\n\
+             \\addbibresource{refs.bib}\n\\begin{document}\nCite: \\cite{knuth}.\n\
+             \\printbibliography\n\\end{document}\n",
+        );
+        let progress = std::sync::Arc::new(RecordingProgress::new());
+        let runner =
+            SubprocessRunner::new(std::sync::Arc::new(crate::fs::TokioFs), progress.clone());
+        let outcome = runner.compile(req(&project), CancellationToken::new()).await;
+
+        assert!(
+            matches!(outcome, CompileOutcome::Success { .. }),
+            "backend=bibtex 应编译成功：{outcome:?}"
+        );
+        let bbl = std::fs::metadata(project.dir.join("tmp/main.bbl"))
+            .map(|m| m.len())
+            .unwrap_or(0);
+        assert!(bbl > 0, "夹具前提：bibtex 后端已生成参考文献（.bbl）");
+        assert!(
+            project.dir.join("tmp/main.run.xml").exists(),
+            "夹具前提：`.run.xml` 存在——旧判据的误报来源"
+        );
+
+        let notices = progress.notices.lock().unwrap().clone();
+        assert!(
+            notices.iter().all(|n| !n.contains("biber")),
+            "backend=bibtex 被误报为「不支持 biber」：{notices:?}"
+        );
+    }
+
+    /// E4 端到端回归（review 夹具 `timeout-pages`）：第 1 页之后是长 TeX 循环 ⇒ 超时被杀时
+    /// `tmp/*.log` 还没落盘，诊断必须用上 stdout 里已经出现的 `[1]` 页证据。
+    #[tokio::test]
+    #[ignore]
+    async fn timeout_diagnosis_uses_streamed_page_evidence() {
+        if !tectonic_available() {
+            eprintln!("跳过：未安装 tectonic（或不在 PATH 上）");
+            return;
+        }
+        let project = TempProject::new("timeout-pages");
+        project.put(
+            "main.tex",
+            "\\documentclass{article}\n\\begin{document}\nPage one.\n\\newpage\n\
+             \\newcount\\n \\n=0\n\\loop\\ifnum\\n<80000000 \\advance\\n by 1 \\repeat\n\
+             \\newpage\nslow done\n\\end{document}\n",
+        );
+        let progress = std::sync::Arc::new(RecordingProgress::new());
+        let runner =
+            SubprocessRunner::new(std::sync::Arc::new(crate::fs::TokioFs), progress.clone());
+        let mut request = req(&project);
+        // 够 Tectonic 排完第 1 页（慢机器上仍留余量），又远小于那条循环的耗时
+        request.timeout = Duration::from_secs(8);
+        let outcome = runner.compile(request, CancellationToken::new()).await;
+
+        let CompileOutcome::Timeout { entry } = outcome else {
+            panic!("预期超时，得到：{outcome:?}");
+        };
+        let streamed = progress.pages.lock().unwrap().clone();
+        assert!(!streamed.is_empty(), "夹具前提：stdout 已报出页进度");
+        assert!(
+            !project.dir.join("tmp/main.log").exists(),
+            "夹具前提：超时被树杀时 .log 还没落盘（这正是旧证据通道失效的原因）"
+        );
+
+        let diag = entry.diagnosis.expect("超时必须带诊断");
+        assert_eq!(
+            diag.kind,
+            DiagnosisKind::CompileTimeout,
+            "诊断必须用上「已排版 N 页」这条内存证据，而不是说日志里没有页输出：{}",
+            diag.cause
+        );
+        assert_ne!(
+            diag.suggested_timeout_secs, None,
+            "在推进只是慢 ⇒ 应给一键提高超时的建议：{}",
+            diag.cause
+        );
+        assert!(
+            entry.message.contains("第 1 页") || entry.message.contains("第 2 页"),
+            "证据事实要写进 message：{}",
+            entry.message
+        );
     }
 
     /// 取消路径：提前取消 → Aborted。
     #[tokio::test]
     #[ignore]
     async fn compile_cancel_aborts() {
-        if !latexmk_available() {
-            eprintln!("跳过：系统未安装 latexmk（需要 TeX Live/MiKTeX）");
+        if !tectonic_available() {
+            eprintln!("跳过：未安装 tectonic（或不在 PATH 上）");
             return;
         }
         let project = TempProject::new("cancel");
@@ -1711,21 +1655,10 @@ mod tests {
             "\\documentclass{article}\n\\begin{document}\nBig\n\\end{document}\n",
         );
 
-        let runner = LatexmkRunner::new(
-            std::sync::Arc::new(crate::fs::TokioFs),
-            std::sync::Arc::new(latteset_core::scheduler::NoProgress),
-        );
-        let cancel = tokio_util::sync::CancellationToken::new();
+        let cancel = CancellationToken::new();
         cancel.cancel(); // 立即取消
-        let outcome = runner.compile(req(&project), cancel).await;
+        let outcome = runner().compile(req(&project), cancel).await;
         assert_eq!(outcome, CompileOutcome::Aborted);
-    }
-
-    #[test]
-    fn root_stem_variants() {
-        assert_eq!(root_stem(Path::new(r"C:\proj\main.tex")), "main");
-        assert_eq!(root_stem(Path::new("css/thesis.tex")), "thesis");
-        assert_eq!(root_stem(Path::new("main")), "main"); // 无扩展名回退
     }
 
     /// 流式反馈记录器（阶段 2）：记下每次回调的**时刻**，好断言"编译结束前就到了"。
@@ -1733,6 +1666,8 @@ mod tests {
         start: Instant,
         pages: std::sync::Mutex<Vec<(u32, Duration)>>,
         errors: std::sync::Mutex<Vec<(usize, Duration)>>,
+        /// 能力边界提示（`CompileProgress::notice`）：E2 回归要断言"backend=bibtex 0 条"。
+        notices: std::sync::Mutex<Vec<String>>,
     }
 
     impl RecordingProgress {
@@ -1741,6 +1676,7 @@ mod tests {
                 start: Instant::now(),
                 pages: std::sync::Mutex::new(Vec::new()),
                 errors: std::sync::Mutex::new(Vec::new()),
+                notices: std::sync::Mutex::new(Vec::new()),
             }
         }
     }
@@ -1752,14 +1688,19 @@ mod tests {
         fn errors(&self, errors: &[ErrorEntry]) {
             self.errors.lock().unwrap().push((errors.len(), self.start.elapsed()));
         }
+        fn notice(&self, msg: &str) {
+            self.notices.lock().unwrap().push(msg.to_owned());
+        }
     }
 
-    /// 流式输出（阶段 2）：真实编译期间就该报上"已排版 N 页"，而不是等编译结束。
+    /// 流式页进度（阶段 2）：真实编译期间就该报上"已排版 N 页"，而不是等编译结束。
+    ///
+    /// Tectonic 的页进度通道是 `-p` 打在 **stdout 的 `[N]`**；终态不依赖它。
     #[tokio::test]
     #[ignore]
     async fn reports_streaming_pages_before_compile_finishes() {
-        if !latexmk_available() {
-            eprintln!("跳过：系统未安装 latexmk（需要 TeX Live/MiKTeX）");
+        if !tectonic_available() {
+            eprintln!("跳过：未安装 tectonic（或不在 PATH 上）");
             return;
         }
         let project = TempProject::new("stream-pages");
@@ -1769,11 +1710,9 @@ mod tests {
             "\\documentclass{article}\n\\begin{document}\nFirst\n\\newpage\nSecond\n\\newpage\nThird\n\\end{document}\n",
         );
         let progress = std::sync::Arc::new(RecordingProgress::new());
-        let runner = LatexmkRunner::new(std::sync::Arc::new(crate::fs::TokioFs), progress.clone());
+        let runner = SubprocessRunner::new(std::sync::Arc::new(crate::fs::TokioFs), progress.clone());
         let started = Instant::now();
-        let outcome = runner
-            .compile(req(&project), tokio_util::sync::CancellationToken::new())
-            .await;
+        let outcome = runner.compile(req(&project), CancellationToken::new()).await;
         let total = started.elapsed();
         assert!(matches!(outcome, CompileOutcome::Success { .. }), "预期成功：{outcome:?}");
 
@@ -1781,9 +1720,8 @@ mod tests {
         let seen: Vec<u32> = events.iter().map(|(p, _)| *p).collect();
         assert!(!events.is_empty(), "流式页进度一次都没上报（stdout 管道没接上？）");
         assert_eq!(seen.iter().max().copied(), Some(3), "最大页码应为 3：{seen:?}");
-        // 注意：latexmk 会跑**多趟**（每趟一个新进程），页码在多趟之间会重启 → 只要求**非递减**。
-        // 前端展示的是 max（compileStore.setProgress 只接受更大的值），故重启不会造成回跳。
-        assert!(seen.windows(2).all(|w| w[1] >= w[0]), "页码在单趟内必须单调递增：{seen:?}");
+        // 引擎可能跑多趟（每趟页码重启）：`PageMarkerScanner` 只升不降，故前端展示的 max 不会回跳。
+        assert!(seen.windows(2).all(|w| w[1] >= w[0]), "页码必须单调递增：{seen:?}");
         // 关键断言：进度**在编译结束前**就到了（不是收尾时才补发）
         let (_, first_at) = events[0];
         let lead = total.saturating_sub(first_at);
@@ -1793,91 +1731,12 @@ mod tests {
         );
     }
 
-    /// 流式输出（阶段 2）：编译**进行中**就要报出错误（长文档不必等到超时/结束）。
-    #[tokio::test]
-    #[ignore]
-    async fn reports_live_errors_before_compile_finishes() {
-        if !latexmk_available() {
-            eprintln!("跳过：系统未安装 latexmk（需要 TeX Live/MiKTeX）");
-            return;
-        }
-        let project = TempProject::new("stream-errors");
-        // 错误出现在第 1 页，后面还有足够内容让编译继续跑一会儿（nonstopmode 不中断）
-        let filler = "Filler line with some words. ".repeat(20);
-        project.put(
-            "main.tex",
-            &format!(
-                "\\documentclass{{article}}\n\\begin{{document}}\n\\undefinedcommandhere\n{filler}\n\\newpage\n{filler}\n\\end{{document}}\n"
-            ),
-        );
-        let progress = std::sync::Arc::new(RecordingProgress::new());
-        let runner = LatexmkRunner::new(std::sync::Arc::new(crate::fs::TokioFs), progress.clone());
-        let started = Instant::now();
-        let outcome = runner
-            .compile(req(&project), tokio_util::sync::CancellationToken::new())
-            .await;
-        let total = started.elapsed();
-        assert!(
-            matches!(outcome, CompileOutcome::ContentError { .. }),
-            "预期内容错误：{outcome:?}"
-        );
-
-        let live = progress.errors.lock().unwrap().clone();
-        assert!(!live.is_empty(), "编译中一次都没有上报错误（流式解析没生效？）");
-        let (_, first_at) = live[0];
-        let lead = total.saturating_sub(first_at);
-        assert!(
-            lead >= Duration::from_millis(100),
-            "首个流式错误距编译结束只有 {lead:?}（总时长 {total:?}）——像是收尾才发的"
-        );
-    }
-
-    #[test]
-    fn latexmk_input_keeps_nested_relative_path() {
-        // H2 回归：嵌套根文件必须用相对项目的完整路径，而非仅 stem（否则 latexmk 在项目根下找不到文件）
-        let root = Path::new(r"C:\proj");
-        assert_eq!(
-            latexmk_input(Path::new(r"C:\proj\css\thesis.tex"), root),
-            "css/thesis.tex"
-        );
-        assert_eq!(
-            latexmk_input(Path::new(r"C:\proj\main.tex"), root),
-            "main.tex"
-        );
-        // 不在项目根下 → 回退到完整路径（统一正斜杠）
-        assert_eq!(
-            latexmk_input(Path::new(r"D:\other\a.tex"), root),
-            "D:/other/a.tex"
-        );
-    }
-
-    // ---------------------------------------------------------------- 中文/非 ASCII 路径（roadmap P0-①）
-
-    #[test]
-    fn chinese_path_input_and_stem() {
-        // 传给 latexmk 的输入必须是相对项目的正斜杠路径，中文原样保留（不得被转义/丢字）
-        let root = Path::new(r"E:\项目\中文测试工程");
-        assert_eq!(
-            latexmk_input(Path::new(r"E:\项目\中文测试工程\中文主文件.tex"), root),
-            "中文主文件.tex"
-        );
-        assert_eq!(
-            latexmk_input(Path::new(r"E:\项目\中文测试工程\章节\第一章.tex"), root),
-            "章节/第一章.tex"
-        );
-        // 产物名沿用 basename 的 stem，中文 stem 需与 pdf_dst 计算一致
-        assert_eq!(root_stem(Path::new(r"E:\项目\中文测试工程\中文主文件.tex")), "中文主文件");
-    }
-
-    /// 中文路径全链路（真实 latexmk + synctex）：中文目录 + 中文文件名 + 中文子目录。
-    ///
-    /// 实测基线（2026-09，TeX Live 2026 / Windows，CP65001 与 CP936 均验证）：
-    /// 编译 exit 0、`tmp/` 产出 `.log`/`.synctex.gz`、PDF 正常，synctex 双向可用且中文源路径可回传。
+    /// 中文路径全链路：中文目录 + 中文文件名 + 中文子目录。
     #[tokio::test]
     #[ignore]
     async fn compile_chinese_paths_with_synctex() {
-        if !latexmk_available() {
-            eprintln!("跳过：系统未安装 latexmk（需要 TeX Live/MiKTeX）");
+        if !tectonic_available() {
+            eprintln!("跳过：未安装 tectonic（或不在 PATH 上）");
             return;
         }
         // 目录名含中文（temp_dir()/latteset-it-中文目录-<pid>）
@@ -1888,20 +1747,13 @@ mod tests {
         );
         project.put("章节/第一章.tex", "\\section{子文件章节}\n中文正文。\n");
 
-        let runner = LatexmkRunner::new(
-            std::sync::Arc::new(crate::fs::TokioFs),
-            std::sync::Arc::new(latteset_core::scheduler::NoProgress),
-        );
         let request = CompileRequest {
             root_file: project.dir.join("中文主文件.tex"),
             project_root: project.dir.clone(),
-            engine: latteset_core::types::Engine::XeLaTeX,
-            timeout: Duration::from_secs(60),
+            timeout: test_timeout(),
             kind: CompileKind::Full,
         };
-        let outcome = runner
-            .compile(request, tokio_util::sync::CancellationToken::new())
-            .await;
+        let outcome = runner().compile(request, CancellationToken::new()).await;
 
         let pdf_path = match outcome {
             CompileOutcome::Success { pdf_path, .. } => pdf_path,
@@ -1909,10 +1761,7 @@ mod tests {
         };
         assert_eq!(pdf_path, project.dir.join("中文主文件.pdf"));
         assert!(pdf_path.exists(), "PDF 应拷贝到项目根（中文名）");
-        assert!(
-            project.dir.join("tmp/中文主文件.log").exists(),
-            "中文名的 .log 应落在 tmp/"
-        );
+        assert!(project.dir.join("tmp/中文主文件.log").exists(), "中文名的 .log 应落在 tmp/");
         assert!(
             project.dir.join("tmp/中文主文件.synctex.gz").exists(),
             "中文名的 synctex 数据应产出"
@@ -1926,11 +1775,7 @@ mod tests {
         // 正向：从中文子文件定位 → 页码有效
         let pos = cli
             .forward(
-                &SourcePosition {
-                    file: project.dir.join("章节/第一章.tex"),
-                    line: 1,
-                    column: 1,
-                },
+                &SourcePosition { file: project.dir.join("章节/第一章.tex"), line: 1, column: 1 },
                 &pdf_path,
             )
             .await
@@ -1939,14 +1784,7 @@ mod tests {
 
         // 反向：PDF → 源码，回传的**中文文件名必须完好**（这是跳回源码的判据）
         let back = cli
-            .inverse(
-                &SyncTexPosition {
-                    page: pos.page,
-                    x: pos.x,
-                    y: pos.y,
-                },
-                &pdf_path,
-            )
+            .inverse(&SyncTexPosition { page: pos.page, x: pos.x, y: pos.y }, &pdf_path)
             .await
             .expect("中文路径反向定位应成功");
         let back_name = back
@@ -1965,8 +1803,8 @@ mod tests {
     #[tokio::test]
     #[ignore]
     async fn compile_chinese_path_content_error_keeps_file_and_line() {
-        if !latexmk_available() {
-            eprintln!("跳过：系统未安装 latexmk（需要 TeX Live/MiKTeX）");
+        if !tectonic_available() {
+            eprintln!("跳过：未安装 tectonic（或不在 PATH 上）");
             return;
         }
         let project = TempProject::new("中文错误");
@@ -1975,30 +1813,20 @@ mod tests {
             "\\documentclass{article}\n\\begin{document}\n\\undefinedcommandhere\n\\end{document}\n",
         );
 
-        let runner = LatexmkRunner::new(
-            std::sync::Arc::new(crate::fs::TokioFs),
-            std::sync::Arc::new(latteset_core::scheduler::NoProgress),
-        );
         // 必须编译中文根文件本身：req() 造的是 main.tex，项目里并不存在，
-        // latexmk 会因缺少输入而无 .log 可解析（原用例恒失败，2026-09 修正）。
+        // 引擎会因缺少输入而无 .log 可解析（2026-09 修正过这条用例）。
         let request = CompileRequest {
             root_file: project.dir.join("中文主文件.tex"),
             project_root: project.dir.clone(),
-            engine: latteset_core::types::Engine::XeLaTeX,
-            timeout: Duration::from_secs(60),
+            timeout: test_timeout(),
             kind: CompileKind::Full,
         };
-        let outcome = runner
-            .compile(request, tokio_util::sync::CancellationToken::new())
-            .await;
+        let outcome = runner().compile(request, CancellationToken::new()).await;
 
         match outcome {
             CompileOutcome::ContentError { errors } => {
                 assert!(!errors.is_empty(), "应有解析出的错误条目");
-                let with_line = errors
-                    .iter()
-                    .find(|e| e.line.is_some())
-                    .expect("错误应带行号");
+                let with_line = errors.iter().find(|e| e.line.is_some()).expect("错误应带行号");
                 assert_eq!(with_line.line, Some(3));
                 assert!(
                     with_line

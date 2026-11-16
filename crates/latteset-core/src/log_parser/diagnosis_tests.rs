@@ -1,7 +1,7 @@
 //! 错误诊断的**真实语料**回归（roadmap ④）。
 //!
 //! 语料在 [`super::real_error_corpus`]（脚本 `scripts/gen-log-error-corpus.ps1` 自动生成，
-//! 23 例全部来自真实编译）；**期望值在这里手写**——若由实现反推期望值，测试就成了自证循环。
+//! 20 例全部来自真实编译）；**期望值在这里手写**——若由实现反推期望值，测试就成了自证循环。
 //!
 //! 断言三件事：
 //! 1. 语料与期望表**一一对应**（防止语料重生成后悄悄漂移）；
@@ -36,11 +36,9 @@ static EXPECT: &[Expect] = &[
     // ---- 字体（⑲ 实测：fduthesis 缺思源宋体 / hithesis 字体集取值错）----
     Expect { name: "missing-font-source-han", kind: DiagnosisKind::MissingFont, cause_contains: "SourceHanSerifSC-Regular", line: Some(857), want_hint: true },
     Expect { name: "missing-ctex-fontset", kind: DiagnosisKind::MissingFontset, cause_contains: "windowsnew", line: Some(1678), want_hint: true },
-    // ---- 引擎（⑲ 核心结论：不自动推断，但选错时必须明确告诉用户怎么改）----
-    Expect { name: "engine-fontspec-under-pdftex", kind: DiagnosisKind::EngineMismatch, cause_contains: "XeLaTeX", line: Some(101), want_hint: true },
-    Expect { name: "engine-unicode-math-under-pdftex", kind: DiagnosisKind::EngineMismatch, cause_contains: "XeLaTeX", line: Some(40), want_hint: true },
-    Expect { name: "engine-shtthesis-only", kind: DiagnosisKind::EngineMismatch, cause_contains: "XeLaTeX", line: Some(38), want_hint: true },
-    Expect { name: "needs-platex-format", kind: DiagnosisKind::UnsupportedEngine, cause_contains: "pLaTeX", line: Some(14), want_hint: true },
+    // ---- 外部工具（ADR-0015：引擎统一为 Tectonic 后，biber/makeindex/glossaries 不再支持）----
+    // 这三类没有真实编译语料可留（旧语料是"引擎选错"场景，引擎已不可选 ⇒ 场景不复存在）；
+    // 规则本身由下面的 `unsupported_tool_is_actionable` 直接钉住。
     // ---- 编码（P0-① 实测：GBK 源 + pdflatex）----
     Expect { name: "non-utf8-source", kind: DiagnosisKind::NonUtf8Source, cause_contains: "UTF-8", line: Some(3), want_hint: true },
     // ---- 语法类（探针编译）----
@@ -53,6 +51,10 @@ static EXPECT: &[Expect] = &[
     Expect { name: "double-subscript", kind: DiagnosisKind::DoubleScript, cause_contains: "上下标", line: Some(3), want_hint: true },
     Expect { name: "misplaced-alignment", kind: DiagnosisKind::MisplacedAlignment, cause_contains: "&", line: Some(5), want_hint: true },
     // ---- 连锁反应 / 宏包与选项 ----
+    // pLaTeX 格式缺失：引擎统一为 Tectonic 后不再是"选错引擎"，但仍是一类真实失败
+    // （Tectonic 是 XeTeX 底座，日文 jsarticle 这类要求 pLaTeX 格式的文档会直接报 LaTeX Error）。
+    // 规则已无专用分支 ⇒ 走 LatexError 兜底，原文里保留 `pLaTeX2e` 供用户定位。
+    Expect { name: "needs-platex-format", kind: DiagnosisKind::LatexError, cause_contains: "pLaTeX2e", line: Some(14), want_hint: false },
     Expect { name: "emergency-stop", kind: DiagnosisKind::EmergencyStop, cause_contains: "连锁", line: None, want_hint: true },
     Expect { name: "file-ended-scanning", kind: DiagnosisKind::EmergencyStop, cause_contains: "连锁", line: None, want_hint: true },
     Expect { name: "option-clash-natbib", kind: DiagnosisKind::OptionClash, cause_contains: "natbib", line: Some(184), want_hint: true },
@@ -289,6 +291,82 @@ fn aux_write_failure_is_diagnosed_directly() {
     let d = diagnose(fatal).expect("应能诊断");
     assert_eq!(d.kind, DiagnosisKind::AuxWriteFailed);
     assert!(d.cause.contains("body/introduction.aux"));
+}
+
+// ---- 外部工具（ADR-0015 第 4 条）：biber（引擎会调用，要本机可用且版本匹配）/ makeindex / glossaries（不自动运行）----
+
+fn tool_msg(message: &str) -> super::LogMessage {
+    super::LogMessage {
+        kind: super::MessageKind::Error,
+        message: message.to_owned(),
+        file: None,
+        line: None,
+        raw: String::new(),
+    }
+}
+
+/// 检出外部工具需求 ⇒ `UnsupportedTool` + **可行动出路**：参考文献改内建 bibtex（`backend=bibtex` /
+/// `\bibliography`），索引/术语表去掉 `\makeindex` / `\makeglossaries` 或先在命令行跑一次。
+///
+/// **口径事实（2026-11 验收复验）**：Tectonic 0.17 子进程形态**会调用外部 biber**
+/// （直跑日志 `note: Running external tool biber ...`，上游 `external_tool_pass`），所以 biber 不能
+/// 说成"引擎不支持"——真实原因是本机缺 biber 或版本与 bundle 内 biblatex 不匹配。
+/// makeindex/glossaries 才是"不自动运行"。
+///
+/// 这三类没有真实编译语料可留：语料里的旧样本是"引擎选错"场景，而引擎已不可选（ADR-0015）。
+#[test]
+fn unsupported_tool_is_actionable() {
+    for (text, tool, wants_version) in [
+        (
+            "Package biblatex Warning: Please (re)run Biber on the file:\n(biblatex) main",
+            "biber",
+            true,
+        ),
+        ("! Package biblatex Error: biber backend is not available", "biber", true),
+        ("! LaTeX Error: makeindex is required to build the index", "makeindex", false),
+        (
+            "Package glossaries Warning: run makeglossaries to update the glossary",
+            "glossaries",
+            false,
+        ),
+    ] {
+        let d = diagnose(&tool_msg(text)).unwrap_or_else(|| panic!("{text} 应能诊断"));
+        assert_eq!(d.kind, DiagnosisKind::UnsupportedTool, "{text}");
+        assert!(d.cause.contains(tool), "原因要点名工具 {tool}：{}", d.cause);
+        assert!(
+            !d.cause.contains("不支持"),
+            "biber 会被引擎调用（缺它/版本不匹配才失败），不能说「引擎不支持」：{}",
+            d.cause
+        );
+        if wants_version {
+            assert!(
+                d.cause.contains("版本"),
+                "biber 必须讲清「版本要与 biblatex 匹配」：{}",
+                d.cause
+            );
+            assert!(d.cause.contains("外部 biber"), "要说清是外部 biber：{}", d.cause);
+        }
+        let hint = d.hint.expect("必须给可行动出路");
+        // 出路必须与成功路径的能力边界提示（infra runner 的 EXTERNAL_TOOL_NOTICES）口径一致：
+        // bibtex 后端 / 传统 \bibliography / 去掉索引与术语表命令（或外部跑一次）
+        for needle in ["backend=bibtex", "bibliography", "bibtex", "makeindex", "makeglossaries"] {
+            assert!(hint.contains(needle), "建议里缺 `{needle}`：{hint}");
+        }
+        // 不静默降级、也不推荐回退其它引擎/工具链（ADR-0015 第 4 条；产品里没有那个操作）
+        assert!(!hint.contains("设置 → 引擎"), "{hint}");
+        assert!(
+            !hint.contains("TeX Live"),
+            "Tectonic 自带 bundle：别把「换完整 TeX Live 工具链」当出路：{hint}"
+        );
+        assert!(
+            !hint.contains("不支持"),
+            "出路文案也不该说「不支持」——biber 是被调用、索引/术语表是不自动跑：{hint}"
+        );
+    }
+
+    // 反例：裸 `biblatex` 的普通语法错误不能被抢说成"缺 biber"
+    let d = diagnose(&tool_msg("! Package biblatex Error: Invalid bibliography option")).unwrap();
+    assert_ne!(d.kind, DiagnosisKind::UnsupportedTool, "{d:?}");
 }
 
 // ---- 源码版模板（roadmap ㉗）：缺 .cls 但项目里有 .ins/.dtx ----

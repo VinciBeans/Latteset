@@ -11,7 +11,6 @@ use specta::Type;
 use std::path::{Path, PathBuf};
 use tauri::{Manager, State};
 use latteset_core::compose::compile_request_manual;
-use latteset_core::engine::EngineInfo;
 use latteset_core::newfile::{DocKind, DocLanguage};
 use latteset_core::project::{
     is_tex_file, resolve_creatable_in_project, resolve_in_project, resolve_project_root, PathError,
@@ -104,7 +103,7 @@ pub struct MathPreviewDto {
 ///
 /// 隔离（硬要求）：落点 `<项目>/tmp/snippet/<键>/`，**独立 project_root**、**不经调度器**
 /// （不产出 `compile-status`/`pdf-updated`，也不碰权威 `<stem>.pdf` 与主编译的 `tmp/main.*`）。
-/// 形态：**Tectonic 专属**（ADR-0014）；非 Tectonic 形态下这条命令仍可用，但按 ADR 不做优化适配。
+/// 引擎：Tectonic 唯一（ADR-0015），形态跟随设置（子进程 / 库内嵌）。
 #[tauri::command]
 #[specta::specta]
 pub async fn compile_math(
@@ -152,7 +151,6 @@ pub async fn compile_math(
     let snippet_root = latteset_infra::snippet::prepare_snippet_dir(&project.root, &key, &document)?;
     let entry = snippet_root.join("main.tex");
 
-    let settings = state.settings.read().await.clone();
     let runner = crate::runner_switch::SwitchableRunner::new(
         state.fs.clone(),
         Arc::new(NoProgress),
@@ -162,7 +160,6 @@ pub async fn compile_math(
     let request = latteset_core::types::CompileRequest {
         root_file: entry,
         project_root: snippet_root,
-        engine: settings.compile.engine,
         // 片段应当秒级完成；给一个短上限，卡住就放弃而不是拖住编辑器（与 A 同口径）。
         timeout: std::time::Duration::from_secs(30),
         kind: CompileKind::Quick,
@@ -590,26 +587,6 @@ pub fn new_file_skeleton(lang: DocLanguage, kind: DocKind, title: Option<String>
     latteset_core::newfile::document_skeleton(lang, kind, title.as_deref().unwrap_or_default())
 }
 
-// ---------------------------------------------------------------- 引擎清单
-
-/// 引擎清单（roadmap ㊻）：**顺序、名字、说明与本机可用性都由后端给** —— 前端不再各写一份。
-///
-/// - 可用性 = PATH 上找得到该引擎需要的可执行文件（`latteset_infra::probe`，只查文件、不起进程）；
-/// - Tectonic 额外认一条"库形态已编入"（库内嵌不调外部 `tectonic.exe`，见 ADR-0012）；
-/// - `LATTESET_TEX_ENGINES=xelatex,tectonic` 可**覆盖清单与顺序**（CI / 裁剪发布用），
-///   但它不能让不可用的引擎变可用（可用性是探测出来的事实）。
-///
-/// 不缓存：一次面板打开几趟目录查询，比缓存失效的复杂度便宜得多。
-#[tauri::command]
-#[specta::specta]
-pub fn list_engines() -> Vec<EngineInfo> {
-    latteset_core::engine::engine_list(
-        &|name| latteset_infra::probe::find_in_path(name).is_some(),
-        crate::runner_switch::LIB_FORM_COMPILED_IN,
-        latteset_infra::probe::env_tex_engines().as_deref(),
-    )
-}
-
 // ---------------------------------------------------------------- 编译
 
 #[tauri::command]
@@ -657,7 +634,7 @@ pub fn lib_form_available() -> bool {
 #[derive(Debug, Clone, Serialize, Type)]
 #[serde(rename_all = "snake_case")]
 pub enum EngineForm {
-    /// 子进程档：`latexmk` 驱动 xelatex/lualatex/pdflatex，或直调 `tectonic.exe`。
+    /// 子进程档：外部 `tectonic` 可执行文件。
     Subprocess,
     /// Tectonic **库内嵌**。
     Lib,
@@ -668,6 +645,8 @@ pub enum EngineForm {
 /// 状态栏用的「实际形态」载荷。
 #[derive(Debug, Clone, Serialize, Type)]
 pub struct EngineFormDto {
+    /// 引擎名（恒为 [`latteset_core::types::ENGINE_ID`]）：状态栏显示用，前端不写死字面量。
+    pub engine: String,
     pub form: EngineForm,
     /// 形态位是否由 `LATTESET_TECTONIC_LIB` 强制（**它压过设置**，所以设置面选子进程也可能是库形态）。
     pub env_forced: bool,
@@ -679,15 +658,16 @@ pub struct EngineFormDto {
 ///
 /// **判定只做一次、就在后端**：这里直接调用 runner 用的那个纯函数
 /// （[`latteset_core::settings::TectonicSettings::use_library_form`]），所以状态栏不可能与编译实际
-/// 行为不一致。前端**不得**从 `compile.engine` 自己推形态 —— `LATTESET_TECTONIC_LIB` 能压过设置，
-/// 只看设置会报出与实际不符的形态。
+/// 行为不一致。前端**不得**自己推形态 —— `LATTESET_TECTONIC_LIB` 能压过设置，只看设置会报出与
+/// 实际不符的形态。
 #[tauri::command]
 #[specta::specta]
 pub async fn engine_form(state: State<'_, AppState>) -> Result<EngineFormDto, CmdError> {
     let s = state.settings.read().await;
     let env_forced = crate::runner_switch::lib_form_forced_by_env();
-    let wants_lib = s.tectonic.use_library_form(s.compile.engine, env_forced);
+    let wants_lib = s.tectonic.use_library_form(env_forced);
     Ok(EngineFormDto {
+        engine: latteset_core::types::ENGINE_ID.to_string(),
         form: if !wants_lib {
             EngineForm::Subprocess
         } else if crate::runner_switch::LIB_FORM_COMPILED_IN {
@@ -910,8 +890,11 @@ pub async fn get_settings(state: State<'_, AppState>) -> Result<Settings, CmdErr
     Ok(state.settings.read().await.clone())
 }
 
-/// 局部更新（modules.md §6）：mode/debounce/timeout/engine → 全局文件；
+/// 局部更新（modules.md §6）：mode/debounce/timeout/tectonic → 全局文件；
 /// root_file → 项目覆盖文件；随后重算有效设置并广播 settings-changed。
+///
+/// 补丁**整体透传**给 core 的 [`apply_patch`]：`dismiss_notice` 之类的列表操作没有 DTO 之外的
+/// 特殊处理，命令面只负责"root_file 走项目覆盖、其余走全局设置"这一层分流，别在这里再实现一遍。
 #[tauri::command]
 #[specta::specta]
 pub async fn update_settings(

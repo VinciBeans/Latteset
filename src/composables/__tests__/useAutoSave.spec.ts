@@ -30,7 +30,7 @@ describe("useAutoSave", () => {
     setActivePinia(createPinia());
     const settings = useSettingsStore();
     settings.settings = {
-      compile: { mode: "continuous", debounce_ms: 500, timeout_secs: 120, engine: "xelatex" },
+      compile: { mode: "continuous", debounce_ms: 500, timeout_secs: 120 },
     } as never;
     vi.useFakeTimers();
   });

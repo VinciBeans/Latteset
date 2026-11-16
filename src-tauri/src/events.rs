@@ -62,6 +62,21 @@ pub struct CompilePreviewDto {
 #[tauri_specta(event_name = "errors-updated")]
 pub struct ErrorsUpdatedEvent(pub Vec<ErrorEntry>);
 
+/// 编译**进行中**的提示（ADR-0015 决策 4：能力边界要**显式说明**，不静默降级）。
+///
+/// 典型来源：runner 检出文档的构建步骤需要外部工具——biber 由引擎**调用外部程序**（本机缺失/版本与
+/// bundle 内 biblatex 不匹配时这一步会失败），makeindex / glossaries 则**不会被自动运行**（那一步被跳过）。
+/// 经 `CompileProgress::notice` 上报一句话，前端按"提示"样式展示（状态栏/报告面板）。
+///
+/// 注意它**不是错误本身**：被跳过的步骤（索引/术语表）编译仍可能成功；biber 失败时另有内容错误入口。
+///
+/// 与 `compile-errors` 分开：那是致命错误的中间态，这是能力边界的告知。
+#[derive(Serialize, Deserialize, Clone, Type, tauri_specta::Event)]
+#[tauri_specta(event_name = "compile-notice")]
+pub struct CompileNoticeEvent {
+    pub message: String,
+}
+
 /// 编译**进行中**解析到的致命错误（roadmap「阶段 2 · 流式输出」）。
 ///
 /// 与 [`ErrorsUpdatedEvent`] **刻意分成两个事件**：后者是**权威终态**（编译结束的完整清单，
@@ -124,6 +139,17 @@ impl CompileProgress for TauriProgress {
             path: path.to_string_lossy().into_owned(),
             pages,
         })
+        .emit(&self.app);
+    }
+
+    /// 能力边界提示（ADR-0015 决策 4）：日志与事件**都给** ——
+    /// 日志留给排障（编译失败时那句话往往就是根因），事件让用户当场看见"这个构建步骤需要外部工具
+    /// （biber 由引擎调用，缺失/版本不匹配会失败）或本引擎不会自动跑（索引/术语表）"。
+    fn notice(&self, msg: &str) {
+        tracing::warn!("{msg}");
+        let _ = CompileNoticeEvent {
+            message: msg.to_string(),
+        }
         .emit(&self.app);
     }
 }

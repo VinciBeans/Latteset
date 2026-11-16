@@ -4,7 +4,7 @@
 
 ## 上手
 
-**环境前置**：Windows 10/11（首发平台）、Node ≥18、Rust **msvc** toolchain、WebView2 Runtime（Win11 自带）；跑真实编译还需 **TeX Live** 或 **MiKTeX**（可选，缺了只能用 Tectonic 库形态或看错误列表）。库形态另需 vcpkg（见 [tectonic-library.md](./tectonic-library.md)）。
+**环境前置**：Windows 10/11（首发平台）、Node ≥18、Rust **msvc** toolchain、WebView2 Runtime（Win11 自带）；跑真实编译需要 **PATH 上有 `tectonic`**（子进程形态，产品不代装；缺了报错文案会指出来）——**不再需要 TeX Live / MiKTeX**（ADR-0015 删除了 xelatex/latexmk 驱动；`synctex.exe` 只留给复核脚本）。库形态另需 vcpkg（见 [tectonic-library.md](./tectonic-library.md)）。
 
 ```bash
 npm install
@@ -28,7 +28,7 @@ npm run tauri dev      # 构建 Rust + 起 vite + 真窗口（GUI 测试必须�
 ├── src-tauri/             # Tauri 壳：命令面（commands）、事件契约与装配（events / lib）
 ├── crates/latteset-core   # 核心（纯逻辑，可测）：编译调度器、.log 解析与诊断、设置模型与合并、
 │                          #   根文件探测、文档大纲、SyncTeX 纯逻辑、XDV 页哈希
-├── crates/latteset-infra  # 基础设施（无 Tauri）：文件系统、latexmk/synctex 进程、notify 监视、设置存储
+├── crates/latteset-infra  # 基础设施（无 Tauri）：文件系统、tectonic/synctex 进程、notify 监视、设置存储
 ├── crates/latteset-server # 无 GUI 交互层：headless Session + latteset-cli + latteset-mcp
 ├── crates/latteset-tectonic # Tectonic 库内嵌形态（可选特性；见 tectonic-library.md）
 ├── src/                   # Vue 前端：stores（Pinia）/ 组件 / Monaco 语法 / IPC 服务层
@@ -51,6 +51,7 @@ npm run tauri dev      # 构建 Rust + 起 vite + 真窗口（GUI 测试必须�
 | [modules.md](./modules.md) | 模块实现契约、当前行为基线、已知债与验证入口 |
 | [testing.md](./testing.md) | 怎么跑测试、真机验收清单、真机探针手法 |
 | [tectonic-library.md](./tectonic-library.md) | Tectonic 库形态：构建、bundle、两形态差异 |
+| [tectonic-licensing.md](./tectonic-licensing.md) | 分发许可审计：Rust/C 依赖与宏包集的许可证、义务清单、G-L1..G-L9 门禁状态 |
 | [../design.md](../design.md) | 设计与架构（含延迟预算实测） |
 | [../adr/](../adr/) | 决策记录（ADR） |
 | [../troubleshooting.md](../troubleshooting.md) | 操作与环境坑 |

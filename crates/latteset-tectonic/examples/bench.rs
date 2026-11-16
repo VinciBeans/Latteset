@@ -175,7 +175,6 @@ fn main() {
         let req = CompileRequest {
             root_file: root_file.clone(),
             project_root: args.root.clone(),
-            engine: latteset_core::types::Engine::Tectonic,
             timeout: Duration::from_secs(300),
             kind: if args.quick { CompileKind::Quick } else { CompileKind::Full },
         };

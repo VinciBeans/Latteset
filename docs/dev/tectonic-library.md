@@ -5,8 +5,9 @@
 ## 1. 定位
 
 - **是什么**：把 Tectonic 引擎 crate 直接嵌进产品进程——自持 I/O 层（`IoProvider`：内存直喂输入 + 输出捕获 + format 自管）驱动 `CoreBridgeLauncher` → `TexEngine` → `XdvipdfmxEngine::process`，PDF 收尾原子替换到项目根。
-- **与子进程形态的关系**：两者并存，**设置面二选一**。形态位是全局设置 `settings.tectonic.lib_form`（GUI 的 `SwitchableRunner` 每趟编译读一次 ⇒ 改完即生效、不需重启）；它受**引擎闸门**约束——`TectonicSettings::use_library_form(engine, env_forced)` 规定 `lib_form` **只在 `engine == Tectonic` 时生效**（少了这半条，`engine=xelatex` + `lib_form=true` 会静默跑库形态而状态栏报 XeLaTeX）；运行期 `LATTESET_TECTONIC_LIB=1` 是**显式覆盖**，不受闸门约束。**失败不自动回退**（D1）——回退是用户显式选回子进程形态。
+- **与子进程形态的关系**：两者并存，**设置面二选一**。形态位是全局设置 `settings.tectonic.lib_form`（GUI 的 `SwitchableRunner` 每趟编译读一次 ⇒ 改完即生效、不需重启）；ADR-0015 之后引擎恒为 Tectonic，形态位不再需要"只在 `engine == Tectonic` 时生效"那道闸门——真值表就是 `lib_form || env_forced`。运行期 `LATTESET_TECTONIC_LIB=1` 是**显式覆盖**，压过设置。**失败不自动回退**（D1）——回退是用户显式选回子进程形态。
 - **默认值是子进程**（`lib_form=false`）：库形态**不跑外部进程** ⇒ biber / makeindex / glossaries 的文档在它下面直接失败（检出即 `warn!`、`kind` 退回 `Quick`，由「引用待更新」兜底）。把默认切过去等于让这类文档开箱即败。
+  - ⚠ **biber 只在库形态下"完全跑不了"**：子进程形态会调用本机 biber（装了且与 biblatex 版本匹配就能生成参考文献），产品只是不自带（2026-11-16 实测，见 [ADR-0015](../adr/0015-tectonic-only-embedded-engine.md) 第 4 条）。
 - **它是正式的构建变体，不是实验开关**：开发默认构建**不含**它（主产物零原生依赖、不需要 vcpkg），**发布构建含**它（用户装到的包两种形态都能选）。
 - 子进程形态本身（命令、`-C` 条件化、缓存判定、失败文案）见 [design.md](../design.md) §3.2。
 

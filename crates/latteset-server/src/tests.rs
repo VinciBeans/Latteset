@@ -1,7 +1,7 @@
 //! headless 服务的单元/集成测试（`cargo test -p latteset-server`）。
 //!
 //! 不需要 LaTeX 的部分（打开/读/写/树/大纲/错误形状）在默认测试里跑；
-//! 真编译与 SyncTeX 相关用例标 `#[ignore]`（与 `latteset-infra` 的约定一致，需要本机 TeX Live）：
+//! 真编译与 SyncTeX 相关用例标 `#[ignore]`（与 `latteset-infra` 的约定一致，需要 PATH 上有 `tectonic`）：
 //! `cargo test -p latteset-server -- --ignored`。
 
 use super::*;
@@ -58,8 +58,14 @@ async fn open_project_detects_unique_root_and_reports_settings() {
     assert_eq!(report.root_candidates.len(), 1, "唯一候选也回报（与 GUI 语义一致）");
     // 默认设置来自隔离的配置目录（不存在 → 默认值）
     assert_eq!(report.settings.compile.timeout_secs, 120);
-    // 默认引擎 = Tectonic（roadmap ㊻，2026-09-17 裁决）
-    assert_eq!(report.settings.compile.engine, latteset_core::types::Engine::Tectonic);
+    // schema v2（ADR-0015）：引擎统一为 Tectonic，`compile.engine` 已从设置面删除；
+    // 用 JSON 断言（编译期就不存在这个字段了，只能从序列化结果确认它没被偷偷加回来）。
+    let settings_json = serde_json::to_value(&report.settings).expect("设置应可序列化");
+    assert!(
+        settings_json["compile"].get("engine").is_none(),
+        "v2 起不应再有 compile.engine：{settings_json}"
+    );
+    assert_eq!(settings_json["schema_version"], 2, "{settings_json}");
 }
 
 #[tokio::test]
@@ -227,10 +233,12 @@ fn default_config_dir_matches_gui_and_honours_env_override() {
     unsafe { std::env::remove_var("LATTESET_CONFIG_DIR") };
 }
 
-// ---- 真实编译（需要 latexmk/xelatex）----
+// ---- 真实编译（需要 PATH 上有 tectonic）----
 
-fn latexmk_available() -> bool {
-    std::process::Command::new("latexmk")
+/// 闸门探的是**真正被调用的引擎**（ADR-0015）：Tectonic 不依赖 TeX Live，
+/// 所以不能再用 latexmk/xelatex 的安装状态判断"环境是否具备"。
+fn tectonic_available() -> bool {
+    std::process::Command::new("tectonic")
         .arg("--version")
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
@@ -242,8 +250,8 @@ fn latexmk_available() -> bool {
 #[tokio::test]
 #[ignore]
 async fn compile_waits_and_returns_success_report() {
-    if !latexmk_available() {
-        eprintln!("跳过：系统未安装 latexmk");
+    if !tectonic_available() {
+        eprintln!("跳过：未安装 tectonic（或不在 PATH 上）");
         return;
     }
     let p = TempProject::new("compile");
@@ -265,8 +273,8 @@ async fn compile_waits_and_returns_success_report() {
 #[tokio::test]
 #[ignore]
 async fn compile_failure_returns_structured_errors_with_diagnosis() {
-    if !latexmk_available() {
-        eprintln!("跳过：系统未安装 latexmk");
+    if !tectonic_available() {
+        eprintln!("跳过：未安装 tectonic（或不在 PATH 上）");
         return;
     }
     let p = TempProject::new("compile-fail");
@@ -288,8 +296,8 @@ async fn compile_failure_returns_structured_errors_with_diagnosis() {
 #[tokio::test]
 #[ignore]
 async fn quick_compile_reports_kind_and_upgrade() {
-    if !latexmk_available() {
-        eprintln!("跳过：系统未安装 latexmk");
+    if !tectonic_available() {
+        eprintln!("跳过：未安装 tectonic（或不在 PATH 上）");
         return;
     }
     let p = TempProject::new("compile-quick");
@@ -313,8 +321,8 @@ async fn quick_compile_reports_kind_and_upgrade() {
 #[tokio::test]
 #[ignore]
 async fn synctex_roundtrip_through_session() {
-    if !latexmk_available() {
-        eprintln!("跳过：系统未安装 latexmk");
+    if !tectonic_available() {
+        eprintln!("跳过：未安装 tectonic（或不在 PATH 上）");
         return;
     }
     let p = TempProject::new("synctex");

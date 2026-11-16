@@ -18,9 +18,6 @@ pub fn merge(global: &Settings, overrides: &ProjectOverrides) -> Settings {
         if let Some(v) = compile.timeout_secs {
             s.compile.timeout_secs = v;
         }
-        if let Some(v) = compile.engine {
-            s.compile.engine = v;
-        }
     }
     if let Some(v) = &overrides.root_file {
         s.root_file = Some(v.clone());
@@ -42,11 +39,13 @@ pub fn apply_patch(settings: &mut Settings, patch: &SettingsPatch) -> Result<(),
     if let Some(v) = patch.timeout_secs {
         next.compile.timeout_secs = v;
     }
-    if let Some(v) = patch.engine {
-        next.compile.engine = v;
-    }
     if let Some(v) = patch.new_file_wizard {
         next.compile.new_file_wizard = v;
+    }
+    // 一次性提示 dismiss（按 id 移除）：空串 / 未知 id 都无害——设置面可能连点两次，
+    // 不能因为"这条已经没了"而报错。
+    if let Some(id) = &patch.dismiss_notice {
+        next.notices.retain(|n| n.id != *id);
     }
     if let Some(v) = &patch.root_file {
         next.root_file = v.clone();
@@ -76,8 +75,11 @@ pub fn apply_patch(settings: &mut Settings, patch: &SettingsPatch) -> Result<(),
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::settings::model::{CompileOverrides, CompileSettings, SCHEMA_VERSION};
-    use crate::types::{CompileMode, Engine};
+    use crate::settings::model::{
+        CompileOverrides, CompileSettings, Notice, NoticeLevel, ENGINE_UNIFIED_NOTICE_ID,
+        SCHEMA_VERSION,
+    };
+    use crate::types::CompileMode;
     use std::path::PathBuf;
 
     fn global() -> Settings {
@@ -87,11 +89,11 @@ mod tests {
                 mode: CompileMode::Continuous,
                 debounce_ms: 500,
                 timeout_secs: 120,
-                engine: Engine::XeLaTeX,
                 new_file_wizard: true,
             },
             tectonic: Default::default(),
             ui: Default::default(),
+            notices: Vec::new(),
             root_file: None,
         }
     }
@@ -111,7 +113,7 @@ mod tests {
         )
         .unwrap();
         assert_eq!(s.ui.theme, UiTheme::Dark);
-        assert_eq!(s.compile.engine, Engine::XeLaTeX, "其余字段不动");
+        assert_eq!(s.compile.timeout_secs, 120, "其余字段不动");
         // 不带 theme 的 patch 不改它
         apply_patch(&mut s, &SettingsPatch { timeout_secs: Some(60), ..Default::default() }).unwrap();
         assert_eq!(s.ui.theme, UiTheme::Dark);
@@ -150,7 +152,7 @@ mod tests {
         )
         .unwrap();
         assert!(!s.compile.new_file_wizard);
-        assert_eq!(s.compile.engine, Engine::XeLaTeX, "其余字段不动");
+        assert_eq!(s.compile.timeout_secs, 120, "其余字段不动");
         assert_eq!(s.compile.mode, CompileMode::Continuous);
         // 不带这个键的 patch 不改它
         apply_patch(&mut s, &SettingsPatch { timeout_secs: Some(60), ..Default::default() }).unwrap();
@@ -188,7 +190,6 @@ mod tests {
         // 未覆盖的键继承全局
         assert_eq!(merged.compile.debounce_ms, 500);
         assert_eq!(merged.compile.timeout_secs, 120);
-        assert_eq!(merged.compile.engine, Engine::XeLaTeX);
         assert_eq!(merged.root_file.as_deref(), Some(std::path::Path::new("thesis.tex")));
         // 纯函数：全局未被修改
         assert_eq!(g.compile.mode, CompileMode::Continuous);
@@ -202,7 +203,6 @@ mod tests {
                 mode: Some(CompileMode::OnSave),
                 debounce_ms: Some(800),
                 timeout_secs: Some(60),
-                engine: Some(Engine::PdfLaTeX),
             }),
             ..ProjectOverrides::default()
         };
@@ -210,7 +210,6 @@ mod tests {
         assert_eq!(merged.compile.mode, CompileMode::OnSave);
         assert_eq!(merged.compile.debounce_ms, 800);
         assert_eq!(merged.compile.timeout_secs, 60);
-        assert_eq!(merged.compile.engine, Engine::PdfLaTeX);
     }
 
     #[test]
@@ -284,5 +283,56 @@ mod tests {
         )
         .unwrap();
         assert_eq!(s.tectonic.bundle, None);
+    }
+
+    fn notice(id: &str) -> Notice {
+        Notice {
+            id: id.to_owned(),
+            level: NoticeLevel::Info,
+            message: "x".to_owned(),
+        }
+    }
+
+    /// `dismiss_notice` 按 id 移除；**空串 / 未知 id 无害**（连点两次不该报错）。
+    #[test]
+    fn apply_patch_dismisses_notice_by_id() {
+        let mut s = global();
+        s.notices = vec![notice(ENGINE_UNIFIED_NOTICE_ID), notice("other")];
+
+        apply_patch(
+            &mut s,
+            &SettingsPatch {
+                dismiss_notice: Some(ENGINE_UNIFIED_NOTICE_ID.to_owned()),
+                ..SettingsPatch::default()
+            },
+        )
+        .unwrap();
+        assert_eq!(s.notices.len(), 1, "只移除点名的那条：{:?}", s.notices);
+        assert_eq!(s.notices[0].id, "other");
+
+        // 再点一次 / 空串 / 未知 id：都不该失败，也不该动别的条目
+        for id in [ENGINE_UNIFIED_NOTICE_ID, "", "no-such-notice"] {
+            apply_patch(
+                &mut s,
+                &SettingsPatch {
+                    dismiss_notice: Some(id.to_owned()),
+                    ..SettingsPatch::default()
+                },
+            )
+            .expect("dismiss 未知 id 必须无害");
+            assert_eq!(s.notices.len(), 1);
+        }
+        // 不带这个键的 patch 不动提示
+        apply_patch(&mut s, &SettingsPatch { timeout_secs: Some(60), ..Default::default() }).unwrap();
+        assert_eq!(s.notices.len(), 1);
+    }
+
+    /// 提示是**全局**的：项目覆盖既不能加也不能清（无项目级 notices 字段）。
+    #[test]
+    fn notices_are_not_project_overridable() {
+        let mut g = global();
+        g.notices = vec![notice(ENGINE_UNIFIED_NOTICE_ID)];
+        let merged = merge(&g, &ProjectOverrides::default());
+        assert_eq!(merged.notices.len(), 1, "项目覆盖不该移除全局提示");
     }
 }

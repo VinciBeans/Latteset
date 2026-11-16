@@ -5,7 +5,7 @@
 //! 约定喂 JSON-RPC、逐条断言响应形状——等于把一个最小 MCP client 固化进仓库，
 //! 以后换 SDK 或改工具表都能立刻发现回归。
 //!
-//! 需要 LaTeX 的 `compile` 用例标 `#[ignore]`（与仓库其它真实引擎用例一致）。
+//! 需要 `tectonic` 的 `compile` 用例标 `#[ignore]`（与仓库其它真实引擎用例一致）。
 
 use serde_json::{json, Value};
 use std::io::{BufRead, BufReader, Write};
@@ -207,12 +207,16 @@ fn tool_calls_round_trip_over_stdio() {
     let status = c.call_tool("compile_get_status", json!({}));
     assert_eq!(status["structuredContent"]["status"], "none");
 
-    // 5) settings：Agent 可以确认引擎/超时/模式
-    //    默认引擎 = Tectonic（ADR-0014 修订 1，2026-09-17；只影响没有 settings.json 的新装，
-    //    这个夹具用的就是隔离配置目录 ⇒ 拿到的是出厂默认）
+    // 5) settings：Agent 可以确认超时/模式（v2 起**没有**引擎设置——ADR-0015 统一为 Tectonic）
+    //    这个夹具用隔离配置目录 ⇒ 拿到的是出厂默认（schema_version = 2）。
     let settings = c.call_tool("settings_get", json!({}));
-    assert_eq!(settings["structuredContent"]["compile"]["engine"], "tectonic");
-    assert_eq!(settings["structuredContent"]["compile"]["timeout_secs"], 120);
+    let sc = &settings["structuredContent"];
+    assert!(
+        sc["compile"].get("engine").is_none(),
+        "v2 不应再有 compile.engine：{settings}"
+    );
+    assert_eq!(sc["schema_version"], 2, "{settings}");
+    assert_eq!(sc["compile"]["timeout_secs"], 120);
 
     // 6) 工具内错误按 isError 回（不是协议错误），并带 {code,message}
     let bad = c.call_tool("file_read", json!({ "path": "../../etc/passwd" }));
@@ -279,10 +283,25 @@ fn project_can_be_switched_per_call() {
     let _ = std::fs::remove_dir_all(&other);
 }
 
-/// 真实编译：需要 latexmk/xelatex（`cargo test -p latteset-server -- --ignored`）。
+/// 真编译闸门：PATH 上有 `tectonic` 才跑（ADR-0015 之后唯一引擎）。
+fn tectonic_available() -> bool {
+    Command::new("tectonic")
+        .arg("--version")
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false)
+}
+
+/// 真实编译：需要 PATH 上有 `tectonic`（`cargo test -p latteset-server -- --ignored`）。
 #[test]
 #[ignore]
 fn compile_tool_returns_errors_and_then_success() {
+    if !tectonic_available() {
+        eprintln!("跳过：未安装 tectonic（或不在 PATH 上）");
+        return;
+    }
     let f = Fixture::new("compile");
     let mut c = Client::start(f.project(), &f.config());
     handshake(&mut c);

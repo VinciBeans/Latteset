@@ -3,13 +3,45 @@
 //! 存储分层：全局 `settings.json` 存完整 [`Settings`]；
 //! 项目 `.latteset/settings.json` 存 [`ProjectOverrides`]（只含要覆盖的键，缺省继承全局）。
 
-use crate::types::{CompileMode, Engine};
+use crate::types::CompileMode;
 use serde::{Deserialize, Serialize};
 use specta::Type;
 use std::path::PathBuf;
 
 /// 设置文件 schema 版本（modules.md §6：schema_version 字段，未来迁移用）。
-pub const SCHEMA_VERSION: u32 = 1;
+///
+/// **v2**（ADR-0015）：引擎统一为 Tectonic，删除 `compile.engine`（全局与项目覆盖两层）。
+/// v1 → v2 的迁移在 infra（`latteset_infra::storage`）：旧文件被读入时自动改写并留 `settings.json.v1.bak`。
+pub const SCHEMA_VERSION: u32 = 2;
+
+/// 一次性提示的级别（前端据此选样式：info = 中性告知，warning = 需要注意）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Type)]
+#[serde(rename_all = "snake_case")]
+pub enum NoticeLevel {
+    Info,
+    Warning,
+}
+
+/// 设置层的一次性提示（状态栏 / 设置面板展示，用户可 dismiss）。
+///
+/// 存在的理由：有些调整**没有可迁移的等价字段**（例如 v2 删掉了引擎设置），只能如实告知
+/// "原设置已忽略"。做成数据而不是一次性弹窗，是因为它要跨重启存活到用户看见为止——
+/// dismiss 后按 `id` 从列表里移除（[`super::merge::apply_patch`]）。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
+pub struct Notice {
+    /// 稳定标识（dismiss 按它移除；同一 id 不会重复出现）。
+    pub id: String,
+    pub level: NoticeLevel,
+    /// 给用户看的一句话。
+    pub message: String,
+}
+
+/// 引擎统一为 Tectonic 的迁移提示 id（v1 → v2 迁移只追加这一条）。
+pub const ENGINE_UNIFIED_NOTICE_ID: &str = "engine-unified-v2";
+
+/// v1 → v2 迁移时追加的提示文案（迁移与前端展示共用同一句）。
+pub const ENGINE_UNIFIED_NOTICE_MESSAGE: &str =
+    "引擎已统一为 Tectonic（v2 起不再有引擎设置），原设置已忽略。";
 
 /// Tectonic 形态与资源设置（⑫ 里程碑的设置面收口项；方案 §3.5）。
 ///
@@ -51,15 +83,18 @@ impl Default for TectonicSettings {
 impl TectonicSettings {
     /// 本趟编译是否走**库内嵌**形态（`false` = 子进程）。
     ///
-    /// **引擎闸门不可省**：形态位是 Tectonic 引擎的**子选项**，只有 `engine == Tectonic` 时才谈得上。
-    /// 少了 `engine == Tectonic` 这一半，`engine=xelatex` + `lib_form=true` 会**静默跑 Tectonic 库形态**
-    /// ——状态栏报 XeLaTeX、实际引擎是 Tectonic。判据见 `docs/archive/research/tectonic-test-plan.md` 的 INT-92：
-    /// 切回 XeLaTeX 必须产出 `tmp/<stem>.xelatex.pages`，且首轮 `changed_pages` 为全部页。
+    /// 引擎统一为 Tectonic（ADR-0015）之后，形态位不再需要"只在选中 Tectonic 时生效"那道闸门
+    /// ——引擎恒为 Tectonic，`lib_form` 的语义就是它自己。真值表 = `lib_form || env_forced`：
     ///
-    /// `env_forced`（`LATTESET_TECTONIC_LIB=1`）是**显式覆盖**：复核/CI 要在不改用户设置的前提下复现
-    /// 库形态那条路径，所以它不受引擎闸门约束。
-    pub fn use_library_form(&self, engine: Engine, env_forced: bool) -> bool {
-        (engine == Engine::Tectonic && self.lib_form) || env_forced
+    /// | `lib_form` | `env_forced`（`LATTESET_TECTONIC_LIB=1`） | 结果 |
+    /// |---|---|---|
+    /// | false | false | 子进程 |
+    /// | true | false | 库内嵌 |
+    /// | 任意 | true | 库内嵌 |
+    ///
+    /// `env_forced` 是**显式覆盖**：复核/CI 要在不改用户设置的前提下复现库形态那条路径。
+    pub fn use_library_form(&self, env_forced: bool) -> bool {
+        self.lib_form || env_forced
     }
 
     /// 用户给的 bundle 路径 → **存储形态**（上游 `detect_bundle` 认的 URL 或相对路径）。
@@ -117,7 +152,6 @@ pub struct CompileSettings {
     pub mode: CompileMode,
     pub debounce_ms: u32,
     pub timeout_secs: u32,
-    pub engine: Engine,
     /// 新建**第一个** `.tex` 时弹「新手向导」（roadmap ㊺ §6.13.1-A）：选文档语言/类型/标题，
     /// 直接生成一份能编译的最小骨架。
     ///
@@ -136,6 +170,12 @@ fn default_true() -> bool {
 /// 合并后的有效设置（全局 + 项目覆盖）。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
 pub struct Settings {
+    /// schema 版本。
+    ///
+    /// `#[serde(default)]` 是**兜底**：极老的 `settings.json` 可能没有这个键，缺键不该让整份
+    /// 配置解析失败（用户设置全丢）。真正的 v1 → v2 迁移在 infra 的存储入口完成（先读 Value 判版本，
+    /// 不依赖这个字段）；这里只保证"缺键也能读出一个可用对象"。
+    #[serde(default = "default_schema_version")]
     pub schema_version: u32,
     pub compile: CompileSettings,
     /// Tectonic 形态与资源（全局；见 [`TectonicSettings`] 的说明）。
@@ -144,8 +184,16 @@ pub struct Settings {
     /// 界面（全局；`#[serde(default)]` ⇒ 旧 settings.json 没有 `ui` 也能读）。
     #[serde(default)]
     pub ui: UiSettings,
+    /// 一次性提示（见 [`Notice`]）；空表不落盘。
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub notices: Vec<Notice>,
     /// 根文件手动覆盖（探测结果的逃生门，ADR-0009）。
     pub root_file: Option<PathBuf>,
+}
+
+/// 缺 `schema_version` 键时的兜底值（迁移判定不依赖它，见字段文档）。
+fn default_schema_version() -> u32 {
+    SCHEMA_VERSION
 }
 
 impl Default for Settings {
@@ -156,17 +204,12 @@ impl Default for Settings {
                 mode: CompileMode::Continuous,
                 debounce_ms: 500,
                 timeout_secs: 120,
-                // 默认引擎 = **Tectonic**（roadmap ㊻，2026-09-17 产品负责人裁决：引擎以 Tectonic
-                // 为优先，新装就该走它）。**只影响"没有 settings.json"的新装/新用户**：老配置里
-                // 写着 `"engine":"xelatex"` 的人升级后一字节都不变（不静默换引擎）。
-                // 形态位 `lib_form` 仍是 false ⇒ 默认走**子进程**形态（需要 PATH 上有 tectonic.exe；
-                // 库形态要 `--features tectonic-lib` 构建，见 ADR-0012）。
-                engine: Engine::Tectonic,
                 // 默认开：新建第一个 .tex 时给新手一份能直接编译的骨架（roadmap ㊺ §6.13.1-A）
                 new_file_wizard: true,
             },
             tectonic: TectonicSettings::default(),
             ui: UiSettings::default(),
+            notices: Vec::new(),
             root_file: None,
         }
     }
@@ -192,8 +235,6 @@ pub struct CompileOverrides {
     pub debounce_ms: Option<u32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub timeout_secs: Option<u32>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub engine: Option<Engine>,
 }
 
 /// 设置局部更新（update_settings 命令载荷，modules.md §6）。
@@ -207,12 +248,13 @@ pub struct SettingsPatch {
     pub debounce_ms: Option<u32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub timeout_secs: Option<u32>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub engine: Option<Engine>,
     /// 新建向导开关（roadmap ㊺ §6.13.1-A）：`None` = 不动。**全局**设置，无项目覆盖
     /// （它是"界面要不要拦一下"，与具体项目无关）。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub new_file_wizard: Option<bool>,
+    /// 关掉一条一次性提示（[`Notice::id`]）：`None` = 不动；空串 / 未知 id 无害。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub dismiss_notice: Option<String>,
     #[serde(
         default,
         skip_serializing_if = "Option::is_none",
@@ -255,13 +297,56 @@ mod tests {
     fn defaults_match_design() {
         let s = Settings::default();
         assert_eq!(s.schema_version, SCHEMA_VERSION);
+        assert_eq!(SCHEMA_VERSION, 2, "v2 = 引擎统一（ADR-0015）");
         assert_eq!(s.compile.mode, CompileMode::Continuous);
         assert_eq!(s.compile.debounce_ms, 500);
         assert_eq!(s.compile.timeout_secs, 120);
-        // 默认引擎 = Tectonic（roadmap ㊻）。形态位仍是子进程档：库形态要构建时打开特性。
-        assert_eq!(s.compile.engine, Engine::Tectonic);
+        // 形态位默认子进程档：库形态要构建时打开特性（ADR-0012）
         assert!(!s.tectonic.lib_form);
+        assert!(s.notices.is_empty(), "默认不该带迁移提示");
         assert_eq!(s.root_file, None);
+    }
+
+    /// `schema_version` 缺失（极老文件）要能读，且不因缺键而整份丢失。
+    #[test]
+    fn settings_without_schema_version_still_deserializes() {
+        let json = r#"{"compile":{"mode":"continuous","debounce_ms":500,"timeout_secs":120}}"#;
+        let s: Settings = serde_json::from_str(json).expect("缺 schema_version 必须能读");
+        assert_eq!(s.schema_version, SCHEMA_VERSION, "缺键按当前版本兜底");
+        assert_eq!(s.compile.timeout_secs, 120);
+    }
+
+    /// 旧 JSON 里的 `compile.engine` 必须**静默忽略**（不加 `deny_unknown_fields`）：
+    /// ADR-0015 要求"旧值不作为错误"。
+    #[test]
+    fn legacy_engine_key_is_ignored_not_rejected() {
+        let json = r#"{"schema_version":1,"compile":{"mode":"continuous","debounce_ms":500,
+            "timeout_secs":120,"engine":"xelatex"},"root_file":null}"#;
+        let s: Settings = serde_json::from_str(json).expect("旧 engine 键必须被忽略");
+        assert_eq!(s.compile.timeout_secs, 120);
+        // 项目覆盖同理：旧 `compile.engine` 不报错、也不影响合并
+        let o: ProjectOverrides = serde_json::from_str(r#"{"compile":{"engine":"lualatex"}}"#)
+            .expect("项目覆盖里的旧 engine 必须被忽略");
+        assert_eq!(o.compile.unwrap().timeout_secs, None);
+    }
+
+    /// `notices` 空表不落盘（老前端不会看到多出来的键），有值时正常往返。
+    #[test]
+    fn notices_serde_and_skip_when_empty() {
+        let json = serde_json::to_string(&Settings::default()).unwrap();
+        assert!(!json.contains("notices"), "空表不该出现在磁盘上：{json}");
+
+        let n = Notice {
+            id: ENGINE_UNIFIED_NOTICE_ID.to_owned(),
+            level: NoticeLevel::Info,
+            message: ENGINE_UNIFIED_NOTICE_MESSAGE.to_owned(),
+        };
+        let s = Settings { notices: vec![n.clone()], ..Settings::default() };
+        let json = serde_json::to_string(&s).unwrap();
+        let back: Settings = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.notices, vec![n]);
+        // 级别用 snake_case（DTO 口径）
+        assert!(json.contains("\"level\":\"info\""), "{json}");
     }
 
     #[test]
@@ -336,25 +421,19 @@ mod tests {
         assert_eq!(TectonicSettings::normalize_bundle("E:"), "E:");
     }
 
-    /// **库形态只在选中 Tectonic 引擎时才允许**（INT-92 的回归锁）。
+    /// 形态判定的**真值表**：`lib_form || env_forced`（引擎已统一，不再有引擎闸门）。
     ///
-    /// 没有引擎闸门时 `engine=xelatex` + `lib_form=true` 会静默跑 Tectonic 库形态，而状态栏
-    /// 报的是 XeLaTeX——真机上就是这样骗过一轮验证的。
+    /// 这条取代了旧的"库形态只在选中 Tectonic 时才允许"闸门测试——那道闸门的存在前提
+    /// （引擎可多选）已被 ADR-0015 删除，但真值语义必须逐格钉住：
+    /// `env_forced`（`LATTESET_TECTONIC_LIB=1`）是显式覆盖，`lib_form=false` 也能压过设置。
     #[test]
-    fn library_form_requires_the_tectonic_engine() {
+    fn library_form_truth_table() {
         let lib_on = TectonicSettings { lib_form: true, ..Default::default() };
         let lib_off = TectonicSettings::default();
 
-        // 形态位开着，但引擎不是 Tectonic ⇒ 一律走子进程（否则引擎选择被静默无视）
-        for e in [Engine::XeLaTeX, Engine::LuaLaTeX, Engine::PdfLaTeX] {
-            assert!(!lib_on.use_library_form(e, false), "{e:?} 不该走库形态");
-        }
-        // 引擎是 Tectonic 时才由形态位决定
-        assert!(lib_on.use_library_form(Engine::Tectonic, false));
-        assert!(!lib_off.use_library_form(Engine::Tectonic, false));
-
-        // 环境变量是显式覆盖：按文档"压过设置"，不受引擎闸门约束（复核/CI 的逃生门）
-        assert!(lib_off.use_library_form(Engine::XeLaTeX, true));
-        assert!(lib_on.use_library_form(Engine::Tectonic, true));
+        assert!(!lib_off.use_library_form(false), "默认 = 子进程");
+        assert!(lib_on.use_library_form(false), "形态位开 = 库内嵌");
+        assert!(lib_off.use_library_form(true), "环境变量是显式覆盖（压过设置）");
+        assert!(lib_on.use_library_form(true), "两者都真 = 库内嵌");
     }
 }

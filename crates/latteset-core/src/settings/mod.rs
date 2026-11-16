@@ -10,7 +10,8 @@ pub mod validate;
 
 pub use merge::{apply_patch, merge};
 pub use model::{
-    CompileOverrides, CompileSettings, ProjectOverrides, Settings, SettingsPatch, UiSettings, UiTheme,
+    CompileOverrides, CompileSettings, Notice, NoticeLevel, ProjectOverrides, Settings, SettingsPatch,
+    TectonicSettings, UiSettings, UiTheme, ENGINE_UNIFIED_NOTICE_ID, ENGINE_UNIFIED_NOTICE_MESSAGE,
     SCHEMA_VERSION,
 };
 pub use validate::{sanitize_overrides, validate, validate_overrides};

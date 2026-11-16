@@ -1,14 +1,14 @@
-<!-- StatusBar（modules.md §9.4）：编译状态 / 行列号 / 编译模式 / 冲突提示。
+<!-- StatusBar（modules.md §9.4）：编译状态 / 引擎与形态 / 提示 chip / 行列号 / 编译模式 / 冲突提示。
      另含「未确定根文件」入口（roadmap P0-②-1）：弹窗被关掉后仍可从这里重新打开选择器。 -->
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from "vue";
 import { useCompileStore } from "../stores/compile";
 import { useEditorStore } from "../stores/editor";
+import { useNoticesStore } from "../stores/notices";
 import { useSettingsStore } from "../stores/settings";
 import { useProjectStore } from "../stores/project";
 import { ipc } from "../services/ipc";
-import { labelOf, loadEngines } from "../services/engines";
-import type { CompilePhase, EngineFormDto, EngineInfo } from "../bindings";
+import type { CompilePhase, EngineFormDto } from "../bindings";
 
 defineProps<{ cursorLine: number; cursorCol: number }>();
 defineEmits<{ (e: "pick-root"): void }>();
@@ -16,7 +16,11 @@ defineEmits<{ (e: "pick-root"): void }>();
 const compile = useCompileStore();
 const editor = useEditorStore();
 const settings = useSettingsStore();
+const notices = useNoticesStore();
 const project = useProjectStore();
+
+/** 唯一引擎（ADR-0015）：不读设置、不拉清单——没有"当前是哪个引擎"这回事。 */
+const ENGINE_NAME = "Tectonic";
 
 /** 项目已打开但未确定根文件 → 显示可点击提示（否则不会触发任何编译）。 */
 const needsRootFile = computed(() => !!project.project && !project.project.root_file);
@@ -43,31 +47,31 @@ const kindText = computed(() => {
 const isContinuous = computed(() => settings.settings?.compile.mode === "continuous");
 
 /**
- * 当前引擎（D3 裁决，2026-09-14）：**不打开设置面板也要能看见用的哪个引擎**。
- * 同时把编译强度体现在同一个位置——`compile.draft` 为真即本次是 Quick 草稿编译。
+ * 设置里的一次性提示（后端 `Settings.notices`，如"引擎已统一为 Tectonic，原引擎设置不再生效"）。
  *
- * 名字来自**后端清单**（roadmap ㊻，与设置面板同一个来源）；清单还没到手时退化成 id 本身
- * （一次 IPC 失败不该让状态栏空着）。
+ * 与下面的运行时提示**分开**：这些是落盘的，点击 = `dismiss_notice` 写盘，点掉就再也不回来。
  */
-const engines = ref<EngineInfo[]>([]);
-void loadEngines()
-  .then((list) => {
-    engines.value = list;
-  })
-  .catch(() => {
-    engines.value = [];
-  });
+const persistentNotices = computed(() => settings.settings?.notices ?? []);
 
-const engineText = computed(() => {
-  const e = settings.settings?.compile.engine;
-  return e ? labelOf(engines.value, e) : "";
-});
+/**
+ * 编译期的**运行时**提示（`compile-notice` 事件 → noticesStore）：非持久、不落盘。
+ * 页面切换与编译成功都不清（它解释的往往正是"这一趟为什么这样"），只有用户点击才清空。
+ */
+const runtimeNotices = computed(() => notices.runtime);
+
+async function dismissNotice(id: string) {
+  try {
+    await settings.update({ dismiss_notice: id });
+  } catch (e) {
+    console.error("关闭提示失败：", e);
+  }
+}
 
 /**
  * **形态位**（库形态方案 §6 P7 验收判据 ①）：子进程 / 库内嵌。
  *
  * 判定**只在后端做**（`engine_form` 命令直接复用 runner 的纯函数 `use_library_form`），这里只渲染。
- * 不能从 `compile.engine` 自己推：`LATTESET_TECTONIC_LIB` 能压过设置，只看设置会报出与实际不符的形态。
+ * 不能从设置自己推：`LATTESET_TECTONIC_LIB` 能压过设置，只看设置会报出与实际不符的形态。
  */
 const form = ref<EngineFormDto | null>(null);
 async function refreshForm() {
@@ -78,22 +82,17 @@ async function refreshForm() {
   }
 }
 onMounted(refreshForm);
-// 形态随设置变（引擎 / 形态位都会改判定）；settings-changed 落到 store 上之后再取一次。
+// 形态随设置变（形态位会改判定）；settings-changed 落到 store 上之后再取一次。
 watch(() => settings.settings, refreshForm);
 
-/** 只有"形态本身值得一提"时才显示：非 Tectonic 引擎 + 纯子进程 = 没信息量。 */
-const showForm = computed(() => {
-  const f = form.value;
-  if (!f) return false;
-  const tectonicEngine = settings.settings?.compile.engine === "tectonic";
-  return tectonicEngine || f.form !== "subprocess";
-});
+/** **拿到 form 数据就显示**：唯一引擎下形态永远值得说一句（不再与"哪个引擎"绑定）。 */
+const showForm = computed(() => form.value !== null);
 
 const formText = computed(() => {
   switch (form.value?.form) {
     case "lib": return "库内嵌";
     case "lib_unavailable": return "库形态不可用";
-    case "subprocess": return "子进程";
+    case "subprocess": return "子进程（tectonic.exe）";
     default: return "";
   }
 });
@@ -106,7 +105,7 @@ const formTitle = computed(() => {
     case "lib": return `Tectonic 库内嵌：引擎嵌在产品进程里${env}`;
     case "lib_unavailable":
       return `设置要库内嵌，但本次构建没编入 tectonic-lib ⇒ 下一趟编译会显式失败（D1：不静默回退到子进程）${env}`;
-    default: return `子进程档：latexmk 驱动引擎（Tectonic 子进程档直调 tectonic.exe）${env}`;
+    default: return `子进程档：直调官方 tectonic.exe 编译${env}`;
   }
 });
 
@@ -121,9 +120,9 @@ async function toggleMode() {
       <span class="phase-dot" />
       {{ phaseText }}{{ kindText }}
     </span>
-    <!-- D3（2026-09-14）：当前引擎常驻可见——不打开设置面板也知道在用什么引擎 -->
-    <span v-if="engineText" class="engine" :title="`当前引擎：${engineText}${compile.draft ? '（本次为 Quick 草稿编译）' : ''}`">
-      {{ engineText }}
+    <!-- D3（2026-09-14）：当前引擎常驻可见。唯一引擎（ADR-0015）后名字是常量，但"用的是哪个引擎"仍要讲清楚 -->
+    <span class="engine" :title="`当前引擎：${ENGINE_NAME}${compile.draft ? '（本次为 Quick 草稿编译）' : ''}`">
+      {{ ENGINE_NAME }}
     </span>
     <!-- P7 验收判据 ①：形态位（子进程 / 库内嵌）。判定来自后端 engine_form，与编译实际行为同源 -->
     <span
@@ -168,6 +167,28 @@ async function toggleMode() {
       @click="editor.openError = null"
     >
       {{ editor.openError }}
+    </span>
+    <!-- 设置里的一次性提示（后端 Settings.notices）：点击 = dismiss_notice 写盘，点掉后不再出现。
+         与错误列表分开：它不是错误（例如"引擎已统一为 Tectonic"），不该进 ErrorList。 -->
+    <span
+      v-for="n in persistentNotices"
+      :key="n.id"
+      class="notice"
+      :class="n.level === 'warning' ? 'warn' : 'info'"
+      :title="`${n.message}（点击关闭）`"
+      @click="dismissNotice(n.id)"
+    >
+      {{ n.message }}
+    </span>
+    <!-- 编译期运行时提示（compile-notice 事件）：非持久、不落盘；点一下清空 -->
+    <span
+      v-for="(text, i) in runtimeNotices"
+      :key="`${i}-${text}`"
+      class="notice info runtime"
+      :title="`${text}（点击清空运行时提示）`"
+      @click="notices.clear()"
+    >
+      {{ text }}
     </span>
     <span class="spacer" />
     <span class="cursor">
@@ -269,6 +290,20 @@ async function toggleMode() {
   border-radius: 5px;
   font-weight: 600;
 }
+/* 提示 chip（形状照 .open-error）：info 中性、warning 琥珀。
+   设置里的一次性提示点击 = dismiss_notice 写盘；运行时提示点击 = 清空（虚线框提示"不落盘"）。 */
+.notice {
+  cursor: pointer;
+  max-width: 30%;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  padding: 2px 9px;
+  border-radius: 5px;
+  font-weight: 600;
+}
+.notice.info { background: var(--card-2, rgba(0, 0, 0, 0.05)); color: var(--ink-dim); }
+.notice.warn { background: var(--tint-mango); color: var(--warn-ink); }
+.notice.runtime { border: 1px dashed var(--line); }
+.notice:hover { filter: brightness(0.97); }
 .spacer { flex: 1; }
 .cursor { display: inline-flex; align-items: center; gap: 9px; }
 .cursor-file { color: var(--ink); font-family: var(--mono); max-width: 320px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

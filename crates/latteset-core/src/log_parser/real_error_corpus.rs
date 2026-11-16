@@ -49,29 +49,6 @@ The control sequence at the end of the top line
 "##,
     },
     RealLogCase {
-        name: "engine-fontspec-under-pdftex",
-        source: "⑲:cquthesis_重庆大学___pdf",
-        log: r##"
-(c:/texlive/2026/texmf-dist/tex/latex/fontspec/fontspec.sty
-Package: fontspec 2025/09/29 v2.9g Font selection for XeLaTeX and LuaLaTeX
-
-
-! Fatal Package fontspec Error: The fontspec package requires either XeTeX or
-(fontspec)                      LuaTeX.
-(fontspec)                      
-(fontspec)                      You must change your typesetting engine to,
-(fontspec)                      e.g., "xelatex" or "lualatex" instead of
-(fontspec)                      "latex" or "pdflatex".
-
-Type <return> to continue.
- ...                                              
-                                                  
-l.101 \msg_fatal:nn {fontspec} {cannot-use-pdftex}
-                                                  
-
-"##,
-    },
-    RealLogCase {
         name: "siunitx-invalid-number",
         source: "⑲:cquthesis_重庆大学___xe",
         log: r##"
@@ -122,25 +99,6 @@ For immediate help type H <return>.
                                                   
 l.430 ^^I\num{1.654 x 2.34 x 3.430}
                                    \\
-
-"##,
-    },
-    RealLogCase {
-        name: "engine-unicode-math-under-pdftex",
-        source: "⑲:fduthesis_复旦___pdf",
-        log: r##"
-(c:/texlive/2026/texmf-dist/tex/latex/unicode-math/unicode-math.sty
-Package: unicode-math 2023/08/13 v0.8r Unicode maths in XeLaTeX and LuaLaTeX
-
-
-! Package unicode-math Error: Cannot be run with pdftex!
-(unicode-math)                Use XeLaTeX or LuaLaTeX instead.
-
-Type <return> to continue.
- ...                                              
-                                                  
-l.40 ...ror:nn {unicode-math} {unsupported-engine}
-                                                  
 
 "##,
     },
@@ -297,25 +255,6 @@ Enter file name:
 l.5 ^^M
        
 *** (cannot \read from terminal in nonstop modes)
-"##,
-    },
-    RealLogCase {
-        name: "engine-shtthesis-only",
-        source: "⑲:shtthesis_上科大___pdf",
-        log: r##"
-(c:/texlive/2026/texmf-dist/tex/generic/iftex/iftex.sty
-Package: iftex 2024/12/12 v1.0g TeX engine tests
-)
-
-! Class shtthesis Error: shtthesis only works with LuaLaTeX or XeLaTeX.
-
-See the shtthesis class documentation for explanation.
-Type  H <return>  for immediate help.
- ...                                              
-                                                  
-l.38 ...hesis only works with LuaLaTeX or XeLaTeX}
-                                                  %
-Pass `-pdflua' or `-pdfxe' option to `latexmk' on compilation.
 "##,
     },
     RealLogCase {

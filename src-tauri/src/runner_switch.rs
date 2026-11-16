@@ -13,9 +13,8 @@
 //!
 //! - **形态**：`settings.tectonic.lib_form`，或环境变量 `LATTESET_TECTONIC_LIB=1` **强制开**
 //!   （复核/CI 用；它压过设置，所以能复现"库形态"那条路径而不改用户设置）。
-//!   ⚠ **形态位受引擎闸门约束**：只有 `compile.engine == Tectonic` 时 `lib_form` 才生效
-//!   （判定在 [`latteset_core::settings::TectonicSettings::use_library_form`]）；环境变量那条是
-//!   显式覆盖，不受闸门约束。
+//!   引擎已唯一（Tectonic，ADR-0015），形态位只看 `lib_form` / 环境变量
+//!   （判定在 [`latteset_core::settings::TectonicSettings::use_library_form`]）。
 //! - **bundle**：设置里的非空值 → `LATTESET_TECTONIC_BUNDLE` → 上游兜底（网络地址）。
 //! - **缓存目录**：设置里的非空值 → `LATTESET_TECTONIC_CACHE` → 宿主应用缓存目录。
 //!   ⚠ 缓存**必须**有落点：上游 format 默认落**项目目录**，不注入会往用户项目扔 24 MB 的 `.fmt`
@@ -35,7 +34,7 @@ use latteset_core::project::FileSystem;
 use latteset_core::scheduler::{CompileProgress, CompileRunner};
 use latteset_core::settings::Settings;
 use latteset_core::types::{CompileOutcome, CompileRequest};
-use latteset_infra::runner::LatexmkRunner;
+use latteset_infra::runner::SubprocessRunner;
 use tokio::sync::RwLock;
 use tokio_util::sync::CancellationToken;
 
@@ -79,9 +78,9 @@ impl SwitchableRunner {
         }
     }
 
-    /// 子进程形态（默认档）。
+    /// 子进程形态（外部 `tectonic` 可执行文件；ADR-0015 之后的默认档）。
     async fn run_subprocess(&self, req: CompileRequest, cancel: CancellationToken) -> CompileOutcome {
-        LatexmkRunner::new(self.fs.clone(), self.progress.clone())
+        SubprocessRunner::new(self.fs.clone(), self.progress.clone())
             .compile(req, cancel)
             .await
     }
@@ -91,8 +90,8 @@ impl SwitchableRunner {
 impl CompileRunner for SwitchableRunner {
     async fn compile(&self, req: CompileRequest, cancel: CancellationToken) -> CompileOutcome {
         let t = self.settings.read().await.tectonic.clone();
-        // 形态判定走 core 的纯函数——引擎闸门在它里面（形态位是 Tectonic 引擎的子选项）。
-        let want_lib = t.use_library_form(req.engine, lib_form_forced_by_env());
+        // 形态判定走 core 的纯函数——引擎已唯一（Tectonic），形态位只看 lib_form / 环境变量。
+        let want_lib = t.use_library_form(lib_form_forced_by_env());
 
         if !want_lib {
             return self.run_subprocess(req, cancel).await;

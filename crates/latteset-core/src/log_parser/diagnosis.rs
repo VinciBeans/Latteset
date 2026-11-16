@@ -3,12 +3,14 @@
 //! 设计要点：
 //! - **纯函数**：输入 [`LogMessage`]（`.log` 已聚合的消息），输出 [`Diagnosis`]；无 IO、无状态，全量可单测。
 //! - **只在有把握时给建议**：匹配不到就返回 `None`，由前端降级为「原文 + 行号」——宁可不说，也不要瞎说。
-//! - **规则全部由真实报错驱动**：语料见 [`crate::log_parser::real_error_corpus`]（23 例，来自 ⑲ 模板编译
+//! - **规则全部由真实报错驱动**：语料见 [`crate::log_parser::real_error_corpus`]（20 例，来自 ⑲ 模板编译
 //!   矩阵的真实失败 + 故意写错的最小文档），期望值在 `diagnosis_tests.rs` 手写，避免自证循环。
 //!
 //! 为什么值得做：调研里"错误信息不可读"是全行业最高频痛点（`errors` 标签 5,516 题、
 //! TeXstudio 只显示 `Process exited with error(s)`）。而 ⑲ 调研又证明**引擎自动推断没有必要**
-//! ——正确的替代是：**不猜，但猜错时明确告诉用户怎么改**（见 [`DiagnosisKind::EngineMismatch`]）。
+//! ——正确的替代是：**不猜，但猜错时明确告诉用户怎么改**。引擎统一为 Tectonic（ADR-0015）之后，
+//! 这一类诊断只剩"这份文档的构建需要外部工具"（[`DiagnosisKind::UnsupportedTool`]）：
+//! biber 会被引擎**调用**（要求本机可用且版本匹配），makeindex/glossaries 则不会被自动运行。
 
 use super::model::{LogMessage, MessageKind};
 use serde::{Deserialize, Serialize};
@@ -28,10 +30,12 @@ pub enum DiagnosisKind {
     MissingFont,
     /// ctex 字体集不存在（`fontset=` 取值错）。
     MissingFontset,
-    /// 引擎不匹配：文档需要 XeLaTeX/LuaLaTeX，当前跑的是 pdfLaTeX（或反之）。
-    EngineMismatch,
-    /// 需要本产品不支持的引擎（如日文 pLaTeX/upLaTeX）。
-    UnsupportedEngine,
+    /// **构建需要外部工具**：biber / makeindex / glossaries（ADR-0015 第 4 条）。
+    ///
+    /// 三者的实际形态不同（2026-11 复验）：**biber 会被引擎调用**（`note: Running external tool biber`），
+    /// 缺它或版本与 bundle 内 biblatex 不匹配时这一步失败；makeindex/glossaries **不会被自动运行**。
+    /// 检出即如实说明并给出可行动出路，**不静默降级、不自动切回别的工作流**。
+    UnsupportedTool,
     /// 未定义控制序列。
     UndefinedControlSequence,
     /// 组未闭合（`File ended while scanning use of ...`）。
@@ -188,16 +192,20 @@ pub fn suggest_timeout_secs(current: u32, first_build: bool) -> u32 {
 
 /// 超时诊断（roadmap ㉕）：把"编译超时了"翻译成"为什么 + 怎么办"。
 ///
+/// `evidence` 是**证据文本**：`.log` 与**已捕获的引擎输出**（stdout/stderr）都可以，或两者合并。
+/// 这一区分是实测必需的（review E4）：Tectonic 的 `.log` 收尾才落盘，超时树杀时它常常是空的，
+/// 而此时页标记 `[N]` 已经在 stdout 里——只认日志就会把"在推进"误判成"没有页输出"。
+///
 /// **判据优先级**（从强到弱）：
-/// 1. **日志里已经有致命错误** → 超时只是症状：进程报错后没退出（实测 `latexmk` 会挂在
+/// 1. **证据里已经有致命错误** → 超时只是症状：进程报错后没退出（实测 `latexmk` 会挂在
 ///    文件错误上零 CPU 干等），真正要修的是那条错误，**提高超时救不了它**——此时不给
 ///    "一键提高超时"（`suggested_timeout_secs = None`），直接把那条错误的诊断摆出来；
-/// 2. 日志里有页输出 → 在推进，只是比上限慢（[`DiagnosisKind::CompileTimeout`]）；
+/// 2. 证据里有页输出 → 在推进，只是比上限慢（[`DiagnosisKind::CompileTimeout`]）；
 /// 3. 两者都无 → **不武断说"卡住"**（大文档首编可能整段时间都在加载字体/展开宏包），
 ///    给出两种可能并让用户先排除死循环（[`DiagnosisKind::CompileTimeoutStalled`]）。
-pub fn diagnose_timeout(log: &str, ev: &TimeoutEvidence) -> Diagnosis {
-    // 1) 日志自有致命错误优先（实测触发者：hithesis 的 `I can't write on file ...aux`）
-    if let Some(fatal) = super::parse_log(log)
+pub fn diagnose_timeout(evidence: &str, ev: &TimeoutEvidence) -> Diagnosis {
+    // 1) 证据自有致命错误优先（实测触发者：hithesis 的 `I can't write on file ...aux`）
+    if let Some(fatal) = super::parse_log(evidence)
         .iter()
         .find(|m| m.kind == MessageKind::Error)
         .and_then(diagnose)
@@ -205,7 +213,7 @@ pub fn diagnose_timeout(log: &str, ev: &TimeoutEvidence) -> Diagnosis {
         return Diagnosis {
             kind: fatal.kind,
             cause: format!(
-                "本次编译在 {}s 内没跑完、已被终止；但日志显示它其实**早已失败**——真正要修的是这条：{}",
+                "本次编译在 {}s 内没跑完、已被终止；但引擎输出显示它其实**早已失败**——真正要修的是这条：{}",
                 ev.timeout_secs, fatal.cause
             ),
             hint: fatal.hint.map(|h| format!("{h}（注意：这种情况提高编译超时救不了）")),
@@ -224,11 +232,11 @@ pub fn diagnose_timeout(log: &str, ev: &TimeoutEvidence) -> Diagnosis {
     };
     let first = if ev.first_build { "首次编译" } else { "增量编译" };
 
-    match super::pages_typeset(log) {
+    match super::pages_typeset(evidence) {
         Some(pages) => Diagnosis {
             kind: DiagnosisKind::CompileTimeout,
             cause: format!(
-                "编译在 {}s 内没有跑完，但日志显示已经排版到第 {pages} 页——是在推进，只是比上限慢（{first}，{scale}）",
+                "编译在 {}s 内没有跑完，但引擎输出显示已经排版到第 {pages} 页——是在推进，只是比上限慢（{first}，{scale}）",
                 ev.timeout_secs
             ),
             hint: Some(format!(
@@ -240,7 +248,7 @@ pub fn diagnose_timeout(log: &str, ev: &TimeoutEvidence) -> Diagnosis {
         None => Diagnosis {
             kind: DiagnosisKind::CompileTimeoutStalled,
             cause: format!(
-                "编译在 {}s 内没有跑完，且日志里还没出现任何页面输出（{first}，{scale}）——可能仍在做前置处理（加载字体、展开宏包），也可能真的卡住了",
+                "编译在 {}s 内没有跑完，且引擎输出里还没出现任何页面输出（{first}，{scale}）——可能仍在做前置处理（加载字体、展开宏包），也可能真的卡住了",
                 ev.timeout_secs
             ),
             hint: Some(format!(
@@ -287,6 +295,30 @@ fn capture_package_name(message: &str) -> Option<String> {
     re.captures(message).map(|c| c[1].to_string())
 }
 
+/// 识别"这份文档的构建需要外部工具"的三类标记（返回工具名）。
+///
+/// 标记取自这些工具/宏包的**真实输出原文**，且刻意收窄以免抢走普通报错：
+/// - **biber**：biblatex 的 `Please (re)run Biber on the file:`；或 `biber` 与
+///   `bibliograph*` / `backend` 同时出现（只有 `biblatex` 单词不算——那可能只是普通的 biblatex
+///   语法错误）；
+/// - **makeindex**：`makeindex` 字面量；
+/// - **glossaries**：`makeglossaries` 字面量（不匹配裸 `glossaries`，否则会抢走该宏包自身的错误）。
+fn unsupported_tool(text: &str) -> Option<&'static str> {
+    let lower = text.to_ascii_lowercase();
+    if lower.contains("run biber")
+        || (lower.contains("biber") && (lower.contains("bibliograph") || lower.contains("backend")))
+    {
+        return Some("biber");
+    }
+    if lower.contains("makeindex") {
+        return Some("makeindex");
+    }
+    if lower.contains("makeglossaries") {
+        return Some("glossaries");
+    }
+    None
+}
+
 /// 折叠空白用于短语匹配：**先剥掉续行的 `(包名)` 前缀**，再合并空白。
 ///
 /// 为什么必须先剥前缀：TeX 的宏包报错续行形如
@@ -321,35 +353,34 @@ pub fn diagnose(m: &LogMessage) -> Option<Diagnosis> {
         return Some(d(
             DiagnosisKind::NonUtf8Source,
             "源文件含非法 UTF-8 字节——常见于 GBK 编码的旧文件",
-            "把该 .tex 另存为 UTF-8；或改用 XeLaTeX 引擎（它对多字节输入更宽容）",
+            "把该 .tex 另存为 UTF-8（本引擎只支持 UTF-8 源码；GBK 旧文件请先转码）",
         ));
     }
 
-    // 2) 引擎不匹配：⑲ 实测的 4 个模板（shtthesis/bjfuthesis/cquthesis/fduthesis）都落在这一类
-    if text.contains("requires either XeTeX or")
-        || text.contains("Cannot be run with pdftex")
-        || text.contains("The fontspec package requires")
-        || text.contains("only works with LuaLaTeX or XeLaTeX")
-        || text.contains("only works with XeLaTeX")
-        || text.contains("XeLaTeX is required")
-    {
+    // 2) 需要外部工具的文档（ADR-0015 第 4 条）：biber / makeindex / glossaries。
+    //    事实口径（2026-11 复验）：Tectonic 0.17 的**子进程形态会调用外部 biber**
+    //    （直跑日志 `note: Running external tool biber ...`，上游 `driver.rs` 的 `external_tool_pass`），
+    //    失败的真实原因是本机缺 biber 或它与 bundle 内 biblatex 版本不匹配；
+    //    makeindex / glossaries 才是不自动跑（只跳过那一步）。检出即给可行动出路，
+    //    不静默降级、也不建议"切回别的工具链再试一遍"当作无事发生。
+    if let Some(tool) = unsupported_tool(text) {
+        let cause = if tool == "biber" {
+            "该文档的参考文献需要外部 biber：引擎会调用它，但它要本机可用、且版本要与文档用的 biblatex 匹配（缺失或版本不匹配时这一步会失败，参考文献为空或编译中断）".to_string()
+        } else {
+            format!("该文档的构建步骤需要外部工具 {tool}：本引擎不会自动运行它，只跳过那一步")
+        };
         return Some(d(
-            DiagnosisKind::EngineMismatch,
-            "该文档需要 XeLaTeX 或 LuaLaTeX，当前用的是 pdfLaTeX",
-            "到「设置 → 引擎」把引擎切成 XeLaTeX 后重新编译",
+            DiagnosisKind::UnsupportedTool,
+            cause,
+            "两条可行动出路：① 参考文献改用内建 bibtex——biblatex 写 `\\usepackage[backend=bibtex]{biblatex}`，\
+             或改用传统的 `\\bibliography{...}` + `\\bibliographystyle{...}`（引擎会跑内建 bibtex）；\
+             ② 索引/术语表暂时去掉 `\\makeindex` / `\\printindex` 或 `\\makeglossaries` / `\\printglossaries`——\
+             这两类本引擎不会自动跑，静默跳过只会得到缺索引/术语表的 PDF，需要时先在命令行跑一次 \
+             makeindex / makeglossaries 再编译；留在 biber 上就把本机 biber 对齐到文档的 biblatex 版本",
         ));
     }
 
-    // 3) 需要本产品不支持的引擎（日文 pLaTeX/upLaTeX）
-    if text.contains("needs format `pLaTeX2e'") || text.contains("pLaTeX2e") {
-        return Some(d(
-            DiagnosisKind::UnsupportedEngine,
-            "该文档需要 pLaTeX / upLaTeX（日文排版引擎）",
-            "本产品当前只支持 XeLaTeX / LuaLaTeX / pdfLaTeX；日文文档请改用 upLaTeX 工具链编译",
-        ));
-    }
-
-    // 4) ctex 字体集取值错（学位论文模板常见：fontset=windowsnew 之类）
+    // 3) ctex 字体集取值错（学位论文模板常见：fontset=windowsnew 之类）
     if text.contains("fontset") && text.contains("could not be found") {
         let name = capture_quoted(text).unwrap_or_else(|| "（未知）".into());
         return Some(d(
@@ -359,7 +390,7 @@ pub fn diagnose(m: &LogMessage) -> Option<Diagnosis> {
         ));
     }
 
-    // 5) 系统缺字体（fontspec）——字体名是**双引号**，不是反引号
+    // 4) 系统缺字体（fontspec）——字体名是**双引号**，不是反引号
     if text.contains("cannot be found") || text.contains("cannot be loaded") {
         let name = capture_double_quoted(text).unwrap_or_else(|| "（未知）".into());
         return Some(d(
@@ -369,7 +400,7 @@ pub fn diagnose(m: &LogMessage) -> Option<Diagnosis> {
         ));
     }
 
-    // 6) 缺文件：`.sty` / `.cls` / 其他
+    // 5) 缺文件：`.sty` / `.cls` / 其他
     if text.contains("not found") {
         let name = capture_quoted(text);
         if let Some(n) = name {
@@ -405,7 +436,7 @@ pub fn diagnose(m: &LogMessage) -> Option<Diagnosis> {
         }
     }
 
-    // 7) 宏包选项冲突（句式不带引号）
+    // 6) 宏包选项冲突（句式不带引号）
     if text.contains("Option clash for package") {
         let name = capture_option_clash_package(text).unwrap_or_else(|| "（未知）".into());
         return Some(d(
@@ -415,7 +446,7 @@ pub fn diagnose(m: &LogMessage) -> Option<Diagnosis> {
         ));
     }
 
-    // 8) 未定义控制序列
+    // 7) 未定义控制序列
     if text.contains("Undefined control sequence") {
         let cmd = capture_command_after_line_marker(m.message.as_str());
         return Some(match cmd {
@@ -432,7 +463,7 @@ pub fn diagnose(m: &LogMessage) -> Option<Diagnosis> {
         });
     }
 
-    // 9) 组未闭合
+    // 8) 组未闭合
     if text.contains("File ended while scanning use of") {
         let cmd = capture_command_after_line_marker(m.message.as_str())
             .or_else(|| {
@@ -447,7 +478,7 @@ pub fn diagnose(m: &LogMessage) -> Option<Diagnosis> {
         ));
     }
 
-    // 10) 数学模式
+    // 9) 数学模式
     if text.contains("Missing $ inserted") {
         return Some(d(
             DiagnosisKind::MissingMathMode,
@@ -456,7 +487,7 @@ pub fn diagnose(m: &LogMessage) -> Option<Diagnosis> {
         ));
     }
 
-    // 11) 多余右花括号
+    // 10) 多余右花括号
     if text.contains("Too many }'s") {
         return Some(d(
             DiagnosisKind::ExtraBrace,
@@ -465,7 +496,7 @@ pub fn diagnose(m: &LogMessage) -> Option<Diagnosis> {
         ));
     }
 
-    // 12) 缺 \begin{document}
+    // 11) 缺 \begin{document}
     if text.contains("Missing \\begin{document}") {
         return Some(d(
             DiagnosisKind::MissingBeginDocument,
@@ -474,7 +505,7 @@ pub fn diagnose(m: &LogMessage) -> Option<Diagnosis> {
         ));
     }
 
-    // 13) 重复上下标
+    // 12) 重复上下标
     if text.contains("Double subscript") || text.contains("Double superscript") {
         return Some(d(
             DiagnosisKind::DoubleScript,
@@ -483,7 +514,7 @@ pub fn diagnose(m: &LogMessage) -> Option<Diagnosis> {
         ));
     }
 
-    // 14) 表格外的 &
+    // 13) 表格外的 &
     if text.contains("Misplaced alignment tab character") {
         return Some(d(
             DiagnosisKind::MisplacedAlignment,
@@ -492,7 +523,7 @@ pub fn diagnose(m: &LogMessage) -> Option<Diagnosis> {
         ));
     }
 
-    // 15) 写不出中间文件（roadmap ㉖ 的首个实测证据：2026-09 冷跑 hithesis 复现）
+    // 14) 写不出中间文件（roadmap ㉖ 的首个实测证据：2026-09 冷跑 hithesis 复现）
     // **必须排在 Emergency stop 之前**：这段日志里两条常常落在同一条聚合消息里，而
     // "写不出文件"才是根因、也才有可操作修法；Emergency stop 只是它的收尾。
     if text.contains("I can't write on file") {
@@ -504,7 +535,7 @@ pub fn diagnose(m: &LogMessage) -> Option<Diagnosis> {
         ));
     }
 
-    // 16) Emergency stop（连锁反应的收尾，通常不是根因）
+    // 15) Emergency stop（连锁反应的收尾，通常不是根因）
     if text.contains("Emergency stop") {
         return Some(d(
             DiagnosisKind::EmergencyStop,

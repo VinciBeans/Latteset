@@ -38,7 +38,6 @@ impl Queue {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::types::Engine;
     use std::path::PathBuf;
     use std::time::Duration;
 
@@ -46,7 +45,6 @@ mod tests {
         CompileRequest {
             root_file: PathBuf::from(name),
             project_root: PathBuf::from("proj"),
-            engine: Engine::XeLaTeX,
             timeout: Duration::from_secs(120),
             kind: crate::types::CompileKind::Full,
         }

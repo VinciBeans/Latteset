@@ -4,6 +4,7 @@
 import { events } from "../bindings";
 import { useCompileStore } from "../stores/compile";
 import { useEditorStore } from "../stores/editor";
+import { useNoticesStore } from "../stores/notices";
 import { useOutlineStore } from "../stores/outline";
 import { usePreviewStore } from "../stores/preview";
 import { useProjectStore } from "../stores/project";
@@ -36,6 +37,11 @@ export function subscribeEvents(): () => void {
     }),
     events.compileErrors.listen((e) => {
       useCompileStore().setLiveErrors(e.payload);
+    }),
+    // 编译期的**运行时**提示（如"文档调用了 biber，但本机缺失或版本不匹配"）：不是错误、不改 phase，
+    // 只进 noticesStore（状态栏渲染；用户点掉才清，页面切换与编译成功都不清）。
+    events.compileNotice.listen((e) => {
+      useNoticesStore().push(e.payload.message);
     }),
     events.errorsUpdated.listen((e) => {
       useCompileStore().setErrors(e.payload);

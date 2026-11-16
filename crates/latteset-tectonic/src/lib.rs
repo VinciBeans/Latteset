@@ -116,7 +116,7 @@ pub fn cache_dir_from_env() -> Option<std::path::PathBuf> {
 /// 由此库形态档也能吃 **A/B/C** 三个功能点：**A** = 页逐页相同 + 项目根已有 PDF ⇒ 跳过
 /// `XdvipdfmxEngine` 转换与拷贝（只对 Quick，与子进程档同闸门）；**B/C** 由前端按
 /// `changed_pages` 决定是否重载/只重绘变化页。判据缓存 = `tmp/<stem>.tectonic.pages`
-/// （`<engine>` 带引擎名，已知债 #25；口径定义在 core，两档共用）。
+/// （文件名段恒为 [`latteset_core::types::ENGINE_ID`] 的值，已知债 #25；口径定义在 core，两档共用）。
 ///
 /// 空表仍然只表示**无法判定**（XDV 缺失/损坏）——调用方必须保守全量刷新，不是"零页"。
 pub const PAGE_HASH_SUPPORTED: bool = true;

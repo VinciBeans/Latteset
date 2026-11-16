@@ -5,7 +5,7 @@
 //! 设计要点（命令面与 [cli-mcp-plan.md] §1/§2 一致；落地时的三处偏差见该文 §4，旧编号对照见 §6）：
 //!
 //! 1. **一次性命令语义**：本进程不 spawn watcher、不跑 scheduler actor——`compile` 直接实例化
-//!    [`LatexmkRunner`] 跑一趟并**同步返回结果**。AI 要的是"跑一次、拿结果"，不需要合并队列/防抖；
+//!    [`SubprocessRunner`] 跑一趟并**同步返回结果**。AI 要的是"跑一次、拿结果"，不需要合并队列/防抖；
 //!    代价是**没有超时重试/手动终止**（超时树杀仍在 runner 内生效），AI 场景可接受。
 //! 2. **状态是"会话内"的**：`status`/`errors` 返回**本进程最近一次**编译结果（MCP server 常驻时
 //!    就是本次会话）。*偏差*：原计划 P0-1 想让 GUI 侧也写一份快照，但 GUI 有事件流、且 CLI 是
@@ -15,7 +15,7 @@
 //! 4. **路径/SyncTeX 策略共用 core**：`pdf_path_for_root` / `resolve_inverse`（含 ㉒ 的生成产物回落）
 //!    都在 `latteset_core::synctex`，GUI 命令面与这里调同一份，避免行为漂移（原计划 P0-3）。
 //! 5. **临时文件目录约定**：与 GUI 相同——中间文件 `tmp/`、PDF 副本在项目根、`.synctex.gz` 在 `tmp/`。
-//!    **同一项目不要同时用 GUI 和 CLI 编译**（两路 latexmk 会抢 `tmp/`；见 docs/cli.md「已知限制」）。
+//!    **同一项目不要同时用 GUI 和 CLI 编译**（两路编译器会抢 `tmp/`；见 docs/cli.md「已知限制」）。
 //!
 //! [cli-mcp-plan.md]: ../../docs/archive/cli-mcp-plan.md
 //! [cli.md]: ../../docs/cli.md
@@ -37,7 +37,7 @@ use latteset_core::types::{
     CompileKind, CompileOutcome, CompileRequest, ErrorEntry, OutlineNode,
 };
 use latteset_infra::fs::TokioFs;
-use latteset_infra::runner::LatexmkRunner;
+use latteset_infra::runner::SubprocessRunner;
 use latteset_infra::storage::SettingsStorage;
 
 pub mod mcp;
@@ -93,9 +93,11 @@ pub struct CompileReport {
     pub pdf_path: Option<String>,
     /// 墙钟耗时（毫秒）——AI 可据此判断项目规模/是否超时。
     pub elapsed_ms: u64,
+    /// 引擎名：**恒为** `tectonic`（[`latteset_core::types::ENGINE_ID`]；ADR-0015 之后引擎不再可选，
+    /// 字段保留是为了既有 JSON 契约不破）。
     pub engine: String,
     pub root_file: String,
-    /// 本次实际强度：`full`（latexmk 收敛）或 `quick`（单趟直调引擎，引用可能落后一趟）。
+    /// 本次实际强度：`full`（Tectonic 收敛）或 `quick`（两趟 `-r 1`，引用可能落后一趟）。
     pub kind: String,
     /// 请求的是 `Quick`，但**实际**跑成了 Full ⇒ true。两种来源：① 首编无产物被 runner 自动升级；
     /// ② 库形态下编辑触发档在收敛预算内跑到了稳定（见 `CONVERGENCE_SUPPORTED`）。
@@ -244,7 +246,7 @@ impl Session {
 
     /// 编译一次并**等待结果**（`compile --wait` 的实现）。
     ///
-    /// `quick = true` 走单趟直调引擎（快，但目录/引用可能落后一趟）；默认 Full（多趟 + bib/索引）。
+    /// `quick = true` 走两趟（`-r 1`：快，但目录/引用页码可能落后一趟）；默认 Full（Tectonic 收敛）。
     pub async fn compile(&mut self, quick: bool) -> Result<CompileReport, ServerError> {
         let project = self
             .project
@@ -260,7 +262,6 @@ impl Session {
         let request = CompileRequest {
             root_file: root_file.clone(),
             project_root: project.root.clone(),
-            engine: self.settings.compile.engine,
             timeout: std::time::Duration::from_secs(self.timeout_secs),
             kind: if quick { CompileKind::Quick } else { CompileKind::Full },
         };
@@ -284,7 +285,7 @@ impl Session {
                 errors: Vec::new(),
                 pdf_path: Some(pdf.to_string_lossy().into_owned()),
                 elapsed_ms,
-                engine: engine_name(&self.settings),
+                engine: engine_name().to_string(),
                 root_file: root_file.to_string_lossy().into_owned(),
                 kind: kind_name(kind),
                 upgraded_from_quick: quick && kind == CompileKind::Full,
@@ -295,7 +296,7 @@ impl Session {
                 errors,
                 pdf_path: None,
                 elapsed_ms,
-                engine: engine_name(&self.settings),
+                engine: engine_name().to_string(),
                 root_file: root_file.to_string_lossy().into_owned(),
                 kind: kind_name(if quick { CompileKind::Quick } else { CompileKind::Full }),
                 upgraded_from_quick: false,
@@ -306,7 +307,7 @@ impl Session {
                 errors: vec![entry],
                 pdf_path: None,
                 elapsed_ms,
-                engine: engine_name(&self.settings),
+                engine: engine_name().to_string(),
                 root_file: root_file.to_string_lossy().into_owned(),
                 kind: kind_name(if quick { CompileKind::Quick } else { CompileKind::Full }),
                 upgraded_from_quick: false,
@@ -317,7 +318,7 @@ impl Session {
                 errors: Vec::new(),
                 pdf_path: None,
                 elapsed_ms,
-                engine: engine_name(&self.settings),
+                engine: engine_name().to_string(),
                 root_file: root_file.to_string_lossy().into_owned(),
                 kind: kind_name(if quick { CompileKind::Quick } else { CompileKind::Full }),
                 upgraded_from_quick: false,
@@ -334,7 +335,7 @@ impl Session {
                 }],
                 pdf_path: None,
                 elapsed_ms,
-                engine: engine_name(&self.settings),
+                engine: engine_name().to_string(),
                 root_file: root_file.to_string_lossy().into_owned(),
                 kind: kind_name(if quick { CompileKind::Quick } else { CompileKind::Full }),
                 upgraded_from_quick: false,
@@ -348,7 +349,7 @@ impl Session {
     ///
     /// 隔离（ADR/§6.11.5 的硬要求）：落点 `<项目>/tmp/snippet/<键>/`，**独立的 project_root**、
     /// **不经调度器**（不产出 `compile-status`/`pdf-updated`，也不碰权威 `<stem>.pdf` 与主编译的
-    /// `tmp/main.*`）。`mode=button` 表示首次片段编译超过 3 s（多为 latexmk 拖起外部工具），
+    /// `tmp/main.*`）。`mode=button` 表示首次片段编译超过 3 s（多为冷启动/首次 bundle 缓存），
     /// 该项目应退回"悬停出按钮"而不是自动编译。
     pub async fn compile_math(&mut self, formula: &str) -> Result<MathPreview, ServerError> {
         let project = self
@@ -389,7 +390,6 @@ impl Session {
         let request = CompileRequest {
             root_file: entry,
             project_root: snippet_root,
-            engine: self.settings.compile.engine,
             // 片段应当秒级完成；给一个短上限，卡住就放弃而不是拖住编辑器（与 A 同口径）。
             timeout: std::time::Duration::from_secs(30),
             kind: CompileKind::Quick,
@@ -591,11 +591,12 @@ impl Session {
 
 /// 组装编译 runner（headless 的**装配点**，与 `src-tauri/src/lib.rs` 的 GUI 装配点同口径）。
 ///
-/// 默认 = **子进程形态**（`LatexmkRunner`）；只有在构建时打开 `tectonic-lib` 特性**且**运行期
-/// 开关 `LATTESET_TECTONIC_LIB=1` 时才用 Tectonic 库形态（方案 §3.5：默认关闭）。
+/// 引擎唯一 = Tectonic（ADR-0015）；这里只在**形态**上二选一：默认 **子进程形态**
+/// （[`SubprocessRunner`]，外部 `tectonic` 可执行文件），只有在构建时打开 `tectonic-lib` 特性**且**
+/// 运行期开关 `LATTESET_TECTONIC_LIB=1` 时才用 Tectonic 库形态（方案 §3.5：默认关闭）。
 /// **D1：失败不自动回退** —— 这里只决定装配哪个 runner，运行中失败就是失败。
 ///
-/// 库形态的两条配置走环境变量（设置面的形态位属后续收口）：
+/// 库形态的两条配置走环境变量（headless 没有设置面）：
 /// - `LATTESET_TECTONIC_BUNDLE`：bundle 来源（本地目录 bundle 走 `file:///…` 或相对路径）；
 /// - `LATTESET_TECTONIC_CACHE`：产品缓存目录（`bundles/` + `formats/` 的父目录）。
 ///
@@ -619,12 +620,12 @@ fn build_runner(
             return Arc::new(lib.with_bundle(latteset_tectonic::bundle_from_env()));
         }
     }
-    Arc::new(LatexmkRunner::new(fs, progress))
+    Arc::new(SubprocessRunner::new(fs, progress))
 }
 
-/// 引擎名 = core 的 [`Engine::binary_name`]（**唯一副本**；这里曾手写一份同值的 match）。
-fn engine_name(s: &Settings) -> String {
-    s.compile.engine.binary_name().to_string()
+/// 引擎名 = core 的 [`latteset_core::types::ENGINE_ID`]（**唯一副本**；ADR-0015 之后只有一个引擎）。
+fn engine_name() -> &'static str {
+    latteset_core::types::ENGINE_ID
 }
 
 /// 编译强度字面量 = core 的 [`CompileKind::as_str`]（同上：别两处各写一遍）。

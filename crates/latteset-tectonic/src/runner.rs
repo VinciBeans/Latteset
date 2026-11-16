@@ -39,7 +39,7 @@ use async_trait::async_trait;
 use latteset_core::log_parser::{MessageKind, diagnose, parse_log};
 use latteset_core::project::FileSystem;
 use latteset_core::scheduler::{CompileProgress, CompileRunner};
-use latteset_core::types::{CompileKind, CompileOutcome, CompileRequest, Engine, ErrorEntry, ErrorKind};
+use latteset_core::types::{CompileKind, CompileOutcome, CompileRequest, ErrorEntry, ErrorKind};
 use tectonic_bridge_core::{CoreBridgeLauncher, MinimalDriver};
 use tectonic_engine_bibtex::{BibtexEngine, BibtexOutcome};
 use tectonic_engine_xdvipdfmx::XdvipdfmxEngine;
@@ -633,8 +633,8 @@ fn run_engines(
     )
     .ok();
     // 页哈希缓存落点（A 的判据）：**必须先算** —— `tmp_dir` 紧接着就被 `TectonicIo` 拿走了。
-    // 引擎取 `Tectonic`（缓存文件名带引擎名，已知债 #25）；口径定义在 core，与子进程档共用。
-    let pages_cache = latteset_core::xdv::pages_cache_path(&tmp_dir, &stem, Engine::Tectonic);
+    // 缓存文件名带引擎段（`ENGINE_ID`，已知债 #25）；口径定义在 core，与子进程档共用。
+    let pages_cache = latteset_core::xdv::pages_cache_path(&tmp_dir, &stem);
     // bib 判据缓存落点与 `.bib` 的解析根（同上：`project_root`/`tmp_dir` 紧接着被 `TectonicIo` 拿走）。
     let bib_sig = bib_signature_path(&tmp_dir, &stem);
     let bib_root = project_root.clone();

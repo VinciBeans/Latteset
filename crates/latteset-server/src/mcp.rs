@@ -49,12 +49,12 @@ pub fn tools() -> Vec<Tool> {
         },
         Tool {
             name: "compile",
-            description: "编译一次并等待结果（等价 GUI 的「编译」）。返回 {status, errors, pdf_path, elapsed_ms, kind}。status=success 才算通过；quick=true 时只跑单趟（快，但目录/引用可能落后一趟）。",
+            description: "编译一次并等待结果（等价 GUI 的「编译」）。返回 {status, errors, pdf_path, elapsed_ms, kind}。status=success 才算通过；quick=true 时只跑两趟（快，但目录/引用页码可能落后一趟）。",
             input_schema: json!({
                 "type": "object",
                 "properties": {
                     "project": { "type": "string", "description": "项目目录（省略则用当前目录；会先自动打开）" },
-                    "quick": { "type": "boolean", "description": "true = 单趟直调引擎（默认 false = 完整 latexmk 收敛）" }
+                    "quick": { "type": "boolean", "description": "true = 两趟 `-r 1`（默认 false = 完整 Tectonic 收敛）" }
                 },
                 "additionalProperties": false
             }),
@@ -139,7 +139,7 @@ pub fn tools() -> Vec<Tool> {
         },
         Tool {
             name: "settings_get",
-            description: "生效设置（mode/engine/debounce/timeout/root_file）——确认 AI 的假设与实际一致。",
+            description: "生效设置（mode/debounce/timeout/tectonic/root_file/notices）——确认 AI 的假设与实际一致。",
             input_schema: json!({ "type": "object", "properties": {}, "additionalProperties": false }),
         },
     ]

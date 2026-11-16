@@ -1,12 +1,13 @@
 <!-- SettingsPanel（modules.md §6）：设置面板。
-   编译四项（mode/debounce/timeout/engine）→ 全局设置；root_file → 项目覆盖。
+   编译三项（mode/debounce/timeout）→ 全局设置；root_file → 项目覆盖；
+   引擎页只剩 Tectonic 的**形态与资源**（子进程 / 库内嵌、bundle、cache）——
+   引擎本身不可选（ADR-0015：唯一引擎 = Tectonic）。
    即改即存：store.update(patch) 后端写盘 + 广播 settings-changed，面板从 store 同步回显。 -->
 <script setup lang="ts">
 import { computed, onMounted, ref } from "vue";
 import { useSettingsStore } from "../stores/settings";
 import { ipc } from "../services/ipc";
-import { loadEngines } from "../services/engines";
-import type { CompileMode, Engine, EngineInfo, UiTheme } from "../bindings";
+import type { CompileMode, UiTheme } from "../bindings";
 
 const emit = defineEmits<{ close: [] }>();
 
@@ -19,19 +20,6 @@ const settings = computed(() => store.settings);
 const tectonic = computed(
   () => settings.value?.tectonic ?? { lib_form: false, bundle: null, cache_dir: null },
 );
-/** 用户是否存过任何 Tectonic 专属设置——用于在引擎不是 Tectonic 时提示"存了但不生效"。 */
-const hasTectonicSettings = computed(
-  () => tectonic.value.lib_form || !!tectonic.value.bundle || !!tectonic.value.cache_dir,
-);
-const tectonicSettingsSummary = computed(() =>
-  [
-    tectonic.value.lib_form ? "库内嵌" : null,
-    tectonic.value.bundle ? "宏包集" : null,
-    tectonic.value.cache_dir ? "缓存目录" : null,
-  ]
-    .filter(Boolean)
-    .join(" / "),
-);
 
 const MODES: { value: CompileMode; label: string; hint: string }[] = [
   { value: "continuous", label: "连续编译", hint: "编辑后 500ms 自动编译" },
@@ -42,21 +30,21 @@ const MODES: { value: CompileMode; label: string; hint: string }[] = [
  * 设置分页（标签栏）。四类按"用户要解决的问题"分，而不是按字段所属模块：
  * - 外观：与文档无关的个人偏好；
  * - 编译：什么时候编、编多久（模式/防抖/超时）；
- * - 引擎：用谁编（**引擎选择与 Tectonic 的形态/资源同页** —— 后者只在选中 Tectonic 时才有意义，
- *   分到两页会让那条"存了但不生效"的提示失去落点）；
+ * - 引擎（Tectonic）：**没有引擎可挑**（ADR-0015）；这一页只放 Tectonic 的形态与资源
+ *   （子进程/库内嵌、bundle、cache），字段即 `lib_form` / `bundle` / `cache_dir`；
  * - 项目：只影响当前项目的覆盖项（根文件）。
  */
 const TABS = [
   { id: "appearance", label: "外观" },
   { id: "compile", label: "编译" },
-  { id: "engine", label: "引擎" },
+  { id: "engine", label: "引擎（Tectonic）" },
   { id: "project", label: "项目" },
 ] as const;
 type TabId = (typeof TABS)[number]["id"];
 
 /**
  * 当前分页。放在**模块作用域**（不是 setup 内）：`v-if` 每次开关面板都会重建组件，
- * 组件内的 ref 会回到第一页——而"我刚改完引擎，再打开还想看引擎"是常态。
+ * 组件内的 ref 会回到第一页——而"我刚改完形态，再打开还想看引擎页"是常态。
  * 模块级变量只为"记住上次看的那页"，不进设置、不落盘（换次启动回到第一页可以接受）。
  */
 const activeTab = ref<TabId>("appearance");
@@ -78,61 +66,6 @@ const THEMES: { value: UiTheme; label: string; hint: string }[] = [
   { value: "dark", label: "深色", hint: "夜间态：墨紫罗兰纸面 + 提亮的糖果色" },
   { value: "system", label: "跟随系统", hint: "按操作系统的深浅色偏好切换" },
 ];
-/**
- * 引擎清单（roadmap ㊻）：**来自后端** `list_engines`（顺序 / 名字 / 说明 / 本机可用性），
- * 前端不再写死一份 —— 顺序（Tectonic 第一，ADR-0014）、名字与"这台机器上能不能用"是同一件事的
- * 四个面，抄一份就会飘。
- *
- * ⚠ **`hint` 不进 `<option>` 的文本**：原生下拉的弹层按最长选项撑宽，把整句说明塞进选项会让弹层
- * 冲出面板（真机反馈）。选项只留名字，说明显示在 select 下方 —— 与「主题」「编译模式」同一范式。
- */
-const engines = ref<EngineInfo[]>([]);
-const enginesError = ref("");
-
-async function loadEngineList() {
-  try {
-    engines.value = await loadEngines();
-    enginesError.value = "";
-  } catch (e) {
-    enginesError.value = `读取引擎清单失败：${String((e as { message?: string })?.message ?? e)}`;
-    engines.value = []; // 退化成"只有当前值"（见 engineOptions）
-  }
-}
-
-/**
- * 选项 = 后端清单 **并上"当前设置的那个引擎"**。
- *
- * 为什么必须并：`LATTESET_TEX_ENGINES` 可以把某个引擎从清单里收窄掉，而设置里可能正用着它
- * （真机实测：覆盖成 `pdf,xelatex` 时，`<select>` 因为没有匹配项而**显示空白**、说明行也空
- * ——用户看不到"现在到底用的是什么"）。补一条**不可选**的只读项把这个事实讲出来。
- */
-const engineOptions = computed<EngineInfo[]>(() => {
-  const cur = settings.value?.compile.engine;
-  const list = engines.value;
-  if (!cur || list.some((e) => e.id === cur)) return list;
-  return [
-    {
-      id: cur,
-      label: cur,
-      hint: "",
-      available: false,
-      reason: enginesError.value
-        ? `读取引擎清单失败，只显示当前设置里的引擎：${cur}`
-        : `当前设置指定的引擎（${cur}）不在本次构建开放的清单里（可能被 ${"LATTESET_TEX_ENGINES"} 收窄）—— 请改选下面任意一个引擎`,
-    },
-    ...list,
-  ];
-});
-
-/** 当前选中项（说明 / 不可用原因都从它取）。 */
-const currentEngine = computed(() =>
-  engineOptions.value.find((e) => e.id === settings.value?.compile.engine)
-);
-
-/** 说明行：可用 ⇒ 说明；不可用 ⇒ **原因**（带 err 样式，不留白）。 */
-const engineHint = computed(() => currentEngine.value?.reason || currentEngine.value?.hint || "");
-const engineUnavailable = computed(() => currentEngine.value?.available === false);
-
 const DEBOUNCE_MIN = 100;
 const DEBOUNCE_MAX = 5000;
 // 与 core `TIMEOUT_SECS_RANGE` 保持一致（5..=1800）：上限取 1800s 是因为真实学位论文
@@ -184,12 +117,6 @@ async function setMode(mode: CompileMode) {
   await store.update({ mode });
 }
 
-/** 引擎切换：即点即存。 */
-async function setEngine(engine: Engine) {
-  if (settings.value?.compile.engine === engine) return;
-  await store.update({ engine });
-}
-
 /** 主题切换：即点即存；落地（DOM/Monaco）由 useTheme 的 watcher 统一做。 */
 async function setTheme(theme: UiTheme) {
   if (themeOf(settings.value) === theme) return;
@@ -212,14 +139,6 @@ async function setWizard(on: boolean) {
 function themeOf(s: { ui?: { theme: UiTheme } | null } | null | undefined): UiTheme {
   return s?.ui?.theme ?? "light";
 }
-
-/**
- * 引擎页上是否有**需要知道但当前页看不见**的事：引擎不是 Tectonic、却存着 Tectonic 专属设置。
- * 不给标记的话，用户切到 XeLaTeX 后那几项就成了隐形开关（既看不到、也没提示）。
- */
-const engineTabNotice = computed(
-  () => settings.value?.compile.engine !== "tectonic" && hasTectonicSettings.value,
-);
 
 /** 根文件覆盖：仅相对路径；输入为空 = 清除覆盖（自动探测，幂等发送 null patch）。 */
 async function applyRootFile() {
@@ -252,13 +171,12 @@ async function applyRootFile() {
   lastAppliedRoot.value = target;
 }
 
-/** 恢复默认（编译各项 → 默认值；root_file 不动）。 */
+/** 恢复默认（编译各项 → 默认值；root_file 不动）。引擎已无「可选」一说（ADR-0015），不写 `engine` 键。 */
 async function resetDefaults() {
   await store.update({
     mode: "continuous",
     debounce_ms: 500,
     timeout_secs: 120,
-    engine: "tectonic",
     // 向导也是"编译"页的项 ⇒ 一并回默认开（按钮的字面意思就是"恢复默认"）
     new_file_wizard: true,
   });
@@ -292,8 +210,6 @@ onMounted(async () => {
   } catch {
     libAvailable.value = false;
   }
-  // 引擎清单（㊻）：与形态探测并行发（互不依赖），前端只渲染后端给的结果
-  void loadEngineList();
   const t = tectonic.value;
   if (t) {
     bundleLocal.value = !!t.bundle;
@@ -382,12 +298,6 @@ async function applyCacheDir() {
           @click="activeTab = t.id"
         >
           {{ t.label }}
-          <!-- 引擎页有"存了但不生效"的设置时点一颗：否则切到别的页就再没有线索 -->
-          <span
-            v-if="t.id === 'engine' && engineTabNotice"
-            class="tab-dot"
-            title="有已保存的 Tectonic 形态设置在当前引擎下不生效"
-          />
         </button>
       </div>
 
@@ -515,35 +425,15 @@ async function applyCacheDir() {
           </div>
         </section>
 
-        <!-- 引擎：用谁编。**引擎选择与 Tectonic 的形态/资源同页** —— 后者只在选中 Tectonic 时
-             才有意义，分到两页会让那条"存了但不生效"的提示失去落点（见 TABS 的注释）。 -->
+        <!-- 引擎：只剩 Tectonic（ADR-0015）——没有"选谁"，所以这里不再有下拉、清单与不可用原因；
+             这一页只放 Tectonic 的形态与资源（子进程/库内嵌、bundle、cache）。 -->
         <section class="sec" v-if="activeTab === 'engine'" id="tabpanel-engine" role="tabpanel">
-          <h3 class="sec-title">引擎</h3>
+          <h3 class="sec-title">编译引擎（Tectonic）</h3>
+          <p class="field-hint">
+            引擎固定为 <b>Tectonic</b>：自带宏包集，不依赖本机 TeX Live / latexmk；不再提供其它引擎。
+          </p>
 
-          <div class="field">
-            <label class="field-label" for="set-engine">TeX 引擎</label>
-            <select id="set-engine" class="input select" :value="settings.compile.engine" @change="setEngine(($event.target as HTMLSelectElement).value as Engine)">
-              <!-- 清单来自后端（顺序 / 名字 / 可用性）：不可用的**留着一并禁用**并给原因，
-                   而不是悄悄藏掉——"本机没装 XeLaTeX"这件事本身就是要讲给用户听的信息 -->
-              <option v-for="e in engineOptions" :key="e.id" :value="e.id" :disabled="!e.available">
-                {{ e.label }}{{ e.available ? "" : "（不可用）" }}
-              </option>
-            </select>
-            <!-- 说明/原因放在 select **下方**（不进 option 文本）：原生弹层按最长选项撑宽，塞进去会冲出面板 -->
-            <p class="field-hint" :class="{ err: engineUnavailable }">{{ engineHint }}</p>
-            <p class="field-hint err" v-if="enginesError">{{ enginesError }}</p>
-            <!-- Tectonic 段只在选中 Tectonic 时显示（下面那条 template 的 v-if），所以这里必须
-                 把"已经存了 Tectonic 设置、但当前不生效"讲出来——否则用户切到 XeLaTeX 后
-                 那几项连看都看不到，成了隐形开关。 -->
-            <p class="field-hint warn" v-if="engineTabNotice">
-              已保存 Tectonic 形态设置（{{ tectonicSettingsSummary }}）；<b>仅在选择 Tectonic 引擎时生效</b>，当前引擎不受影响。
-            </p>
-          </div>
-
-          <!-- Tectonic 形态（⑫ 里程碑的设置面）：只在引擎真的选了 Tectonic 时出现——
-               引擎不是它的时候，这几项对用户没有任何作用，摆在面板上只会让人以为"改了没生效" -->
-          <template v-if="settings.compile.engine === 'tectonic'">
-            <h3 class="sec-title sub">Tectonic 形态与资源</h3>
+          <h3 class="sec-title sub">形态与资源</h3>
 
           <div class="field">
             <label class="field-label" for="set-form">驱动形态</label>
@@ -636,7 +526,6 @@ async function applyCacheDir() {
           <p class="field-hint" v-if="!tectonic.lib_form">
             以上两项只在<b>库内嵌</b>形态下生效（子进程档由 `tectonic.exe` 自己管缓存）。
           </p>
-          </template>
         </section>
       </div>
 
@@ -727,14 +616,6 @@ async function applyCacheDir() {
 .tab-btn:hover { color: var(--ink); }
 .tab-btn.on { color: var(--blueberry); border-bottom-color: var(--blueberry); }
 .tab-btn:focus-visible { outline: 2px solid var(--blueberry); outline-offset: -2px; border-radius: 4px 4px 0 0; }
-/* "有存了但不生效的设置"的提示点（琥珀）：标签栏是唯一能跨页传达这件事的地方 */
-.tab-dot {
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background: var(--mango);
-  flex: 0 0 auto;
-}
 
 .panel-body { flex: 1 1 auto; overflow: auto; padding: 4px 18px 12px; }
 .sec { padding: 12px 0 4px; }
@@ -748,7 +629,7 @@ async function applyCacheDir() {
   text-transform: uppercase;
   color: var(--ink-dim);
 }
-/* 同页第二段（引擎页的 Tectonic 形态与资源）：与上面的"引擎"拉开层次 */
+/* 同页第二段（引擎页的「形态与资源」）：与上面的页标题拉开层次 */
 .sec-title.sub {
   margin-top: 22px;
   padding-top: 14px;
@@ -768,8 +649,6 @@ async function applyCacheDir() {
 }
 .field-hint { margin: 6px 0 0; font-size: 11px; color: var(--ink-faint); }
 .field-hint.err { color: var(--danger-ink); }
-/* 「存了但当前不生效」——不能用 err（不是错误），但也不能与普通灰字同权重 */
-.field-hint.warn { color: var(--sienna, var(--sienna)); }
 
 .input {
   width: 100%;
@@ -785,7 +664,6 @@ async function applyCacheDir() {
 }
 .input:focus { outline: none; border-color: var(--blueberry); box-shadow: 0 0 0 3px rgba(var(--blueberry-rgb), 0.14); }
 .input.number { font-family: var(--mono); }
-.select { cursor: pointer; }
 
 .mode-seg {
   display: flex;

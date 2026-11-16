@@ -7,12 +7,12 @@
 | 想验什么 | 命令 | 覆盖 |
 |---|---|---|
 | 纯逻辑 | `cargo test -p latteset-core` | 调度器语义（队列合并 / 超时 / 重试 / 终止）、`.log` 解析与诊断、设置模型与合并、根文件探测、大纲、SyncTeX 纯逻辑（路径与回落分类）、XDV 页哈希、公式扫描与片段装配 |
-| 文件系统 / 进程 / watch / 存储 | `cargo test -p latteset-infra` | 文件系统实现、latexmk/synctex 进程与命令构造（含 `CREATE_NO_WINDOW`）、notify 监视、设置存储、引擎 PATH 探测 |
-| 真实 latexmk / synctex | `cargo test -p latteset-infra -- --ignored` | 成功 / 内容错误 / 超时树杀 / 取消 / 中文路径双向 / 流式提前量（`live_errors` 断言首个错误距编译结束 ≥100ms） |
-| headless（CLI / MCP） | `cargo test -p latteset-server`（`-- --ignored` 真编译） | `Session`（打开 / 读写 / 树 / 大纲 / 非 UTF-8 / 编译拒绝 / 配置目录）、CLI 参数解析 |
-| MCP 协议链路 | `cargo test -p latteset-server --test mcp_stdio` | **真实二进制 + stdio 管道**：握手 / `tools/list` / 工具往返 / 错误语义 / 逐调用切项目（5 用例 + 1 个 `#[ignore]` 编译用例） |
+| 文件系统 / 进程 / watch / 存储 | `cargo test -p latteset-infra` | 文件系统实现、**Tectonic 命令构造**（argv 两档 + `-C` 条件 + 不设 `SOURCE_DATE_EPOCH`）、`CREATE_NO_WINDOW`、notify 监视、设置存储（含 v1→v2 迁移）、外部工具提示 |
+| 真实 Tectonic / synctex | `cargo test -p latteset-infra -- --ignored` | 成功 / 内容错误 / 超时树杀 / 取消 / Quick 升级 Full / 中文路径双向 / 流式页进度（`reports_streaming_pages_before_compile_finishes`）/ 超时证据（`timeout_diagnosis_uses_streamed_page_evidence`：断言超时被杀时 `.log` 还没落盘、诊断用上 stdout 的 `[N]`）。**闸门 = PATH 上有 `tectonic`**，缺则跳过并打「跳过：未安装 tectonic（或不在 PATH 上）」。⚠ 旧 `live_errors`（错误提前 ≥100ms）已随 latexmk 路径删除，错误通道的提前量未复测 |
+| headless（CLI / MCP） | `cargo test -p latteset-server`（`-- --ignored` 真编译） | `Session`（打开 / 读写 / 树 / 大纲 / 非 UTF-8 / 编译拒绝 / 配置目录）、CLI 参数解析（**23 passed**） |
+| MCP 协议链路 | `cargo test -p latteset-server --test mcp_stdio` | **真实二进制 + stdio 管道**：握手 / `tools/list` / 工具往返 / 错误语义 / 逐调用切项目（5 用例 + 1 个 `#[ignore]` 编译用例，闸门同上探测 `tectonic`） |
 | 前端 | `npm run test`（`test:watch` 监视） | stores（project/editor/compile/preview/outline）、composables（useAutoSave / useIdleConvergence / useSyncTex / useTheme）、组件（ErrorList / RootFilePicker / SettingsPanel）、services（paths / fuzzy / draftPatch） |
-| 库形态 | `npm run lib:test` | `latteset-tectonic`：synctex 主输入补丁、bundle 与引擎路径 |
+| 库形态 | `npm run lib:test` | `latteset-tectonic`：synctex 主输入补丁、bundle 与引擎路径。**本机无 vcpkg**：`cargo check -p latteset-tectonic` 失败在 `tectonic_bridge_core` 的 C 编译（`cl.exe D8050`，环境问题、非源码错误）⇒ **本机未跑**，最终由 CI 的 `lib:test` 验证 |
 | 交付前 | `npm run build` | `copy:pdf-worker` + `vue-tsc --noEmit` + `vite build` |
 
 模块分工与各用例的判据见 [modules.md](./modules.md)；延迟预算报告用 `node scripts/bench.mjs`。
@@ -41,8 +41,8 @@
 | 6 | **预览耗时（基准）** | `webview_execute_js` 读 `window.__previewLastReload` | 得到 `{fetch,parse,render,total,pagesRendered}`；与 `scripts/bench.mjs` 的输出拼成端到端 |
 | 7 | 反向 SyncTeX | `webview_find_element .page-wrap canvas` 取页几何 → 点击正文区 → 读状态栏 | 编辑器切到对应 `.tex` 且行号≈点击句所在行（`multifile` 实测点第 5 页正文 → `chapters/intro.tex` **Ln 3**，跨文件）。**点目录区**不打开生成的 `.toc`：工具条出现「此处来自自动生成的文件 main.toc…」或「已回落到最近的源码（main.tex:37）」提示 |
 | 8 | 中文路径渲染 | 用 `中文测试工程` 夹具重复 1/5 | 中文标题/目录/正文/公式正常渲染，`fetch` 无 404 |
-| 9 | 编辑期草稿 + 空闲收敛 | 点「编译」建产物 → **在编辑器里敲一行**（见下「如何在应用内输入文字」）→ 记录状态栏时间线 | `排版中…` → `就绪` + **「引用待更新」** → 约 2s 后再次 `排版中…`（空闲收敛的 Full）→ 提示消失；dev stdout 同 cycle 有 `Quick 编译（单趟直调引擎）` 与 `Full 编译（完整 latexmk 收敛）` |
-| 10 | 超时诊断 + 一键提超时重试 | 设置面板把超时改 **5s** → 清掉 `tmp/` 制造首编 → 点「编译」→ 读 `.error-list .entry` | 状态栏「失败·超时」；列表一条：原因含「已排版到第 N 页…在推进」（或「还没出现任何页面输出」）+ 建议 + 按钮**「提高到 900s 并重试」**（首编跳档）；点按钮后 `get_settings` 超时变为 900、编译启动并转「就绪」、条目消失。**注意**：这一项会把全局 `settings.json` 的超时改掉，验完记得改回 120 |
+| 9 | 编辑期草稿 + 空闲收敛 | 点「编译」建产物 → **在编辑器里敲一行**（见下「如何在应用内输入文字」）→ 记录状态栏时间线 | `排版中…` → `就绪` + **「引用待更新」** → 约 2s 后再次 `排版中…`（空闲收敛的 Full）→ 提示消失；dev stdout 同 cycle 有 `启动编译（Tectonic 子进程；Full = 引擎自带收敛）`，其中 `kind=quick` / `kind=full` 可区分两档（旧文案 `Quick 编译（单趟直调引擎）` / `Full 编译（完整 latexmk 收敛）` 已随引擎删除） |
+| 10 | 超时诊断 + 一键提超时重试 | 设置面板把超时改 **5s** → 清掉 `tmp/` 制造首编 → 点「编译」→ 读 `.error-list .entry` | 状态栏「失败·超时」；列表一条：原因含「**引擎输出显示**已经排版到第 N 页——是在推进」（或「**引擎输出里**还没出现任何页面输出」）+ 建议 + 按钮**「提高到 900s 并重试」**（首编跳档）；点按钮后 `get_settings` 超时变为 900、编译启动并转「就绪」、条目消失。**证据口径**：证据 = 已捕获的引擎输出（`-p` 的 `[N]` + stdout/stderr 尾部）+ `.log`（有内容才用）+ 流式通道已上报的最大页，合并后判定——Tectonic 的 `.log` **收尾才落盘**，被树杀时常常零字节，只读日志会退化成「无页输出」。**注意**：这一项会把全局 `settings.json` 的超时改掉，验完记得改回 120 |
 | 11 | SyncTeX 生成产物回落 | 点 PDF **目录区**（`multifile` 第 3 页中部，x≈20% 页宽 / y≈65–85% 页高）→ 读 `.sync-note` 与标签页 | 工具条提示「此处来自自动生成的文件 main.toc（…）」或「已回落到最近的源码（main.tex:37，向下探测）」；**标签页不得出现 `main.toc`**；提示约 5s 后自动消失 |
 | 12 | 正向 SyncTeX 高亮（`webview_interact` 无修饰键） | 用 Vite 预打包 URL 动态 import Monaco → `ed.setPosition(...)` → 对编辑器 DOM 派发 `mousedown/mouseup/click`（带 `ctrlKey: true`）→ 读 `.highlight` 的 `display/left/top` | 恰好一个 `.highlight` 为 `display: block` 且落在目标页；编辑器 `onMouseDown(ctrlKey)` 是真实入口，派发等价于用户 Ctrl+点击 |
 | 13 | 非 UTF-8 源文件提示 | 夹具 `中文GBK工程` → 展开 `子目录` → 点 `gbk.tex` → 读 `.open-error` 与标签页 | 状态栏出现中文提示「…不是 UTF-8 编码…另存为 UTF-8…」；**不开新标签**（此前是无人接的 rejection） |
@@ -115,7 +115,7 @@ new MutationObserver(() => { const s = snap(); const l = log[log.length-1];
 // 之后隔几秒用 () => window.__dshProbe 读一次即可
 ```
 
-**编译产物的时间戳也能当证据**：`tmp/main.fdb_latexmk` 的 mtime 只在 **latexmk** 跑过时才推进（Quick 单趟直调引擎不碰它），故「Quick 确实没走 latexmk」与「空闲收敛确实跑了 latexmk」都能用它与 `tmp/main.xdv` 的 mtime 对比来核实。
+**编译产物的时间戳也能当证据（仅旧驱动）**：`tmp/main.fdb_latexmk` 的 mtime 只在 **latexmk** 跑过时才推进——它曾用来区分 Quick 与 Full。⚠ **该文件不再生成**（latexmk 已删除）：现在改用 dev stdout 的 `kind=` 与状态栏 `draft` / 「引用待更新」判定两档；`.fls` 同此（两者都是 latexmk 产物，见 [troubleshooting.md](../troubleshooting.md) 的相关小节标注）。
 
 ### SyncTeX 精度怎么量（一条命令）
 
@@ -126,6 +126,8 @@ node scripts/synctex-report.mjs --projects=<dir> --recompile
 ```
 
 它按 `\section`/`\chapter`/`\frametitle`/`\begin{frame}`/`\label`/`\part` 取样本，逐点做「正向 → 反向」往返，报告成功率与行号差。**当前基线**：正向/反向/同文件 34/34、跳到位 ≤3 行 31/34（≤5 行 34/34）；分档与解释见 [design.md](../design.md)。
+
+> ⚠ **这套指标只覆盖"往返"口径**：反向的查询点是**正向给出的坐标**，不是用户在 PDF 上随手点的点。2026-11 验收发现任意点反向在「页尾命令行 / 跨文件页」会退化到页尾行号、跨文件页还会指错文件（`LATTESET_SYNCTEX=cli` 在同数据上正确；`xelatex` 产物同样复现 ⇒ 预存缺陷）。已登记 [modules.md](./modules.md) §12.1 #29；补测任意点反向前，**别把这组数字当"反向定位正确"的证据**。
 
 **beamer 的 2–4 行偏移不是解析 bug**：把取块规则从「第一个 `Output` 块」换成「最小 H」「首个 H≤40」，**往返结果完全一致**（三组样本逐一相同）——偏移来自 beamer/主题的 synctex 记录粒度。同理，`\only<n>` 覆盖层的内容在非本层页面上没有对应记录，反向映射天然不可确定。
 
@@ -159,6 +161,18 @@ node scripts/synctex-report.mjs --projects=<dir> --recompile
 - `fls-report.mjs`——`.fls` / `.fdb_latexmk` 依赖差集，排"改了文件没生效"时用。
 - `gen-*` 系列——生成夹具（bench 六档 / 大项目 / 流式长文档 / 多文件大项目），夹具不入库、脚本入库。
 - `render-diagrams.mjs`——架构图渲染（Mermaid → `docs/diagrams/`）；⚠ 本机跑不通（缺 mermaid + 无头浏览器，ADR-0011 记）。
+
+**脚本失效说明（ADR-0015 之后）**：下列脚本仍直接调用 **latexmk / xelatex**，而产品已不再经过那条路径 ⇒ 它们的数据只能当**历史基线复现**，不能用来判定当前实现：
+
+| 脚本 | 失效点 |
+|---|---|
+| `bench.mjs` | 命令 `latexmk -xelatex …`；`noop` 靠 latexmk 判定 up-to-date |
+| `check-determinism.mjs` | 命令 latexmk / 直调 xelatex，并向子进程注入 `SOURCE_DATE_EPOCH`（与产品现行口径相反） |
+| `bench-single-pass.mjs` | A/B 的两条命令都是旧驱动 |
+| `synctex-report.mjs` | 内部 `latexmk -xelatex` 重编样本 |
+| `fls-report.mjs` / `tl-compile-matrix.ps1` / `gen-log-error-corpus.ps1` | 只处理 latexmk/TeX Live 产物（`.fls`、`.fdb_latexmk`、模板矩阵、GBK 日志语料） |
+
+这些脚本在本机是否还能跑 `[未测]`（需要 TeX Live 2026 + latexmk）；要按 Tectonic 重做需另立改动。
 
 ## CI 概览
 

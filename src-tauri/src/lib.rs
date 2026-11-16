@@ -6,7 +6,7 @@ mod runner_switch;
 
 use commands::AppState;
 use events::{
-    build_emitter, CompileErrorsEvent, CompilePreviewEvent, CompileProgressEvent,
+    build_emitter, CompileErrorsEvent, CompileNoticeEvent, CompilePreviewEvent, CompileProgressEvent,
     CompileStatusEvent, ErrorsUpdatedEvent, FilesChangedEvent, PdfUpdatedEvent,
     SettingsChangedEvent, TauriProgress, TauriSink,
 };
@@ -176,7 +176,6 @@ fn build_specta_builder() -> tauri_specta::Builder<tauri::Wry> {
             commands::get_settings,
             commands::update_settings,
             commands::lib_form_available,
-            commands::list_engines,
             commands::engine_form,
             commands::set_window_theme,
             commands::compile_math,
@@ -187,6 +186,9 @@ fn build_specta_builder() -> tauri_specta::Builder<tauri::Wry> {
             CompileErrorsEvent,
             // 编译中的部分 PDF（roadmap ㉞）：与 pdf-updated 分开，中间态不顶权威终态
             CompilePreviewEvent,
+            // 能力边界提示（ADR-0015 决策 4）：biber 由引擎调用外部程序（本机缺失/版本与 bundle 内
+            // biblatex 不匹配时失败），makeindex/glossaries 则不会被自动运行——检出即显式说明
+            CompileNoticeEvent,
             ErrorsUpdatedEvent,
             PdfUpdatedEvent,
             FilesChangedEvent,

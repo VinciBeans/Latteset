@@ -255,13 +255,15 @@ fn handle_settings_change(path: &Path, state: Arc<WatchState>) {
                 return;
             }
             if is_global {
-                match serde_json::from_str::<Settings>(&content) {
+                // 与启动路径（`load_global`）共用同一条解析：**v1 → v2 迁移也在这里生效**
+                // （备份 + 落盘 + 一次性提示），否则手改旧文件的人永远看不到引擎统一的提示。
+                match state.storage.parse_global(&content).await {
                     Ok(parsed) => {
                         let overrides = state.overrides.read().await.clone();
                         *state.settings.write().await = SettingsStorage::effective(&parsed, &overrides);
                     }
                     Err(e) => {
-                        last_problem = format!("解析失败：{e}");
+                        last_problem = e;
                         continue;
                     }
                 }
@@ -363,7 +365,7 @@ fn trigger_compile(path: &Path, state: Arc<WatchState>) {
         };
         match compile_request_for_change(ctx, &path) {
             Some(req) => {
-                debug!("构造编译请求: root={} engine={:?}", req.root_file.display(), req.engine);
+                debug!("构造编译请求: root={}", req.root_file.display());
                 state.scheduler.compile(req);
             }
             // 不触发是**常态**（本次编译自己的 `<stem>.pdf`、`notes.md` 这类非输入）⇒

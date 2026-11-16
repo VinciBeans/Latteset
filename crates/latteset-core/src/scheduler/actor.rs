@@ -333,7 +333,7 @@ mod tests {
     // 避免 lib 目标出现 unused import 警告。
     use std::path::PathBuf;
     use crate::testutil::{event_log_emitter, wait_until, EventLog, FakeRunner};
-    use crate::types::{Engine, ErrorKind, FailureKind};
+    use crate::types::{ErrorKind, FailureKind};
     use std::sync::Arc;
     use std::time::Duration;
 
@@ -341,7 +341,6 @@ mod tests {
         CompileRequest {
             root_file: PathBuf::from(name),
             project_root: PathBuf::from("proj"),
-            engine: Engine::XeLaTeX,
             timeout: Duration::from_secs(120),
             // 测试默认用 Full（既有断言期望 draft:false）；Quick 有专门用例
             kind: CompileKind::Full,

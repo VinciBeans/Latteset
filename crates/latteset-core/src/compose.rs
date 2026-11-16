@@ -56,7 +56,6 @@ pub fn compile_request_for_change(ctx: ComposeContext<'_>, changed: &Path) -> Op
     Some(CompileRequest {
         root_file: root_file.clone(),
         project_root: ctx.project.root.clone(),
-        engine: ctx.settings.compile.engine,
         timeout: Duration::from_secs(u64::from(ctx.settings.compile.timeout_secs)),
         kind: CompileKind::Quick,
     })
@@ -71,7 +70,6 @@ pub fn compile_request_manual(ctx: ComposeContext<'_>) -> Option<CompileRequest>
     Some(CompileRequest {
         root_file: root_file.clone(),
         project_root: ctx.project.root.clone(),
-        engine: ctx.settings.compile.engine,
         timeout: Duration::from_secs(u64::from(ctx.settings.compile.timeout_secs)),
         kind: CompileKind::Full,
     })
@@ -82,7 +80,7 @@ mod tests {
     use super::*;
     use crate::project::ProjectState;
     use crate::settings::{CompileSettings, SCHEMA_VERSION};
-    use crate::types::{CompileMode, Engine};
+    use crate::types::CompileMode;
     use std::path::PathBuf;
 
     fn ctx<'a>(project: &'a ProjectState, settings: &'a Settings) -> ComposeContext<'a> {
@@ -96,11 +94,11 @@ mod tests {
                 mode: CompileMode::Continuous,
                 debounce_ms: 500,
                 timeout_secs: 120,
-                engine: Engine::XeLaTeX,
                 new_file_wizard: true,
             },
             tectonic: Default::default(),
             ui: Default::default(),
+            notices: Vec::new(),
             root_file: None,
         }
     }
@@ -179,14 +177,12 @@ mod tests {
             root_file: Some(PathBuf::from("proj/main.tex")),
         };
         let mut s = settings();
-        s.compile.engine = Engine::LuaLaTeX;
         s.compile.timeout_secs = 60;
 
         let req = compile_request_for_change(ctx(&project, &s), Path::new("proj/chapters/a.tex"))
             .expect("应触发");
         assert_eq!(req.root_file, PathBuf::from("proj/main.tex"));
         assert_eq!(req.project_root, PathBuf::from("proj"));
-        assert_eq!(req.engine, Engine::LuaLaTeX);
         assert_eq!(req.timeout, Duration::from_secs(60));
         // roadmap ㉘：编辑触发 = 草稿（快速出图，由空闲收敛兜底正确性）
         assert_eq!(req.kind, CompileKind::Quick);

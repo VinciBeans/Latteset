@@ -77,12 +77,15 @@ export const commands = {
 	 *  这里只做 DTO 映射，并在"完全拿不到映射"时结合文件系统状态补一句更准确的话。
 	 */
 	synctexInverse: (page: number, x: number | null, y: number | null) => typedError<InverseResultDto, CmdError>(__TAURI_INVOKE("synctex_inverse", { page, x, y })),
-	getSettings: () => typedError<Settings, CmdError>(__TAURI_INVOKE("get_settings")),
+	getSettings: () => typedError<Settings_Serialize, CmdError>(__TAURI_INVOKE("get_settings")),
 	/**
-	 *  局部更新（modules.md §6）：mode/debounce/timeout/engine → 全局文件；
+	 *  局部更新（modules.md §6）：mode/debounce/timeout/tectonic → 全局文件；
 	 *  root_file → 项目覆盖文件；随后重算有效设置并广播 settings-changed。
+	 * 
+	 *  补丁**整体透传**给 core 的 [`apply_patch`]：`dismiss_notice` 之类的列表操作没有 DTO 之外的
+	 *  特殊处理，命令面只负责"root_file 走项目覆盖、其余走全局设置"这一层分流，别在这里再实现一遍。
 	 */
-	updateSettings: (patch: SettingsPatch_Deserialize) => typedError<Settings, CmdError>(__TAURI_INVOKE("update_settings", { patch })),
+	updateSettings: (patch: SettingsPatch_Deserialize) => typedError<Settings_Serialize, CmdError>(__TAURI_INVOKE("update_settings", { patch })),
 	/**
 	 *  本次构建是否编入了 Tectonic **库形态**（`tectonic-lib` 特性）。
 	 * 
@@ -91,23 +94,12 @@ export const commands = {
 	 */
 	libFormAvailable: () => __TAURI_INVOKE<boolean>("lib_form_available"),
 	/**
-	 *  引擎清单（roadmap ㊻）：**顺序、名字、说明与本机可用性都由后端给** —— 前端不再各写一份。
-	 * 
-	 *  - 可用性 = PATH 上找得到该引擎需要的可执行文件（`latteset_infra::probe`，只查文件、不起进程）；
-	 *  - Tectonic 额外认一条"库形态已编入"（库内嵌不调外部 `tectonic.exe`，见 ADR-0012）；
-	 *  - `LATTESET_TEX_ENGINES=xelatex,tectonic` 可**覆盖清单与顺序**（CI / 裁剪发布用），
-	 *    但它不能让不可用的引擎变可用（可用性是探测出来的事实）。
-	 * 
-	 *  不缓存：一次面板打开几趟目录查询，比缓存失效的复杂度便宜得多。
-	 */
-	listEngines: () => __TAURI_INVOKE<EngineInfo[]>("list_engines"),
-	/**
 	 *  当前**实际**会用的引擎形态。
 	 * 
 	 *  **判定只做一次、就在后端**：这里直接调用 runner 用的那个纯函数
 	 *  （[`latteset_core::settings::TectonicSettings::use_library_form`]），所以状态栏不可能与编译实际
-	 *  行为不一致。前端**不得**从 `compile.engine` 自己推形态 —— `LATTESET_TECTONIC_LIB` 能压过设置，
-	 *  只看设置会报出与实际不符的形态。
+	 *  行为不一致。前端**不得**自己推形态 —— `LATTESET_TECTONIC_LIB` 能压过设置，只看设置会报出与
+	 *  实际不符的形态。
 	 */
 	engineForm: () => typedError<EngineFormDto, CmdError>(__TAURI_INVOKE("engine_form")),
 	/**
@@ -126,7 +118,7 @@ export const commands = {
 	 * 
 	 *  隔离（硬要求）：落点 `<项目>/tmp/snippet/<键>/`，**独立 project_root**、**不经调度器**
 	 *  （不产出 `compile-status`/`pdf-updated`，也不碰权威 `<stem>.pdf` 与主编译的 `tmp/main.*`）。
-	 *  形态：**Tectonic 专属**（ADR-0014）；非 Tectonic 形态下这条命令仍可用，但按 ADR 不做优化适配。
+	 *  引擎：Tectonic 唯一（ADR-0015），形态跟随设置（子进程 / 库内嵌）。
 	 */
 	compileMath: (text: string, offset: number) => typedError<MathPreviewDto, CmdError>(__TAURI_INVOKE("compile_math", { text, offset })),
 };
@@ -134,13 +126,14 @@ export const commands = {
 /** Events */
 export const events = {
 	compileErrors: makeEvent<CompileErrorsEvent>("compile-errors"),
+	compileNotice: makeEvent<CompileNoticeEvent>("compile-notice"),
 	compilePreview: makeEvent<CompilePreviewEvent>("compile-preview"),
 	compileProgress: makeEvent<CompileProgressEvent>("compile-progress"),
 	compileStatus: makeEvent<CompileStatusEvent>("compile-status"),
 	errorsUpdated: makeEvent<ErrorsUpdatedEvent>("errors-updated"),
 	filesChanged: makeEvent<FilesChangedEvent>("files-changed"),
 	pdfUpdated: makeEvent<PdfUpdatedEvent>("pdf-updated"),
-	settingsChanged: makeEvent<SettingsChangedEvent>("settings-changed"),
+	settingsChanged: makeEvent<SettingsChangedEvent_Deserialize>("settings-changed"),
 };
 
 /* Types */
@@ -161,6 +154,21 @@ export type CompileErrorsEvent = ErrorEntry[];
 
 /**  编译模式（docs/glossary.md：连续编译 / 保存触发编译）。 */
 export type CompileMode = "continuous" | "on_save";
+
+/**
+ *  编译**进行中**的提示（ADR-0015 决策 4：能力边界要**显式说明**，不静默降级）。
+ * 
+ *  典型来源：runner 检出文档的构建步骤需要外部工具——biber 由引擎**调用外部程序**（本机缺失/版本与
+ *  bundle 内 biblatex 不匹配时这一步会失败），makeindex / glossaries 则**不会被自动运行**（那一步被跳过）。
+ *  经 `CompileProgress::notice` 上报一句话，前端按"提示"样式展示（状态栏/报告面板）。
+ * 
+ *  注意它**不是错误本身**：被跳过的步骤（索引/术语表）编译仍可能成功；biber 失败时另有内容错误入口。
+ * 
+ *  与 `compile-errors` 分开：那是致命错误的中间态，这是能力边界的告知。
+ */
+export type CompileNoticeEvent = {
+	message: string,
+};
 
 /**  编译阶段（modules.md §2.5 事件契约）。 */
 export type CompilePhase = "queued" | "running" | "success" | "failed";
@@ -209,7 +217,6 @@ export type CompileSettings = {
 	mode: CompileMode,
 	debounce_ms: number,
 	timeout_secs: number,
-	engine: Engine,
 	/**
 	 *  新建**第一个** `.tex` 时弹「新手向导」（roadmap ㊺ §6.13.1-A）：选文档语言/类型/标题，
 	 *  直接生成一份能编译的最小骨架。
@@ -267,10 +274,14 @@ export type DiagnosisKind =
 "missing_font" | 
 /**  ctex 字体集不存在（`fontset=` 取值错）。 */
 "missing_fontset" | 
-/**  引擎不匹配：文档需要 XeLaTeX/LuaLaTeX，当前跑的是 pdfLaTeX（或反之）。 */
-"engine_mismatch" | 
-/**  需要本产品不支持的引擎（如日文 pLaTeX/upLaTeX）。 */
-"unsupported_engine" | 
+/**
+ *  **构建需要外部工具**：biber / makeindex / glossaries（ADR-0015 第 4 条）。
+ * 
+ *  三者的实际形态不同（2026-11 复验）：**biber 会被引擎调用**（`note: Running external tool biber`），
+ *  缺它或版本与 bundle 内 biblatex 不匹配时这一步失败；makeindex/glossaries **不会被自动运行**。
+ *  检出即如实说明并给出可行动出路，**不静默降级、不自动切回别的工作流**。
+ */
+"unsupported_tool" | 
 /**  未定义控制序列。 */
 "undefined_control_sequence" | 
 /**  组未闭合（`File ended while scanning use of ...`）。 */
@@ -332,21 +343,9 @@ export type DocLanguage =
 /**  英文（标准类：`article` / `report` / `book` / `beamer`）。 */
 "english";
 
-/**  TeX 引擎（默认 xelatex，见 design.md）。 */
-export type Engine = "xelatex" | "pdflatex" | "lualatex" | 
-/**
- *  Tectonic（2026-09 引入；方案见 [tectonic-library-plan.md](../../../docs/archive/tectonic-library-plan.md)；
- *  计划期的一次性集成方案已归档到 `docs/archive/tectonic-integration-plan.md`）。
- * 
- *  形态 = **子进程驱动官方 `tectonic.exe`**（路线①，`docs/archive/research/tectonic-test-plan.md` §1.2 的 D2 裁决）：
- *  它自带 bundle、**不读用户 TeX Live**，自己出 PDF（`writes_xdv() == false`）⇒ 页级复用 A/B/C
- *  在该引擎下**不可用**（`page_hashes` 恒空 → 前端按"无法判定"保守全量刷新，A 无对应物）。
- */
-"tectonic";
-
 /**  引擎形态（库形态方案 §6 P7 的「状态栏可见形态位」）。 */
 export type EngineForm = 
-/**  子进程档：`latexmk` 驱动 xelatex/lualatex/pdflatex，或直调 `tectonic.exe`。 */
+/**  子进程档：外部 `tectonic` 可执行文件。 */
 "subprocess" | 
 /**  Tectonic **库内嵌**。 */
 "lib" | 
@@ -355,25 +354,13 @@ export type EngineForm =
 
 /**  状态栏用的「实际形态」载荷。 */
 export type EngineFormDto = {
+	/**  引擎名（恒为 [`latteset_core::types::ENGINE_ID`]）：状态栏显示用，前端不写死字面量。 */
+	engine: string,
 	form: EngineForm,
 	/**  形态位是否由 `LATTESET_TECTONIC_LIB` 强制（**它压过设置**，所以设置面选子进程也可能是库形态）。 */
 	env_forced: boolean,
 	/**  本次构建是否编入库形态。 */
 	lib_compiled_in: boolean,
-};
-
-/**  清单里的一项（命令面 DTO，前端只渲染）。 */
-export type EngineInfo = {
-	/**  引擎 id（与设置里存的值同一个字面量）。 */
-	id: Engine,
-	/**  选项栏里显示的名字。 */
-	label: string,
-	/**  一句话说明。 */
-	hint: string,
-	/**  本机/本次构建能不能用它编译。 */
-	available: boolean,
-	/**  **不可用时**给一句可行动的原因（可用时为 `None`）。 */
-	reason: string | null,
 };
 
 /**  错误列表条目（modules.md §4 契约）。 */
@@ -454,6 +441,24 @@ export type MathPreviewDto = {
 };
 
 /**
+ *  设置层的一次性提示（状态栏 / 设置面板展示，用户可 dismiss）。
+ * 
+ *  存在的理由：有些调整**没有可迁移的等价字段**（例如 v2 删掉了引擎设置），只能如实告知
+ *  "原设置已忽略"。做成数据而不是一次性弹窗，是因为它要跨重启存活到用户看见为止——
+ *  dismiss 后按 `id` 从列表里移除（[`super::merge::apply_patch`]）。
+ */
+export type Notice = {
+	/**  稳定标识（dismiss 按它移除；同一 id 不会重复出现）。 */
+	id: string,
+	level: NoticeLevel,
+	/**  给用户看的一句话。 */
+	message: string,
+};
+
+/**  一次性提示的级别（前端据此选样式：info = 中性告知，warning = 需要注意）。 */
+export type NoticeLevel = "info" | "warning";
+
+/**
  *  文档大纲节点（get_outline 命令输出；解析逻辑见 [`crate::outline`]，2026-09-03 从
  *  前端 `src/stores/outline.ts` 下沉，语义等价、单测锁定）。
  */
@@ -512,18 +517,13 @@ export type ProjectInfo = {
 };
 
 /**  合并后的有效设置（全局 + 项目覆盖）。 */
-export type Settings = {
-	schema_version: number,
-	compile: CompileSettings,
-	/**  Tectonic 形态与资源（全局；见 [`TectonicSettings`] 的说明）。 */
-	tectonic?: TectonicSettings,
-	/**  界面（全局；`#[serde(default)]` ⇒ 旧 settings.json 没有 `ui` 也能读）。 */
-	ui?: UiSettings,
-	/**  根文件手动覆盖（探测结果的逃生门，ADR-0009）。 */
-	root_file: string | null,
-};
+export type Settings = Settings_Serialize | Settings_Deserialize;
 
-export type SettingsChangedEvent = Settings;
+export type SettingsChangedEvent = SettingsChangedEvent_Serialize | SettingsChangedEvent_Deserialize;
+
+export type SettingsChangedEvent_Deserialize = Settings_Deserialize;
+
+export type SettingsChangedEvent_Serialize = Settings_Serialize;
 
 /**
  *  设置局部更新（update_settings 命令载荷，modules.md §6）。
@@ -541,12 +541,13 @@ export type SettingsPatch_Deserialize = {
 	mode?: CompileMode | null,
 	debounce_ms?: number | null,
 	timeout_secs?: number | null,
-	engine?: Engine | null,
 	/**
 	 *  新建向导开关（roadmap ㊺ §6.13.1-A）：`None` = 不动。**全局**设置，无项目覆盖
 	 *  （它是"界面要不要拦一下"，与具体项目无关）。
 	 */
 	new_file_wizard?: boolean | null,
+	/**  关掉一条一次性提示（[`Notice::id`]）：`None` = 不动；空串 / 未知 id 无害。 */
+	dismiss_notice?: string | null,
 	root_file?: string | null,
 	/**  引擎形态（Tectonic 库内嵌）：`None` = 不动。 */
 	lib_form?: boolean | null,
@@ -572,12 +573,13 @@ export type SettingsPatch_Serialize = {
 	mode?: CompileMode | null,
 	debounce_ms?: number | null,
 	timeout_secs?: number | null,
-	engine?: Engine | null,
 	/**
 	 *  新建向导开关（roadmap ㊺ §6.13.1-A）：`None` = 不动。**全局**设置，无项目覆盖
 	 *  （它是"界面要不要拦一下"，与具体项目无关）。
 	 */
 	new_file_wizard?: boolean | null,
+	/**  关掉一条一次性提示（[`Notice::id`]）：`None` = 不动；空串 / 未知 id 无害。 */
+	dismiss_notice?: string | null,
 	root_file?: string | null,
 	/**  引擎形态（Tectonic 库内嵌）：`None` = 不动。 */
 	lib_form?: boolean | null,
@@ -592,6 +594,48 @@ export type SettingsPatch_Serialize = {
 	cache_dir?: string | null,
 	/**  界面主题（roadmap ⑩）：`None` = 不动。 */
 	theme?: UiTheme | null,
+};
+
+/**  合并后的有效设置（全局 + 项目覆盖）。 */
+export type Settings_Deserialize = {
+	/**
+	 *  schema 版本。
+	 * 
+	 *  `#[serde(default)]` 是**兜底**：极老的 `settings.json` 可能没有这个键，缺键不该让整份
+	 *  配置解析失败（用户设置全丢）。真正的 v1 → v2 迁移在 infra 的存储入口完成（先读 Value 判版本，
+	 *  不依赖这个字段）；这里只保证"缺键也能读出一个可用对象"。
+	 */
+	schema_version?: number,
+	compile: CompileSettings,
+	/**  Tectonic 形态与资源（全局；见 [`TectonicSettings`] 的说明）。 */
+	tectonic?: TectonicSettings,
+	/**  界面（全局；`#[serde(default)]` ⇒ 旧 settings.json 没有 `ui` 也能读）。 */
+	ui?: UiSettings,
+	/**  一次性提示（见 [`Notice`]）；空表不落盘。 */
+	notices?: Notice[],
+	/**  根文件手动覆盖（探测结果的逃生门，ADR-0009）。 */
+	root_file: string | null,
+};
+
+/**  合并后的有效设置（全局 + 项目覆盖）。 */
+export type Settings_Serialize = {
+	/**
+	 *  schema 版本。
+	 * 
+	 *  `#[serde(default)]` 是**兜底**：极老的 `settings.json` 可能没有这个键，缺键不该让整份
+	 *  配置解析失败（用户设置全丢）。真正的 v1 → v2 迁移在 infra 的存储入口完成（先读 Value 判版本，
+	 *  不依赖这个字段）；这里只保证"缺键也能读出一个可用对象"。
+	 */
+	schema_version: number,
+	compile: CompileSettings,
+	/**  Tectonic 形态与资源（全局；见 [`TectonicSettings`] 的说明）。 */
+	tectonic: TectonicSettings,
+	/**  界面（全局；`#[serde(default)]` ⇒ 旧 settings.json 没有 `ui` 也能读）。 */
+	ui: UiSettings,
+	/**  一次性提示（见 [`Notice`]）；空表不落盘。 */
+	notices?: Notice[],
+	/**  根文件手动覆盖（探测结果的逃生门，ADR-0009）。 */
+	root_file: string | null,
 };
 
 /**  SyncTeX 反向定位结果（PDF → 源码）。 */

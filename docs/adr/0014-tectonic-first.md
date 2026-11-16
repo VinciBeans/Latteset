@@ -57,6 +57,6 @@
 
 **新增的配套（同批落地，roadmap ㊻）**：引擎清单改为**后端给**（顺序/名字/说明/**本机可用性**），`LATTESET_TEX_ENGINES` 可覆盖；默认值改成"本机没装 tectonic.exe 就编不过"这种话，只有配上"面板上看得见哪个引擎可用"才算如实 —— 这是本修订的必要条件，不是顺带做的。
 
-**已知代价与待办**：① 新装用户若本机既没有 `tectonic.exe`、本次构建又没编入库形态，**第一次编译会失败**（错误文案已可行动：「无法启动 tectonic（Tectonic 需单独安装、且要在 PATH 里）」；面板上该引擎会显示为不可用并给出原因）；② 首次编译需要联网下载宏包集（约 60 MB）——文案已在引擎说明里；③ Tectonic 形态不支持 `biber`/`makeindex` 这类外部工具（检出时会提示）。
+**已知代价与待办**：① 新装用户若本机既没有 `tectonic.exe`、本次构建又没编入库形态，**第一次编译会失败**（错误文案已可行动：「无法启动 tectonic（Tectonic 需单独安装、且要在 PATH 里）」；面板上该引擎会显示为不可用并给出原因）；② 首次编译需要联网下载宏包集（约 60 MB——⚠ **2026-11 实测修正**：该数字是"按需取包后的缓存量级"，完整 bundle tar ≈2.88 GB，见 [ADR-0016](./0016-ship-bundle-offline.md) 文末）；③ Tectonic 形态不支持 `biber`/`makeindex` 这类外部工具（检出时会提示）。⚠ **2026-11 实测修正**：biber 由 Tectonic **调用本机二进制**，缺失或与 biblatex 版本不匹配才失败，产品只是不自带；真正"不自动跑"的是 makeindex/glossaries（见 [ADR-0015](./0015-tectonic-only-embedded-engine.md) 第 4 条澄清）。
 
 **本修订不追溯修改的内容**：`docs/archive/research/` 下的调研与实测报告（模板语料调研、Tectonic 测试计划等）保留当时的"默认 XeLaTeX"表述 —— 它们是**带日期的证据**，不是现状描述；现状以本 ADR + `docs/dev/modules.md` §12.2 为准。
