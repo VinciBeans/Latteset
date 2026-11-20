@@ -499,8 +499,21 @@ mod tests {
         assert_eq!(s.compile.debounce_ms, g.compile.debounce_ms);
     }
 
+    /// 项目覆盖文件固定在 `<项目根>/.latteset/settings.json`。
+    ///
+    /// 断言必须平台中立：Unix 上 `\` **不是**路径分隔符，拿 `C:\` 字面量与
+    /// join 结果比较会在 Linux CI 上必红（`C:\proj/.latteset/settings.json`
+    /// ≠ `C:\proj\.latteset\settings.json`）。Windows 绝对根的"反斜杠原样保留"
+    /// 单独用 `#[cfg(windows)]` 断言。
     #[test]
     fn project_overrides_path_is_dot_latteset_settings() {
+        let root = Path::new("proj");
+        assert_eq!(
+            project_overrides_path(root),
+            root.join(".latteset").join("settings.json")
+        );
+
+        #[cfg(windows)]
         assert_eq!(
             project_overrides_path(Path::new(r"C:\proj")),
             PathBuf::from(r"C:\proj\.latteset\settings.json")
