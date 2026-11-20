@@ -1,19 +1,21 @@
-//! Tectonic **库形态**引擎（路径 B：引擎 crate + 自持输出层）。
+//! Tectonic **内嵌引擎**（阶段②起是**唯一形态**；ADR-0015 决策 2 的落地）。
 //!
-//! 权威依据：[`docs/archive/tectonic-library-plan.md`](../../../docs/archive/tectonic-library-plan.md) §3.2（落点裁决）、
-//! §3.4（选定路径 B 的九步序列）、§4.2 的 X-5（本 crate 是外部依赖/C 链的**第二个落点**，
+//! 权威依据：`docs/adr/0015-tectonic-only-embedded-engine.md`、
+//! [`docs/archive/tectonic-library-plan.md`](../../../docs/archive/tectonic-library-plan.md) §3.2
+//! （落点裁决）、§3.4（路径 B 的九步序列）、§4.2 的 X-5（本 crate 是外部依赖/C 链的**第二个落点**，
 //! 对 ADR-0010 的结构性偏离）与 `docs/adr/0012-tectonic-library-form-engine.md`。
 //!
-//! 为什么单独一个 crate（方案 §3.2 的候选①）：本 crate 的依赖闭包**必然**把 C/C++ 链拉进来
+//! 为什么单独一个 crate：本 crate 的依赖闭包**必然**把 C/C++ 链拉进来
 //! （freetype2 / graphite2 / harfbuzz / ICU 走外部探测，探测失败即 build script panic ⇒ 需要
-//! vcpkg）。放进 `latteset-infra` 会让**整仓默认构建**永远需要 vcpkg，所以它必须是独立 workspace 成员，
-//! 并由根 `Cargo.toml` 的 `default-members` 排除在默认构建之外。
+//! vcpkg）。放进 `latteset-infra` 会让 core/infra 的测试也被迫拖上 C 链，所以它保持独立 workspace 成员；
+//! 但自阶段②起它**不再被排除在默认构建之外**（所有产品构建都需要 vcpkg，见
+//! `scripts/with-tectonic-lib.ps1`）。
 //!
 //! 模块：
 //! - [`io`]：`TectonicIo`（`IoProvider`）——内存直喂输入 + 项目磁盘 + bundle 兜底 + 输出捕获；
 //! - [`status`]：`ProgressStatus`（`StatusBackend`）——把引擎状态映射到 `CompileProgress` 与日志；
 //! - [`bundle`]：bundle 源解析（`detect_bundle`）与分类失败文案；
-//! - [`runner`]：`TectonicLibRunner`（与 `LatexmkRunner` 同一个 `CompileRunner` trait）；
+//! - [`runner`]：`TectonicLibRunner`（实现 `CompileRunner`）；
 //! - [`synctex`]：同步数据的**主输入记录修补**（roadmap ㊷ —— 引擎在库形态下把主文件记成 `texput`）。
 //!
 //! **线程模型**（方案 §3.4 末段）：引擎有进程内全局互斥（`ENGINE_LOCK`），编译必须在
@@ -31,7 +33,7 @@ pub use io::{CANCEL_MESSAGE, IoCapture, TectonicIo, format_file_name};
 pub use runner::TectonicLibRunner;
 pub use status::ProgressStatus;
 
-/// TeX format 名（子进程档用 Tectonic 默认的 `latex`；上游 `src/config.rs:140-164`）。
+/// TeX format 名（上游 `src/config.rs:140-164`；本引擎没有"子进程档"，改由本 crate 自管 format）。
 ///
 /// io 层（format 缓存文件名）与 runner（`TexEngine::process` 的 format 参数）共用同一个常量。
 pub const FORMAT_NAME: &str = "latex";
@@ -41,34 +43,18 @@ pub const FORMAT_NAME: &str = "latex";
 /// 1. **重跑判据**（`runner::rerun_snapshot`）：这些文件在下一趟会被 LaTeX 读回来
 ///    （`.aux` 的引用/标签编号、`.toc` 的页码、`.bbl` 的条目……），它们变了就说明还没稳定；
 /// 2. **上一趟产物的输入资格**（`io::TectonicIo::disk_path`）：只有这几类允许从 `tmp/` 读
-///    **上一次编译**留下的副本 —— latexmk 正是靠这一点让 Quick 档的目录/引用**不倒退**。
+///    **上一次编译**留下的副本 —— "单趟编译不倒退"正是靠这一点（与 latexmk 读旧 `.aux` 同一思路）。
 ///    刻意不把 `.pdf`/`.xdv` 放进来：它们不该被当成输入（否则 `\includegraphics{main.pdf}`
 ///    这类写法会读到我们自己的产物）。
 pub const RERUN_EXTENSIONS: &[&str] = &[
     ".aux", ".toc", ".lof", ".lot", ".out", ".bbl", ".nav", ".snm", ".idx", ".ind", ".glo", ".gls",
 ];
 
-/// 选形态的**运行期**开关（默认关闭 ⇒ 子进程形态，方案 §3.5「默认」行）。
-///
-/// 设置面（全局设置 + 项目覆盖的形态位字段）属后续阶段（方案 §3.5 / T13 收口），本阶段先用
-/// 环境变量做运行期选择：`LATTESET_TECTONIC_LIB=1`（`0/false/no/off` 强制关闭）。
-/// **不回退**（D1）：本开关只决定装配哪个 runner，运行中失败不自动切回子进程。
-pub const LIB_FORM_ENV: &str = "LATTESET_TECTONIC_LIB";
-
-/// 读 [`LIB_FORM_ENV`]，返回「是否启用库形态」。认不出的取值按**未启用**处理。
-pub fn lib_form_enabled() -> bool {
-    match std::env::var(LIB_FORM_ENV) {
-        Ok(v) => matches!(v.trim().to_ascii_lowercase().as_str(), "1" | "true" | "yes" | "on"),
-        Err(_) => false,
-    }
-}
-
-/// bundle 来源的**运行期**配置（与 [`LIB_FORM_ENV`] 同一层；设置面的形态位/bundle 位属后续收口，
-/// 方案 §3.5）。
+/// bundle 来源的**运行期**配置（设置面「引擎 → bundle 源」是产品口径；环境变量用于复核/CI）。
 ///
 /// 取值：
-/// - **未设 / 空串** → [`BundleSource::Default`]（上游兜底地址，**需要 `network-bundle` 特性**，
-///   否则会在打开阶段显式报错——不静默、不回退，D1）；
+/// - **未设 / 空串** → [`BundleSource::Default`]（上游兜底地址，需要已启用的 `network-bundle`
+///   特性 = 联网取包；打不开时 [`bundle::open_bundle`] 会给出指向设置面板/本变量的可行动文案）；
 /// - `none` / `off` / `0` / `false` → [`BundleSource::None`]（只测引擎路径的反例口径）；
 /// - 其它 → [`BundleSource::Explicit`]。**必须写 `file:///…` 绝对 URL 或相对路径**：
 ///   `E:\…` / `E:/…` 会被上游当 URL scheme 解析成 `Ok(None)`（方案 §5.6 LB-4 实测）。
@@ -107,16 +93,14 @@ pub fn cache_dir_from_env() -> Option<std::path::PathBuf> {
     }
 }
 
-/// 页哈希支持位（方案 §5.3 / 任务判据 6）：**已支持**（2026-09-15，任务 3）。
+/// 页哈希支持位（方案 §5.3 / 任务判据 6）：**已支持**。
 ///
-/// 路径 B 的 XDV 本来就在我们的捕获表里（`main.xdv`），所以**连盘都不用读**：直接把那份字节喂给
-/// [`latteset_core::xdv::page_hashes`] —— 与子进程档**同一个函数、同一份数据** ⇒ 两个形态产出的
-/// 页哈希**逐页可比**。这一点很重要：若两套口径不同，用户换形态时前端会把整篇判成"变了"（全量重绘）。
-///
-/// 由此库形态档也能吃 **A/B/C** 三个功能点：**A** = 页逐页相同 + 项目根已有 PDF ⇒ 跳过
-/// `XdvipdfmxEngine` 转换与拷贝（只对 Quick，与子进程档同闸门）；**B/C** 由前端按
-/// `changed_pages` 决定是否重载/只重绘变化页。判据缓存 = `tmp/<stem>.tectonic.pages`
-/// （文件名段恒为 [`latteset_core::types::ENGINE_ID`] 的值，已知债 #25；口径定义在 core，两档共用）。
+/// XDV 就在捕获表里（`<stem>.xdv`），所以**连盘都不用读**：直接把那份字节喂给
+/// [`latteset_core::xdv::page_hashes`] —— 与 headless/GUI 两侧**同一个函数**（口径定义在 core）。
+/// 由此本引擎也能吃 **A/B/C** 三个功能点：**A** = 页逐页相同 + 项目根已有 PDF ⇒ 跳过
+/// `XdvipdfmxEngine` 转换与拷贝（只对 Quick）；**B/C** 由前端按 `changed_pages` 决定是否重载/只重绘变化页。
+/// 判据缓存 = `tmp/<stem>.tectonic.pages`（文件名段恒为 [`latteset_core::types::ENGINE_ID`] 的值，
+/// 已知债 #25）。
 ///
 /// 空表仍然只表示**无法判定**（XDV 缺失/损坏）——调用方必须保守全量刷新，不是"零页"。
 pub const PAGE_HASH_SUPPORTED: bool = true;
@@ -134,20 +118,25 @@ pub const PAGE_HASH_SUPPORTED: bool = true;
 /// 于是"加了 `\cite`"这类编辑要等到空闲收敛才解析出来）。
 ///
 /// 检出信号是 **`.aux` 里的 `\bibdata`**，不是扫源码找 `\cite`：`\cite` 配 `thebibliography`
-/// 时不需要 BibTeX。**biber 仍不支持**（biblatex 的外部工具），见 [`BIBER_PASS_SUPPORTED`]。
+/// 时不需要 BibTeX。**biber 仍不支持**（biblatex 需要外部 biber，而本引擎不运行外部工具；
+/// `backend=bibtex` 走内建 BibtexEngine），见 [`BIBER_PASS_SUPPORTED`]。
 pub const BIB_PASS_SUPPORTED: bool = true;
 
 /// **biber 支持位**：本阶段 `false`。
 ///
-/// biblatex 的检出信号是 `<主文件名>.run.xml`（上游 `check_biber_requirement`），而它要跑
-/// **外部 `biber` 二进制**——库形态不跑外部工具（与"不重造引擎驱动"同一条取向）。
-/// 检出时 runner 会显式 `warn!`（[`BIBER_PASS_MISSING_NOTE`]），不假装引用解析了。
+/// biblatex 的检出信号是 `<主文件名>.run.xml` 里**真的**写 `<binary>biber</binary>`
+/// （上游 `check_biber_requirement`；`backend=bibtex` 也写该文件但请求的是 bibtex，不算），
+/// 而 biber 是**外部程序**——**内嵌引擎不运行外部工具**（没有上游子进程驱动的
+/// `external_tool_pass`），所以 biber 在 PATH 上也不会被调用、不产 `.bbl`（阶段② T9 真机实测）。
+/// 检出时 runner 会显式 `warn!` 并通过 `CompileProgress::notice` 给用户可行动出路
+/// （[`BIBER_PASS_MISSING_NOTE`]），不假装引用解析了。
 pub const BIBER_PASS_SUPPORTED: bool = false;
 
-/// 检出 biblatex/biber 但本轮不跑 biber 时的警告文案（如实收窄声明，不静默）。
+/// 检出 biblatex/biber 但本引擎不运行 biber 时的警告文案（如实收窄声明，不静默）。
 pub const BIBER_PASS_MISSING_NOTE: &str =
-    "库形态本轮不跑 biber（需要外部 `biber` 二进制，biblatex 检出信号 = `<stem>.run.xml`）\
-     ⇒ 该文档的引用/参考文献表**可能未解析**；用 `\\bibliography` + BibTeX 的文档不受影响";
+    "内嵌引擎不运行外部 biber（biblatex 检出信号 = `<stem>.run.xml` 里的 `<binary>biber</binary>`）\
+     ⇒ 该文档的引用/参考文献表**可能未解析**（不会生成 `.bbl`）；改用 \
+     `\\usepackage[backend=bibtex]{biblatex}` 或传统 `\\bibliography` + 内建 BibTeX 的文档不受影响";
 
 
 /// **收敛支持位**：**有条件支持**（2026-09-15）。
@@ -156,14 +145,15 @@ pub const BIBER_PASS_MISSING_NOTE: &str =
 /// `.bbl`…）与上一趟是否相同，不同就再跑，上限 6 趟（上游 `DEFAULT_MAX_TEX_PASSES`）。
 ///
 /// **编辑触发的 `Quick` 请求也走这条判定**（2026-09-15）：原先它无条件单趟即停，把"引用/目录落后
-/// 一趟"当成草稿的语义；但库形态里重跑循环与中间产物指纹本来就在，"这一趟落没落后"是**可判定**的。
+/// 一趟"当成草稿的语义；但内嵌引擎里重跑循环与中间产物指纹本来就在，"这一趟落没落后"是**可判定**的。
 /// 现在它有一个预算（2000 ms，与前端空闲收敛的 `DELAY_MS` 同值；上限 3 趟）：预算内跑到稳定
 /// 就按**实际结果**报 `Full` ⇒ 前端不亮「引用待更新」、也不再排一次空闲收敛的 Full；超预算则停在
 /// 草稿态，行为与 ㉘ 原先完全一致（大文档单趟即超预算 ⇒ 第 1 趟之后即停）。
 ///
-/// **仍会退回 `Quick` 的两种情形**（不得虚报 —— 报 `Full` 就等于告诉用户"引用/目录已就绪"）：
+/// **仍会退回 `Quick` 的情形**（不得虚报 —— 报 `Full` 就等于告诉用户"引用/目录已就绪"）：
 /// 1. 预算内没跑到稳定（含跑满 `MAX_TEX_PASSES`）；
-/// 2. 文档**要我们跑不了的外部工具** —— biber（`<stem>.run.xml`）/ makeindex（`.idx`）。
+/// 2. 文档**要我们跑不了的外部工具** —— biber（`.run.xml` 里的 `<binary>biber</binary>`）/
+///    makeindex（`.idx`）/ glossaries（`.glo`）。
 ///
 /// 第 2 条是关键：带 biber 的文档我们根本没解析引用 ⇒ 必须退回 `Quick`，让 ㉘ 的提示亮着。
 pub const CONVERGENCE_SUPPORTED: bool = true;

@@ -11,8 +11,8 @@
 //!     --root <项目目录> [--runs 5] [--quick] [--json <out.json>]
 //! ```
 //!
-//! bundle / 缓存目录沿用产品那三个环境变量（[`crate::BUNDLE_ENV`] / [`crate::CACHE_ENV`] /
-//! [`crate::LIB_FORM_ENV`]），这样基准量与产品实际行为是同一套配置。
+//! bundle / 缓存目录沿用产品那两个环境变量（`LATTESET_TECTONIC_BUNDLE` / `LATTESET_TECTONIC_CACHE`），
+//! 这样基准量与产品实际行为是同一套配置。
 //!
 //! **它不是产品路径**：`FileSystem` 用一个 `std::fs` 直读的极简实现（产品用 `latteset-infra`
 //! 的 `TokioFs`）—— 但 runner 在库形态下只经 `read_bytes` 读根文件，其余输入走自持 I/O 层，

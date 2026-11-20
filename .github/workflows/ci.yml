@@ -1,13 +1,16 @@
 name: CI
 
-# 按 docs/archive/architecture.md §8 / ADR-0003 落地：
-#   cargo test（core + infra + headless）+ vue-tsc --noEmit + Windows runner tauri build 冒烟（验证 NSIS 打包链路）。
+# 按 docs/archive/architecture.md §8 / ADR-0003 + ADR-0015 决策 2 落地：
+#   ① Ubuntu `check`：前端质量门 + core/infra 纯 Rust 测试（不碰 native C 链）；
+#   ② Windows `build-windows`：**内嵌 Tectonic 是唯一形态** ⇒ 装 vcpkg 六个端口，跑全量 Rust
+#      测试（含 headless/server 与内嵌 crate）+ NSIS 打包冒烟（验证 ADR-0003 分发链路）。
+# 阶段②起不再有单独的 `build-windows-tectonic-lib` 档：内嵌档就是默认档（D5）。
 # 仓库真源：**GitHub 为 truth、Gitee 为镜像**（见 .github/workflows/sync-gitee.yml 与 docs/README.md）；
 # 早前这里写的"origin 是 Gitee"已过期（2026-09 审计核对 `git remote -v`）。
 on:
   push:
     branches: [master]
-    # 版本 tag 也触发：库形态的发布构建档只在 tag/手动时跑（见下）。
+    # 版本 tag 与 push 走同一套档（已没有"只在 tag/手动跑的库形态发布档"）。
     tags: ['v*']
   pull_request:
     branches: [master]
@@ -15,7 +18,7 @@ on:
 
 jobs:
   check:
-    name: Type-check & core tests
+    name: Type-check & core tests (Linux)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -46,20 +49,18 @@ jobs:
       - name: Core tests
         run: cargo test -p latteset-core
 
-      # infra（文件系统实现 / 监视 / 设置存储 / synctex 提供者 / 引擎 PATH 探测 / runner 的命令构造）。
-      # 2026-09 审计补：这条命令下 45 个用例此前**从未在 CI 执行**（AGENTS.md §5 却把它列为标准命令）。
-      # 真实 latexmk/synctex 的集成用例都带 #[ignore]，默认不跑；平台相关的断言已用 #[cfg(windows)] 隔离。
+      # infra（文件系统实现 / 监视 / 设置存储 / synctex 提供者）。阶段②删掉子进程 runner 后
+      # 这里只剩不依赖 native C 链的模块，Linux 可跑。
+      # 真实 TeX/内嵌编译的集成用例都带 #[ignore]，默认不跑。
       - name: Infra tests
         run: cargo test -p latteset-infra
 
-      # headless 第二入口（⑥）：Session + CLI 参数解析 + MCP stdio 全链路（含 test/mcp_stdio.rs）。
-      # 2026-09 审计补：此前同样零 CI 覆盖 —— 而**补上当天就跑红**：默认引擎改成 Tectonic 之后，
-      # mcp_stdio 里 `settings_get` 仍断言 "xelatex"（这条断言空了两个月没人发现）。
-      - name: Headless (CLI/MCP) tests
-        run: cargo test -p latteset-server
+      # ⚠ headless（latteset-server）用例自阶段②起**不在这里跑**：server 已非可选依赖内嵌
+      # Tectonic，Linux 上会去探测 pkg-config 的 C 链（R11 决策：挪到 Windows 档，不补 Linux
+      # 原生依赖）。对应步骤见 `build-windows` 的 `-Mode test`。
 
   build-windows:
-    name: Windows build (NSIS smoke)
+    name: "Windows build (embedded engine: tests + NSIS smoke)"
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
@@ -70,77 +71,65 @@ jobs:
           cache: npm
 
       - uses: dtolnay/rust-toolchain@stable
+      # 依赖图只剩一份（内嵌唯一），不再需要原库形态档的 `key: tectonic-lib`。
       - uses: Swatinem/rust-cache@v2
 
       - name: Install frontend dependencies
         run: npm ci
 
-      # Windows 首发平台完整打包冒烟：beforeBuildCommand 会自动跑前端 build，
-      # 产物含 NSIS 安装包（ADR-0003 分发路径）。真实 TeX 集成测试为 #[ignore]，不在此触发。
-      #
-      # ⚠ 这一档**不带** tectonic-lib：主产物保持零原生依赖，构建不需要 vcpkg。
-      #    带库形态的发布构建在下面 `build-windows-tectonic-lib` 一档。
-      - name: Tauri build (NSIS installer)
-        run: npm run tauri build
-
-  # Tectonic 库形态（路径 B，ADR-0012）是**正式的构建变体**：发布产物要同时具备两种形态
-  # （子进程 / 库内嵌，由设置面选），所以这一档必须在 CI 里存在 —— 否则用户装到的包根本没有库形态。
-  #
-  # 触发面刻意收窄（版本 tag / 手动 dispatch）：它要装整套 vcpkg 端口，冷构建约 +15–20 min
-  # （t4 §7 的参照），挂在每次 push 上会把常规反馈拖慢一个量级。
-  #
-  # 本档**只管"带库形态的发布构建能不能成"**：装依赖 → 产品自己的前置校验 → 库形态单测 →
-  # `tauri build --features tectonic-lib`。真编文档的端到端门禁不在这里 —— 它还要 bundle
-  # （目录 bundle 需自带 SHA256SUM）与网络口径，那两件在 P2/P3 的复核入口里做（见方案 §6）。
-  #
-  # ⚠ VCPKG_ROOT 只能在**步骤级**设（job 级 env 不允许引用 `runner` 上下文，用了会让整个
-  #    workflow 文件校验失败、0 秒红）；步骤间传递走 `$GITHUB_ENV`。
-  build-windows-tectonic-lib:
-    name: Windows build (tectonic-lib variant)
-    runs-on: windows-latest
-    if: github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/')
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 20
-          cache: npm
-
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
-        with:
-          # 库形态的依赖图与默认构建不同（多整棵 tectonic + C 链），单独一份缓存。
-          key: tectonic-lib
-
-      - name: Install frontend dependencies
-        run: npm ci
-
-      # vcpkg 检出 + 六个直接端口（传递依赖由 vcpkg 自己拉：brotli / bzip2 / dirent / expat / zlib）。
-      # 端口清单与本机验证过的 triplet 口径见 docs/archive/tectonic-library-plan.md §3.1.3。
-      - name: Setup vcpkg
+      # vcpkg 检出**钉 rev**（与 `.gitignore` 的复现命令、`test_file/tectonic-src/Cargo.toml` 的
+      # [package.metadata.vcpkg] rev 一致）：内嵌 Tectonic 的 C 链按这个 rev 的 ports 构建。
+      # ⚠ VCPKG_ROOT 只能在**步骤级**设（job 级 env 不允许引用 `runner` 上下文，用了会让整个
+      #    workflow 文件校验失败、0 秒红）；步骤间传递走 `$GITHUB_ENV`。
+      - name: Checkout vcpkg (pinned)
         shell: pwsh
         run: |
           $vcpkgRoot = Join-Path $env:RUNNER_TEMP 'vcpkg'
           git clone https://github.com/microsoft/vcpkg $vcpkgRoot
+          if ($LASTEXITCODE -ne 0) { throw "git clone vcpkg 失败（exit $LASTEXITCODE）" }
+          git -C $vcpkgRoot checkout a62ce77d56ee07513b4b67de1ec2daeaebfae51a
+          if ($LASTEXITCODE -ne 0) { throw "vcpkg checkout 失败（exit $LASTEXITCODE）" }
           & "$vcpkgRoot/bootstrap-vcpkg.bat" -disableMetrics
-          $env:VCPKG_DEFAULT_TRIPLET = 'x64-windows-static-release'
-          $env:VCPKG_DEFAULT_HOST_TRIPLET = 'x64-windows-static-release'
-          & "$vcpkgRoot/vcpkg.exe" install freetype harfbuzz graphite2 icu fontconfig libpng --triplet x64-windows-static-release
-          if ($LASTEXITCODE -ne 0) { throw "vcpkg install 失败（exit $LASTEXITCODE）" }
-          # 交给后续步骤（步骤级 env 才允许用 runner 上下文，所以走 GITHUB_ENV）。
+          if ($LASTEXITCODE -ne 0) { throw "vcpkg bootstrap 失败（exit $LASTEXITCODE）" }
           "VCPKG_ROOT=$vcpkgRoot" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
 
-      # 前置校验走产品自己的脚本（单一落点）——失败时给的是可执行文案，不是 build script panic。
-      - name: Check tectonic-lib prerequisites
+      # 冷装六个端口要数分钟，所以缓存 `installed/`（装好的静态库）与 `downloads/`（源码包）。
+      # key 含 triplet 与 pin rev ⇒ 换 rev / 换 triplet 自动失效、不会串味。
+      - name: Cache vcpkg installed ports
+        uses: actions/cache@v4
+        with:
+          path: |
+            ${{ runner.temp }}/vcpkg/installed
+            ${{ runner.temp }}/vcpkg/downloads
+          key: vcpkg-${{ runner.os }}-x64-windows-static-release-a62ce77d
+          restore-keys: |
+            vcpkg-${{ runner.os }}-x64-windows-static-release-
+
+      # 六个直接端口（传递依赖由 vcpkg 自己拉：brotli / bzip2 / dirent / expat / zlib）。
+      # 命中缓存时 vcpkg 直接判定"已安装"，只剩校验开销。
+      - name: Install vcpkg ports (Tectonic C chain)
+        shell: pwsh
+        run: |
+          $env:VCPKG_DEFAULT_TRIPLET = 'x64-windows-static-release'
+          $env:VCPKG_DEFAULT_HOST_TRIPLET = 'x64-windows-static-release'
+          & "$env:VCPKG_ROOT/vcpkg.exe" install freetype harfbuzz graphite2 icu fontconfig libpng --triplet x64-windows-static-release
+          if ($LASTEXITCODE -ne 0) { throw "vcpkg install 失败（exit $LASTEXITCODE）" }
+
+      # 前置校验走产品自己的唯一入口（单一落点）——失败时给的是可执行修复命令，
+      # 不是 vcpkg-rs / build script 的 panic。
+      - name: Check build prerequisites
         shell: pwsh
         run: ./scripts/with-tectonic-lib.ps1 -Mode check
 
-      - name: tectonic-lib unit tests
+      # 全量 Rust 测试（core / infra / headless-server / 内嵌 tectonic crate）。
+      # 原 Ubuntu 档的 headless 用例、原 `build-windows-tectonic-lib` 档的库形态单测都并到这里。
+      - name: Rust tests (all crates, embedded engine)
         shell: pwsh
         run: ./scripts/with-tectonic-lib.ps1 -Mode test
 
-      # 本档的**核心断言**：带库形态的发布构建成立（含 NSIS 打包）。
-      - name: Tauri build with the library form
+      # Windows 首发平台完整打包冒烟：内嵌形态是唯一形态，与本地开发走同一个入口
+      # （beforeBuildCommand 会自动跑前端 build，产物含 NSIS 安装包，ADR-0003）。
+      # 真实 TeX 集成测试为 #[ignore]，不在此触发。
+      - name: Tauri build (NSIS installer)
         shell: pwsh
-        run: ./scripts/with-tectonic-lib.ps1 -Mode build
+        run: ./scripts/with-tectonic-lib.ps1 -Mode tauri build

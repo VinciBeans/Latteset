@@ -1,12 +1,11 @@
 <!-- SettingsPanel（modules.md §6）：设置面板。
    编译三项（mode/debounce/timeout）→ 全局设置；root_file → 项目覆盖；
-   引擎页只剩 Tectonic 的**形态与资源**（子进程 / 库内嵌、bundle、cache）——
-   引擎本身不可选（ADR-0015：唯一引擎 = Tectonic）。
+   引擎页只剩 Tectonic 的**资源**（bundle、cache）——引擎本身不可选，驱动形态也固定为内嵌
+   （ADR-0015：唯一引擎 = Tectonic；v3 起不再有形态设置）。
    即改即存：store.update(patch) 后端写盘 + 广播 settings-changed，面板从 store 同步回显。 -->
 <script setup lang="ts">
 import { computed, onMounted, ref } from "vue";
 import { useSettingsStore } from "../stores/settings";
-import { ipc } from "../services/ipc";
 import type { CompileMode, UiTheme } from "../bindings";
 
 const emit = defineEmits<{ close: [] }>();
@@ -14,11 +13,11 @@ const emit = defineEmits<{ close: [] }>();
 const store = useSettingsStore();
 const settings = computed(() => store.settings);
 /**
- * 形态与资源。`tectonic` 在绑定里是**可选**字段（后端 `#[serde(default)]` 是为了让旧
- * settings.json 没有这个键时仍能加载升级）⇒ 这里补默认值，模板与逻辑里就不必到处写 `?.`。
+ * Tectonic 的资源（bundle / cache）。`tectonic` 在绑定里是**可选**字段（后端 `#[serde(default)]`
+ * 是为了让旧 settings.json 没有这个键时仍能加载升级）⇒ 这里补默认值，模板与逻辑里就不必到处写 `?.`。
  */
 const tectonic = computed(
-  () => settings.value?.tectonic ?? { lib_form: false, bundle: null, cache_dir: null },
+  () => settings.value?.tectonic ?? { bundle: null, cache_dir: null },
 );
 
 const MODES: { value: CompileMode; label: string; hint: string }[] = [
@@ -30,8 +29,8 @@ const MODES: { value: CompileMode; label: string; hint: string }[] = [
  * 设置分页（标签栏）。四类按"用户要解决的问题"分，而不是按字段所属模块：
  * - 外观：与文档无关的个人偏好；
  * - 编译：什么时候编、编多久（模式/防抖/超时）；
- * - 引擎（Tectonic）：**没有引擎可挑**（ADR-0015）；这一页只放 Tectonic 的形态与资源
- *   （子进程/库内嵌、bundle、cache），字段即 `lib_form` / `bundle` / `cache_dir`；
+ * - 引擎（Tectonic）：**没有引擎可挑**（ADR-0015），驱动形态也固定为内嵌；这一页只放
+ *   Tectonic 的资源（bundle、cache），字段即 `bundle` / `cache_dir`；
  * - 项目：只影响当前项目的覆盖项（根文件）。
  */
 const TABS = [
@@ -44,7 +43,7 @@ type TabId = (typeof TABS)[number]["id"];
 
 /**
  * 当前分页。放在**模块作用域**（不是 setup 内）：`v-if` 每次开关面板都会重建组件，
- * 组件内的 ref 会回到第一页——而"我刚改完形态，再打开还想看引擎页"是常态。
+ * 组件内的 ref 会回到第一页——而"我刚改完宏包集路径，再打开还想看引擎页"是常态。
  * 模块级变量只为"记住上次看的那页"，不进设置、不落盘（换次启动回到第一页可以接受）。
  */
 const activeTab = ref<TabId>("appearance");
@@ -183,7 +182,7 @@ async function resetDefaults() {
   snapshotInputs();
 }
 
-// ---------------------------------------------------------------- Tectonic 形态（⑫ 里程碑）
+// ---------------------------------------------------------------- Tectonic 资源（⑫ 里程碑）
 
 /**
  * 存储形态 → 展示形态。磁盘上 bundle 存的是上游认的 `file:///…`（见 core
@@ -196,20 +195,13 @@ function bundleDisplay(stored: string | null | undefined): string {
   return /^\/[A-Za-z]:/.test(rest) ? rest.slice(1) : rest;
 }
 
-/** 本次构建是否编入库形态：没编进来就禁用该选项（而不是让用户选了到编译时才炸）。 */
-const libAvailable = ref<boolean | null>(null);
 const bundleInput = ref("");
 /** 留空 = 用上游兜底网络地址（`None`）；`true` = 用本地目录 bundle。 */
 const bundleLocal = ref(false);
 const cacheInput = ref("");
-const formError = ref("");
+const resourceError = ref("");
 
-onMounted(async () => {
-  try {
-    libAvailable.value = await ipc.libFormAvailable();
-  } catch {
-    libAvailable.value = false;
-  }
+onMounted(() => {
   const t = tectonic.value;
   if (t) {
     bundleLocal.value = !!t.bundle;
@@ -217,17 +209,6 @@ onMounted(async () => {
     cacheInput.value = t.cache_dir ?? "";
   }
 });
-
-/** 形态切换：即点即存，**下一趟编译就生效**（runner 每趟读设置，不需要重启）。 */
-async function setLibForm(useLib: boolean) {
-  if (tectonic.value.lib_form === useLib) return;
-  formError.value = "";
-  try {
-    await store.update({ lib_form: useLib });
-  } catch (e) {
-    formError.value = String((e as { message?: string })?.message ?? e);
-  }
-}
 
 /**
  * bundle 来源：留空 = 上游兜底（网络）。
@@ -237,7 +218,7 @@ async function setLibForm(useLib: boolean) {
  * ——否则用户粘一条 `E:\…`，输入框留着反斜杠、磁盘上却是 URL，看起来像"没生效"。
  */
 async function applyBundle() {
-  formError.value = "";
+  resourceError.value = "";
   const raw = bundleInput.value.trim();
   if (!bundleLocal.value || raw === "") {
     // 切回"上游兜底"：空串 = 清除
@@ -246,7 +227,7 @@ async function applyBundle() {
       try {
         await store.update({ bundle: "" });
       } catch (e) {
-        formError.value = String((e as { message?: string })?.message ?? e);
+        resourceError.value = String((e as { message?: string })?.message ?? e);
       }
     }
     return;
@@ -256,20 +237,20 @@ async function applyBundle() {
     await store.update({ bundle: raw });
     bundleInput.value = bundleDisplay(tectonic.value.bundle);
   } catch (e) {
-    formError.value = String((e as { message?: string })?.message ?? e);
+    resourceError.value = String((e as { message?: string })?.message ?? e);
   }
 }
 
 /** 缓存目录：留空 = 宿主的应用缓存目录（必须绝对路径，相对路径会被后端拒绝）。 */
 async function applyCacheDir() {
-  formError.value = "";
+  resourceError.value = "";
   const raw = cacheInput.value.trim();
   const cur = tectonic.value.cache_dir ?? "";
   if (raw === cur) return;
   try {
     await store.update({ cache_dir: raw });
   } catch (e) {
-    formError.value = String((e as { message?: string })?.message ?? e);
+    resourceError.value = String((e as { message?: string })?.message ?? e);
   }
 }
 </script>
@@ -425,43 +406,13 @@ async function applyCacheDir() {
           </div>
         </section>
 
-        <!-- 引擎：只剩 Tectonic（ADR-0015）——没有"选谁"，所以这里不再有下拉、清单与不可用原因；
-             这一页只放 Tectonic 的形态与资源（子进程/库内嵌、bundle、cache）。 -->
+        <!-- 引擎：只剩 Tectonic（ADR-0015）——没有"选谁"，驱动形态也固定为内嵌；
+             这一页只放 Tectonic 的资源（bundle、cache）。 -->
         <section class="sec" v-if="activeTab === 'engine'" id="tabpanel-engine" role="tabpanel">
           <h3 class="sec-title">编译引擎（Tectonic）</h3>
           <p class="field-hint">
-            引擎固定为 <b>Tectonic</b>：自带宏包集，不依赖本机 TeX Live / latexmk；不再提供其它引擎。
+            引擎固定为 <b>Tectonic</b>（内嵌）：自带宏包集，不依赖本机 TeX Live / latexmk；不再提供其它引擎或驱动形态。
           </p>
-
-          <h3 class="sec-title sub">形态与资源</h3>
-
-          <div class="field">
-            <label class="field-label" for="set-form">驱动形态</label>
-            <div class="mode-seg" id="set-form">
-              <button
-                class="seg-btn"
-                :class="{ on: !tectonic.lib_form }"
-                title="运行官方 tectonic.exe：稳定、与上游行为一致；需要 PATH 上有 tectonic"
-                @click="setLibForm(false)"
-              >子进程</button>
-              <button
-                class="seg-btn"
-                :class="{ on: tectonic.lib_form }"
-                :disabled="libAvailable === false"
-                :title="libAvailable === false
-                  ? '本次构建未编入 tectonic-lib 特性，无法使用库形态'
-                  : '把 Tectonic 引擎嵌进产品进程：免装 TeX Live（自带宏包）、支持 BibTeX 与多趟收敛、可做页级增量复用；不支持 biber/makeindex 这类外部工具'"
-                @click="setLibForm(true)"
-              >库内嵌</button>
-            </div>
-            <p class="field-hint" :class="{ err: formError }">
-              {{ formError || (libAvailable === false
-                ? "库形态在本次构建中不可用（需以 --features tectonic-lib 构建）"
-                : tectonic.lib_form
-                  ? "库形态：切过去后，下一趟编译即生效（无需重启）；不支持 biber/makeindex（外部工具），检出时会提示"
-                  : "子进程形态：与上游 tectonic.exe 行为一致（默认）") }}
-            </p>
-          </div>
 
           <div class="field">
             <label class="field-label" for="set-bundle-path">宏包集（bundle）来源</label>
@@ -523,9 +474,8 @@ async function applyCacheDir() {
             </p>
           </div>
 
-          <p class="field-hint" v-if="!tectonic.lib_form">
-            以上两项只在<b>库内嵌</b>形态下生效（子进程档由 `tectonic.exe` 自己管缓存）。
-          </p>
+          <!-- 两项资源都是"改完下一趟编译就生效"（装配点每趟读设置）；保存失败要说得出来 -->
+          <p class="field-hint err" v-if="resourceError">{{ resourceError }}</p>
         </section>
       </div>
 
@@ -628,13 +578,6 @@ async function applyCacheDir() {
   letter-spacing: 1px;
   text-transform: uppercase;
   color: var(--ink-dim);
-}
-/* 同页第二段（引擎页的「形态与资源」）：与上面的页标题拉开层次 */
-.sec-title.sub {
-  margin-top: 22px;
-  padding-top: 14px;
-  border-top: 1px solid var(--line-soft);
-  letter-spacing: 0.6px;
 }
 
 .field { margin-bottom: 14px; }

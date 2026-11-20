@@ -5,8 +5,9 @@
 //! `std::fmt::Arguments`：它**不能存储**（借用 + 生命周期），必须**当场** `to_string()`
 //! ——这是本模块存在的主要理由。
 //!
-//! 映射口径（与 infra 的流式口径一致，`crates/latteset-infra/src/runner.rs` 顶部注释）：
-//! - `Note`：只进日志（页进度由写句柄/块观察者另算）；
+//! 映射口径（内嵌形态唯一：状态来自引擎回调；页进度**不在这里**算 —— runner 在趟边界从捕获的
+//! `<stem>.xdv` 数完整页后走 `CompileProgress::pages`）：
+//! - `Note`：只进日志（页进度由 runner 的趟边界扫描另算）；
 //! - `Warning`：进日志，**不进**错误列表（终态 `.log` 才是权威清单）；
 //! - `Error`：进日志 + 通过 [`latteset_core::scheduler::CompileProgress::errors`]
 //!   以**非权威中间态**上报一条 `ErrorEntry`。

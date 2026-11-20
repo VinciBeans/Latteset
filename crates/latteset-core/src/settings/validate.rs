@@ -37,7 +37,8 @@ pub fn validate(s: &Settings) -> Result<(), Vec<String>> {
     }
 }
 
-/// Tectonic 形态与资源的校验（**在设置面就拦住**，而不是等到编译才报错）。
+/// Tectonic **资源**（bundle / 缓存目录）的校验（**在设置面就拦住**，而不是等到编译才报错）。
+/// 形态自 v3 起唯一 = 内嵌（ADR-0015 决策 2），这里只剩资源两条。
 ///
 /// 两条都是实测过的坑，在这里拦能给出可执行的文案：
 /// - **bundle 写绝对 Windows 路径**：上游 `detect_bundle` 先 `Url::parse`，`E:\…`/`E:/…` 会被当成
@@ -185,7 +186,7 @@ mod tests {
         assert!(errs[0].contains("绝对路径"), "{}", errs[0]);
     }
 
-    /// 默认形态（子进程、无 bundle/缓存覆盖）必须通过校验。
+    /// 默认设置（无 bundle/缓存覆盖）必须通过校验。
     #[test]
     fn defaults_pass_validation() {
         assert!(validate(&Settings::default()).is_ok());

@@ -19,7 +19,8 @@ latteset-cli —— Latteset headless CLI（读 → 改 → 编译验证 → 修
 
 命令：
   open                              打开项目：根文件 / 候选 / 生效设置
-  compile [--quick]                 编译一次并等待结果（默认完整 Tectonic 收敛；--quick 两趟（-r 1））
+  compile [--quick]                 编译一次并等待结果（默认跑到中间产物稳定；--quick 草稿档：
+                                    预算内追收敛，追不上就停在草稿态、引用/索引可能落后）
   status                            最近一次编译的状态（本进程内）
   errors                            最近一次编译的结构化错误（含「原因 + 怎么改」诊断）
   outline                           文档大纲（章/节 → 文件:行号）

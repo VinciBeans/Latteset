@@ -5,7 +5,8 @@
 //! 约定喂 JSON-RPC、逐条断言响应形状——等于把一个最小 MCP client 固化进仓库，
 //! 以后换 SDK 或改工具表都能立刻发现回归。
 //!
-//! 需要 `tectonic` 的 `compile` 用例标 `#[ignore]`（与仓库其它真实引擎用例一致）。
+//! 需要真实编译的 `compile` 用例标 `#[ignore]`（阶段② D6 闸门 =「编进来 + 有可用 bundle」，
+//! 不再探测 PATH 上的 `tectonic`）。
 
 use serde_json::{json, Value};
 use std::io::{BufRead, BufReader, Write};
@@ -207,15 +208,19 @@ fn tool_calls_round_trip_over_stdio() {
     let status = c.call_tool("compile_get_status", json!({}));
     assert_eq!(status["structuredContent"]["status"], "none");
 
-    // 5) settings：Agent 可以确认超时/模式（v2 起**没有**引擎设置——ADR-0015 统一为 Tectonic）
-    //    这个夹具用隔离配置目录 ⇒ 拿到的是出厂默认（schema_version = 2）。
+    // 5) settings：Agent 可以确认超时/模式（阶段② v3 起**没有**形态设置——引擎唯一 = 内嵌 Tectonic）
+    //    这个夹具用隔离配置目录 ⇒ 拿到的是出厂默认（schema_version = 3，`tectonic` 无 `lib_form`）。
     let settings = c.call_tool("settings_get", json!({}));
     let sc = &settings["structuredContent"];
     assert!(
         sc["compile"].get("engine").is_none(),
-        "v2 不应再有 compile.engine：{settings}"
+        "v2 起不应再有 compile.engine：{settings}"
     );
-    assert_eq!(sc["schema_version"], 2, "{settings}");
+    assert!(
+        sc["tectonic"].get("lib_form").is_none(),
+        "v3 起不应再有 tectonic.lib_form（形态唯一 = 内嵌）：{settings}"
+    );
+    assert_eq!(sc["schema_version"], 3, "{settings}");
     assert_eq!(sc["compile"]["timeout_secs"], 120);
 
     // 6) 工具内错误按 isError 回（不是协议错误），并带 {code,message}
@@ -283,26 +288,61 @@ fn project_can_be_switched_per_call() {
     let _ = std::fs::remove_dir_all(&other);
 }
 
-/// 真编译闸门：PATH 上有 `tectonic` 才跑（ADR-0015 之后唯一引擎）。
-fn tectonic_available() -> bool {
-    Command::new("tectonic")
-        .arg("--version")
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .status()
-        .map(|s| s.success())
-        .unwrap_or(false)
+/// 真编闸门（D6）：「编进来 + 有可用 bundle」——不再探测 PATH 上的 `tectonic`。
+///
+/// 来源：`LATTESET_TECTONIC_BUNDLE` → 工作区夹具 `test_file/tectonic-bundle`（被 gitignore）。
+fn bundle_fixture() -> Option<String> {
+    if let Ok(v) = std::env::var("LATTESET_TECTONIC_BUNDLE") {
+        let t = v.trim();
+        let disabled = matches!(t.to_ascii_lowercase().as_str(), "" | "none" | "off" | "0" | "false");
+        if !disabled {
+            return Some(t.to_owned());
+        }
+    }
+    let repo = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..").canonicalize().ok()?;
+    let dir = repo.join("test_file/tectonic-bundle");
+    if !dir.join("SHA256SUM").is_file() {
+        return None;
+    }
+    let url = dir.to_string_lossy().replace('\\', "/");
+    let url = match url.strip_prefix("//?/") {
+        Some(stripped) => stripped.to_owned(),
+        None => url,
+    };
+    Some(format!("file:///{url}"))
 }
 
-/// 真实编译：需要 PATH 上有 `tectonic`（`cargo test -p latteset-server -- --ignored`）。
+/// 把夹具的**全局设置**（v3）写成"用本机 bundle + 工作区缓存"——端到端验证 D4：
+/// `latteset-mcp` 子进程的 `build_runner` 必须读设置面（不是只看环境变量）。
+/// 返回 `false` = 没有可用 bundle（调用方跳过用例）。
+fn configure_embedded(f: &Fixture) -> bool {
+    let Some(bundle) = bundle_fixture() else {
+        return false;
+    };
+    let cache = f.dir.join("cache");
+    std::fs::create_dir_all(&cache).unwrap();
+    let settings = json!({
+        "schema_version": 3,
+        "compile": { "mode": "continuous", "debounce_ms": 500, "timeout_secs": 120, "new_file_wizard": true },
+        "tectonic": { "bundle": bundle, "cache_dir": cache.to_string_lossy() },
+        "ui": { "theme": "light" },
+        "notices": [],
+        "root_file": null
+    });
+    std::fs::write(f.config().join("settings.json"), serde_json::to_string_pretty(&settings).unwrap())
+        .unwrap();
+    true
+}
+
+/// 真实编译（内嵌形态）：需要可用 bundle（`cargo test -p latteset-server -- --ignored`）。
 #[test]
 #[ignore]
 fn compile_tool_returns_errors_and_then_success() {
-    if !tectonic_available() {
-        eprintln!("跳过：未安装 tectonic（或不在 PATH 上）");
+    let f = Fixture::new("compile");
+    if !configure_embedded(&f) {
+        eprintln!("跳过：没有可用 bundle（设 LATTESET_TECTONIC_BUNDLE 或放 test_file/tectonic-bundle 夹具）");
         return;
     }
-    let f = Fixture::new("compile");
     let mut c = Client::start(f.project(), &f.config());
     handshake(&mut c);
 

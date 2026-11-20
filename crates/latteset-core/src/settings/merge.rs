@@ -50,10 +50,7 @@ pub fn apply_patch(settings: &mut Settings, patch: &SettingsPatch) -> Result<(),
     if let Some(v) = &patch.root_file {
         next.root_file = v.clone();
     }
-    // Tectonic 形态与资源（全局；空串 = 清除，见 `SettingsPatch` 的字段说明）
-    if let Some(v) = patch.lib_form {
-        next.tectonic.lib_form = v;
-    }
+    // Tectonic 资源（全局；空串 = 清除，见 `SettingsPatch` 的字段说明）
     if let Some(v) = &patch.bundle {
         // 归一化在前、校验在后：用户给的 `E:\…` 在这里被补成 `file:///E:/…`，于是 validate 里
         // "绝对 Windows 路径"那条只剩兜底作用（拦绕过 patch 的写入，如手改 settings.json）。

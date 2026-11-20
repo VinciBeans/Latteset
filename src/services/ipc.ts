@@ -54,7 +54,7 @@ export const ipc = {
    * 新建 `.tex` 的最小骨架（roadmap ㊺ §6.13.1-A）：**内容口径在 core**（`core::newfile`），
    * 前端只传"语言 × 类型 × 标题"这三个选择值，不另拼一份模板。
    *
-   * 注意：与 `libFormAvailable` 同理，它直接返回 `string`（不是 `Result`）⇒ **不走 `unwrap`**。
+   * 注意：它直接返回 `string`（不是 `Result`）⇒ **不走 `unwrap`**。
    * `title` 传 `null` = 不写 `\title`。
    */
   newFileSkeleton: (lang: DocLanguage, kind: DocKind, title: string | null) =>
@@ -72,18 +72,6 @@ export const ipc = {
   getSettings: () => unwrap(commands.getSettings()),
   updateSettings: (patch: Parameters<typeof commands.updateSettings>[0]) =>
     unwrap(commands.updateSettings(patch)),
-  /**
-   * 本次构建是否编入了 Tectonic 库形态（设置面据此禁用选项，而不是让用户选了才炸）。
-   *
-   * 注意：该命令直接返回 `bool`（不是 `Result`），所以**不走 `unwrap`** —— specta 只为
-   * `Result<_, CmdError>` 的命令生成 `typedError` 包装。
-   */
-  libFormAvailable: () => commands.libFormAvailable(),
-  /**
-   * 当前**实际**会用的引擎形态（状态栏显示用）。判定在后端做一次（与 runner 共用同一个纯函数）。
-   * 前端只渲染：形态不能从 settings 推，环境变量能压过它。
-   */
-  engineForm: () => unwrap(commands.engineForm()),
   /**
    * 把**原生标题栏**也纳入主题（Windows 走 DWM 沉浸式深色）。
    *

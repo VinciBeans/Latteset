@@ -8,14 +8,16 @@
 | 现象 | 小节 |
 |---|---|
 | 白屏 / 界面不渲染（无 GPU、WSLg、改 `App.vue` 结构后 HMR） | 无 GPU 虚拟机 / WSLg / HMR 白屏 |
+| **构建报 `cl.exe D8050` / `lib.exe LNK1104`**（本机沙箱会话） | 构建报 D8050 / LNK1104：工作区 Low 完整性标签 |
 | 编译报错但看不到任何信息；中文文件名 / 路径 / 编码 | 中文文件名与路径 / GBK 源 |
-| `\include{子目录}` 报 `I can't write on file` | `\include{子目录/文件}` 的输出子目录（U-14：Tectonic 自建） |
+| `\include{子目录}` 报 `I can't write on file` | `\include{子目录/文件}` 的输出子目录（U-14：内嵌形态自建） |
 | XeLaTeX 每次编译慢 4–5 秒（**历史：引擎已删除**） | fontconfig 字体缓存失效 |
 | LuaLaTeX 切过去失败 / 第一次特别慢（**历史：引擎已删除**） | LuaLaTeX 的两个环境前提 |
-| 编译期实时反馈不「实时」 | 非 TTY 4KB 块缓冲 |
+| 编译期实时反馈不「实时」 | 非 TTY 4KB 块缓冲（**历史：管道通道已删除**；现役口径见该节） |
 | 错误列表文件名偶尔错一章 | TeX 日志的 `)` 与 `(` 同行（部分修复） |
 | 点 PDF 跳回页尾命令 / 跳到错文件 | SyncTeX 反向定位的已知精度缺陷 |
 | 外部改 `settings.json` 有时不生效 | 非原子写 settings.json |
+| **升级后设置被改动 / 出现一次性提示**（`engine-unified-v2` / `form-embedded-v3` / `subprocess-form-removed-v3`） | 设置迁移 v1→v2→v3 |
 | `cargo build -p latteset-server` 报拒绝访问 | 常驻 `latteset-mcp.exe` 锁二进制 |
 | Rust 单测 `cargo test -p latteset` 加载即退出 | src-tauri 的 WebView2 链接限制 |
 | Linux CI 上路径语义用例红 | Windows 路径语义别当跨平台契约 |
@@ -24,7 +26,7 @@
 | 引擎「找不到文件 / 改了没生效」（**历史：latexmk/kpathsea 专属**） | 引擎读了什么：四个通道 |
 | headless（CLI / MCP） | [cli.md](./cli.md) + 常驻二进制锁 |
 | 前端探针 / 脚本的坑（WS 探针、PowerShell 自动变量、format、`<select>`、死 CSS） | 前端与脚本杂项 |
-| 精简 bundle 不含 `beamer.cls` | 实验室 bundle 缺 beamer |
+| 精简 bundle 不含 `beamer.cls` / 配本地 bundle | 实验室 bundle 缺 beamer |
 
 ## 无 GPU 虚拟机白屏：首帧呈现竞态
 
@@ -83,11 +85,60 @@
 
 - 纯逻辑单测走 `cargo test -p latteset-core`（无 Tauri 依赖，运行正常；CI 用这个验证纯逻辑）。
 - 前端单测走 `npm run test`（vitest）。
-- 基础设施层用例（`fs` / `runner` / `watch` / `storage`）随 ADR-0010 迁到 `latteset-infra` 后**本机可正常运行**：`cargo test -p latteset-infra`（单测）+ `cargo test -p latteset-infra -- --ignored`（真实编译集成用例：成功、内容错误、超时树杀、取消、中文路径双向；**需要 PATH 上有 `tectonic`**，没装时用例自行跳过；SyncTeX 断言另需 `synctex`，同样自动跳过）。仍留在 src-tauri 的只剩 `commands::pdf_path_for_root`（纯函数，受同一 WebView2 链接限制）。
+- 基础设施层用例（`fs` / `storage` / `watch` / `synctex`）随 ADR-0010 迁到 `latteset-infra` 后**本机可正常运行**：`cargo test -p latteset-infra`（T9 实测 40 passed / 0 ignored）。**真实编译集成用例已不在 infra**——子进程 runner 随阶段②整文件删除；内嵌引擎与 headless 的真编用例在 `cargo test -p latteset-tectonic -- --ignored` / `cargo test -p latteset-server -- --ignored`，**需要 vcpkg env**（统一走 `npm run lib:test`；闸门 = 编进来 + 有可用 bundle，不再探测 PATH 上的 `tectonic`）。仍留在 src-tauri 的只剩 `commands::pdf_path_for_root`（纯函数，受同一 WebView2 链接限制）。
 - **已穷尽尝试仍失败**：把 `webview2-com-sys-*/out/{arch}/WebView2Loader.dll` 拷到 `target/debug` **及 `target/debug/deps`（测试 exe 同目录）** 并加入 PATH；`dumpbin /imports` 显示静态导入均为系统 DLL、延迟导入仅 `VCRUNTIME140.dll`；提权运行——均仍 `STATUS_ENTRYPOINT_NOT_FOUND`。**非沙箱权限、非 PATH、非运行时缺失**，是 Tauri v2 shell crate 测试二进制的已知 Windows 工具链限制。
 - **推论（DTO 改动后怎么刷新 `src/bindings.ts`）**：`export_bindings` 这条捷径在本机不可用（同一个 `0xc0000139`）→ **起一次 `npm run tauri dev`**：debug 构建启动时会自动重新导出 `src/bindings.ts`（`lib.rs` 里 `#[cfg(debug_assertions)]` 的 export）。
 
 完整测试分工见 [dev/testing.md](./dev/testing.md)。
+
+## 构建报 `cl.exe D8050` / `lib.exe LNK1104`：工作区 Low 完整性标签（本机沙箱会话；环境问题，非代码）
+
+**现象**：在本机 DSH 沙箱会话里跑 `cargo check/test -p latteset-tectonic`（或任何会编 C 链的命令，含 `npm run tauri dev`）报：
+
+```
+cl: 命令行 error D8050 :无法执行"…\c1.dll": 未能将命令行放入调试记录中
+lib.exe: LNK1104: 无法打开文件 …\lnk{...}.tmp
+```
+
+同一套命令在普通 Windows 终端 / CI 上正常；`npm run lib:check` 前置校验全绿（vcpkg 检出与六端口都在）。
+
+**根因（实测，非猜测）**：工作区根目录带 **DSH 沙箱遗留的可继承 Low 完整性标签**（`icacls "E:\Works\tex-presso"` 输出含 `Mandatory Label\Low Mandatory Level:(OI)(CI)(NW)`）。Windows 会把镜像文件（exe）上的标签应用到新进程 token ⇒ 工作区内 exe（cargo build-script 及其 `cl.exe` 子进程）以 **Low IL** 运行，写不了 Medium 的 `%TEMP%`；`cl /Z7` 的调试记录临时文件与 `lib.exe` 的 `lnk{…}.tmp` 都默认落在 `%TEMP%` ⇒ 报错。**不是** vcpkg 缺包、**不是** MSVC 版本（14.44 / 14.51 均复现）、**不是** pwsh 管道（手工同一条 `cl` 命令成功）。完整证据链见 `test_file/build-env/REPORT-build-env.md` §4（工作区本地、未提交）。
+
+**处理 A（零侵入，推荐；本 DSH 会话内构建必做）**：
+
+```powershell
+$tmp = 'E:\Works\tex-presso\src-tauri\target\.tmp'
+New-Item -ItemType Directory -Force $tmp | Out-Null
+$env:TMP = $tmp; $env:TEMP = $tmp
+npm run lib:check
+npm run lib:test        # 或 cargo check -p latteset-tectonic / npm run tauri dev
+```
+
+目录必须在**工作区内**（工作区树带 Low 标签 ⇒ Low 进程可在其中创建文件）；指到 `%TEMP%`（Medium）无效。构建结束可清空目录内容、保留目录。
+
+**处理 B（彻底修环境，需用户决策）**：
+
+```powershell
+icacls "E:\Works\tex-presso" /setintegritylevel (OI)(CI)Medium
+```
+
+把工作区根的完整性标签改回 Medium（OI|CI 继承到全部子项）⇒ 所有仓库内 exe 恢复以 Medium 运行，D8050/LNK1104 消失，运行时写 `%APPDATA%` 也恢复正常。⚠ **DSH 每次 `workspace-write` 授权都可能重新打 Low 标签**，修完要避免再用该模式打开本工作区（或每次授权后重打）；这是对用户机器的安全配置变更，须由用户决定。**CI / GitHub runner 没有这个标签，不需要 A/B。**
+
+**同一根因的运行时旁证**：真实 app 进程（工作区内的 release exe）启动时会报 `WARN 备份 v1 全局设置失败（迁移继续）：拒绝访问 (os error 5)` / `ERROR 全局设置写盘失败：拒绝访问`——Low 进程写不了 Medium 的 `%APPDATA%`。迁移仍按"内存生效、不重复提示"边界走完，**不是迁移逻辑 bug**。
+
+## 升级后设置被改动 / 状态栏出现一次性提示：设置迁移 v1→v2→v3
+
+**现象**：升级后打开应用，状态栏出现持久提示（可点掉），日志有「全局设置已迁移到 v3…」；`settings.json` 里 `schema_version` 变成 3、`tectonic.lib_form` 不见了，旁边多出 `settings.json.v1.bak` 或 `settings.json.v2.bak`。
+
+**这是预期行为**（[ADR-0015](./adr/0015-tectonic-only-embedded-engine.md) 决策 3，阶段②）：迁移链 v1→v2→v3，判据是版本号或旧键存在（`compile.engine` / `tectonic.lib_form`）；动作 = 删旧键、写新版本、原文件按**迁移源版本**留备份（`.v1.bak` / `.v2.bak`，已有不覆盖）、原子落盘、追加 notice。notice 三条：
+
+| id | 级别 | 触发 |
+|---|---|---|
+| `engine-unified-v2` | info | v1 遗留（`compile.engine` 存在） |
+| `form-embedded-v3` | info | v2→v3 恒加（形态固定为内嵌） |
+| `subprocess-form-removed-v3` | warning | **仅旧值 `tectonic.lib_form == false`**（原来用子进程形态的用户；告知内嵌形态不再调用本机 biber） |
+
+**处理**：读完提示点掉即可；`tectonic.bundle` / `cache_dir` 保留原值。若磁盘写被拒（例如本机沙箱会话，见上一条），设置按迁移后值**内存生效**、不重复提示；下次在可写环境启动时会重新落盘。**不想要备份**可手动删除 `*.bak`（不影响运行）。
 
 ## Linux CI 上路径语义用例红：Windows 路径语义被写进跨平台用例
 
@@ -111,7 +162,7 @@ right: Source("E:\\proj\\chapters\\intro.tex")
 
 ## 中文文件名与路径：全链路可用
 
-> **（历史实测：latexmk / xelatex 时代，2026-08）** ADR-0015 之后那些引擎与 `latexmk` 已删除，本节数字仅作**路径层面结论**的存档。结论仍成立且有现役证据：Tectonic 下中文路径有集成用例 `cargo test -p latteset-infra -- --ignored compile_chinese_paths_with_synctex`（需 PATH 上有 `tectonic`），U-14 的 cjk 夹具另证 `tmp/章节/` 由 Tectonic 自建（见下节）。
+> **（历史实测：latexmk / xelatex 时代，2026-08）** ADR-0015 之后那些引擎与 `latexmk` 已删除，本节数字仅作**路径层面结论**的存档。结论仍成立且有现役证据：**内嵌形态**下 U-14 跑绿（中文目录 + 中文根文件名 + 中文子目录 `\include`，`tmp/章节/` 由产品自建；见下节与 `test_file/phase2/REPORT-gates.md` §1①）。
 
 **总结论**：**文件名/路径层面的中文全链路可用**（无阻塞缺陷，回归测试已固化）；唯一实测出的真实缺陷**不在路径，而在日志编码**（见下一节）。
 
@@ -167,15 +218,15 @@ DEBUG 编译失败：已从 .log 解析出错误条目 count=9 log=…\tmp\主�
 
 > 注：把"文件名编码"与"内容编码"两个变量隔离——根文件与子文件名均为 ASCII，GBK 只出现在子文件**内容**里；中文**文件名/路径**的验证由 `中文测试工程` 夹具覆盖。
 
-## `\include{子目录/文件}` 的输出子目录：Tectonic 会自建（U-14 实测）
+## `\include{子目录/文件}` 的输出子目录：内嵌形态自己建（U-14 已跑绿）
 
-**结论（U-14，Tectonic 0.17.0 子进程形态，2026-11-16）**：
+**结论（U-14；2026-11-20 内嵌唯一形态，T9 实测）**：
 
-1. **`tmp/`（输出目录本身）必须产品自建**：不存在时 Tectonic 直接 `error: output directory "tmp" does not exist`、exit 1，**连 `.log` 都不落盘** ⇒ 产品在 `crates/latteset-infra/src/runner.rs:276-285` 建 `tmp_dir` 是**必需**的，不能删。
-2. **`\include` 需要的输出子目录 `tmp/<dir>/` 由 Tectonic 自己建**（`create_dir_all` 语义、含多级）：纯 ASCII 的 `tmp/chapters/`、**中文的 `tmp/章节/`**、两级的 `tmp/a/b/` 全部自动创建；三组夹具都编出 3 页 PDF，中文字体与文本层正常（U+FFFD 0 个）。Quick（`-r 1`）与 `-C` 都不改变该结论。
-3. ⇒ XeTeX/latexmk 时代"产品要预建 `tmp/<子目录>/`"的 `ensure_include_subdirs` 在 Tectonic 路径上**不需要**，已随 latexmk 路径一起删除。库内嵌形态若改由产品自己写产物（内存 FS / 预置中间产物），子目录语义 `[未测]`。
+1. **`tmp/`（输出目录本身）必须产品建**：内嵌形态由 I/O 层保证输出目录存在；缺了同样会以"读不到日志的失败"呈现 ⇒ 这一层不能删。
+2. **`\include` 需要的输出子目录 `tmp/<dir>/` 由内嵌 I/O 层自己建**（`create_dir_all` 语义、含多级）。T9 夹具：**中文目录** + **中文根文件名** `主文件.tex` + **中文子目录** `章节/`（根文件 `\include{章节/第一章}`、`\include{章节/第二章}`，未预建 `tmp/`）→ exit 0、`kind=full`、**3 页**、PDF 13,121 B；产品自建 `tmp/主文件.{aux,log,pdf,synctex.gz,xdv,tectonic.pages}` 与 **`tmp/章节/第一章.aux`、`tmp/章节/第二章.aux`**；PDF 文本层 65 字、0 个 U+FFFD。2026-11-16 的子进程形态实测（`tmp/chapters/`、`tmp/章节/`、`tmp/a/b/` 全部自建）结论一致——**该形态已删除，不必再对照**。
+3. ⇒ XeTeX/latexmk 时代"产品要预建 `tmp/<子目录>/`"的 `ensure_include_subdirs` 在现役路径上**不需要**，已随 latexmk 路径一起删除。
 
-**证据**：`test_file/u14/REPORT-u14.md`（9 条命令的退出码与 `Get-ChildItem tmp` 目录树）+ `test_file/u14/logs/*.log`；**工作区未提交**，复现按该报告重建夹具（里面还有文件沙箱下 `TECTONIC_CACHE_DIR` 的绕行步骤）。
+**证据**：`test_file/phase2/REPORT-gates.md` §1①（`accept-03-u14-cjk.log`、`accept-04-validate-u14.log`；工作区未提交）；更早的子进程形态证据保留在 `test_file/u14/REPORT-u14.md`（历史）。
 
 **以下为历史存档（latexmk / xelatex 时代；ADR-0015 之后那条驱动与三个引擎已删除）**：
 
@@ -204,7 +255,7 @@ xelatex -interaction=nonstopmode -synctex=1 -output-directory=tmp main.tex   # m
 
 **对产品的两个直接结论**（第 1 条**仍是现役不变量**；第 2 条只是当时的绕过——Tectonic 下 `\include` 已不需要它）：
 
-1. **超时诊断必须先看引擎输出里的致命错误**：这种"报错后不退出"的运行，产品只会走到超时；若只按"慢/卡住"提示，用户永远修不好。超时诊断因此优先报那条错误，且**不给"提高超时"按钮**（提高超时救不了它）。证据来自**已捕获的引擎输出**（stdout/stderr 尾部 + 流式通道已上报的页标记 `[N]`），并与 `.log`（有内容才用）合并——Tectonic 的 `.log` 收尾才落盘，被树杀时常常零字节（review E4 修复后不再只读日志；诊断措辞也从"日志显示…"改成"**引擎输出**显示…"）。
+1. **超时诊断必须先看引擎输出里的致命错误**：这种"报错后不退出"的运行，产品只会走到超时；若只按"慢/卡住"提示，用户永远修不好。超时诊断因此优先报那条错误，且**不给"提高超时"按钮**（提高超时救不了它）。**现役证据口径**（内嵌形态）：捕获的 `.log`（边写边在内存里）+ 引擎状态环尾部 + 已上报的最大页，合并后交给同一套 `diagnose_timeout` ⇒ 诊断措辞是"**引擎输出**显示…"（旧的 stdout/stderr 尾部口径随子进程删除）。
 2. **可用绕过（已实测）**：把主文件里的 `\include{子目录/文件}` 改成 `\input{子目录/文件}`——`\input` 不写子文件 `.aux`，因此不需要 `tmp/子目录/`：
 
 ```powershell
@@ -261,17 +312,20 @@ luaotfload | load :     × ".../luaotfload-init.lua:301: system : no writeable c
 
 **④ 探针别忘 `-halt-on-error`**：LuaLaTeX 的启动期 Lua 错误在 `nonstopmode` 下会**无限刷屏**——实测把一份日志写到 **226 MB** 才被掐掉。所有非交互探针都要带 `-halt-on-error`。
 
-## 引擎输出在非 TTY 下是 4KB 块缓冲：实时反馈不能只靠管道
+## 引擎输出在非 TTY 下是 4KB 块缓冲（**历史**：管道通道已随子进程删除）
 
-**现象**：把引擎的 stdout/stderr 接成管道（`Stdio::piped()`）做"边编译边报错"后，短文档的**错误与页标记会一起在进程快结束时才到**——看起来像流式没生效。
+**现象（子进程时代）**：把引擎的 stdout/stderr 接成管道（`Stdio::piped()`）做"边编译边报错"后，短文档的**错误与页标记会一起在进程快结束时才到**——看起来像流式没生效。
 
 **实测**：一次 1471ms 的编译里，首条流式错误出现在 **1394ms**（几乎等于进程退出时刻）。原因是 C 运行时的块缓冲：**stdout/stderr 不是 TTY 时按 4KB 缓冲**，TeX 只在缓冲满（约每 20 页）或退出时才 flush。
 
-**这条结论在 Tectonic 下仍成立**（`crates/latteset-infra/src/runner.rs:60` 的现役口径）：只接管道时，短文档/早错场景几乎拿不到提前量。
+**现状（阶段② 内嵌唯一）**：这条管道通道**已随 `latteset-infra` 的子进程 runner 整文件删除**——现在没有 stdout/stderr 管道可读，结论只作历史。内嵌形态的中间态换成了：
 
-**对策与它的时代差（重要）**：latexmk/xelatex 时代的对策是"实时通道以 `tmp/<stem>.log` 为主力——`.log` 按页 flush"；**Tectonic 不成立**：它的 `.log` **收尾才落盘**（超时被树杀时 `.log` 一个字节都没有，见 review E4 / [dev/modules.md](./dev/modules.md) §12.1 #20）。现役的编译期进度走 **stdout 的 `-p` 的 `[N]` 标记**；`tmp/<stem>.log` 尾随仍保留作补充（两条来源共用同一状态机：页码取最大 + 错误指纹去重）。**超时诊断的证据同样取已捕获的输出**（`.log` + 输出尾部 + 流式最大页合并，见 §2.6.1）；手动终止按设计只呈现 `Aborted`、不产证据条目。**"编译还没结束就报致命错误"在 Tectonic 下未复测 `[未测]`**。
+- **页进度**：每趟排版收尾从捕获的 `<stem>.xdv` 数完整页（`core::xdv::complete_pages`），趟边界更新、只增不减；
+- **编译中错误**：引擎状态后端 `MessageKind::Error` → `CompileProgress::errors`（非权威、无文件/行号；终态清单仍由 `.log` 解析）；
+- **超时证据**：捕获的 `.log`（边写边在内存里）+ 状态环尾部 + 已上报最大页（见 [dev/modules.md](./dev/modules.md) §2.6.1）；
+- 手动终止按设计只呈现 `Aborted`、不产证据条目；**"编译还没结束就报致命错误"的提前量 `[未测]`**。
 
-**验证入口**：`cargo test -p latteset-infra -- --ignored reports_streaming_pages_before_compile_finishes`（断言首个页进度距编译结束 ≥100ms、页码单调升到 3；需要 PATH 上有 `tectonic`）。latexmk 时代的 `live_errors` 用例已随引擎路径删除。
+**验证入口**：超时证据单测在 `cargo test -p latteset-tectonic`（`timeout_evidence_merges_log_and_status_tail_and_observed_pages` 等）；页进度单测 `captured_pages_counts_complete_xdv_pages`；真编 `cargo test -p latteset-tectonic -- --ignored real_compile_with_local_bundle_fixture`（需 vcpkg env，闸门 = 有可用 bundle）。旧 infra 用例 `reports_streaming_pages_before_compile_finishes` / `live_errors` 已随引擎路径删除。
 
 ## 错误列表的文件名偶尔错一章：TeX 日志的 `)` 与 `(` 会打在同一行（**部分修复**）
 
@@ -400,7 +454,7 @@ Rename-Item .texpresso .latteset
    （单引号 here-string = 不求值；`-` 表示从 stdin 读内容。）
 2. **`write` 不会替你建目录**：父目录不存在 → 报 `NotFound` 并说明"父目录必须已存在"（与 GUI `save_all` 同契约）。先建目录，或先写已存在的目录下的文件。
 3. **配置目录默认与 GUI 同一份**（Windows `%APPDATA%\com.latteset.app`），CLI 改了设置 GUI 也会看到；要隔离（测试/CI）用 `--config-dir <dir>` 或 `LATTESET_CONFIG_DIR`。
-4. **同一项目不要同时用 GUI 和 CLI 编译**：两路编译（`tectonic`）抢同一个 `tmp/`。约定 headless 独占。
+4. **同一项目不要同时用 GUI 和 CLI 编译**：两路内嵌引擎抢同一个 `tmp/`（先到先写、后到覆盖）。约定 headless 独占。
 5. **MCP 侧自检**：协议没握手成功时先手工喂一行看回什么——
    ```powershell
    '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{}}}' |
@@ -433,7 +487,7 @@ Select-String -Path kpse.err -Pattern 'searching for|returning from generic sear
 **两条与产品行为直接相关的结论**（都实测过）：
 
 1. **触发面 = 项目内任何带扩展名的非忽略文件**（roadmap ㉜ 已落地，判据在 core `is_compile_trigger`，见 [dev/modules.md](./dev/modules.md) §7 / §3.3）：改被 `\bibliography` 引用的 `.bib`、图片、`.cls` 等真输入都会触发编译。**仍未做的是精确失效**（roadmap ㉝）：改**未被引用**的 `.tex`（以及 `notes.md` 这类非输入文件）会白编译一次。⚠ 原拟判据 `.fls` / `.fdb_latexmk` 是 latexmk 的产物、Tectonic 下不再生成 ⇒ **该判据失效**，㉝ 要重做需另找通道（未定方案，见 [dev/modules.md](./dev/modules.md) §12.1「触发面收紧到引擎真正读了什么」条）。
-2. **（历史）别常开 `KPATHSEA_DEBUG`**：它的输出走 **stderr**，而应用的流式错误通道也在读 stderr——1 MB 的 `kdebug:` 行会灌进解析缓冲；只在做单次诊断性编译时开。坑的形式仍在（stderr 仍进流式解析），只是现役路径不再有 kpathsea 输出。
+2. **（历史）别常开 `KPATHSEA_DEBUG`**：它的输出走 **stderr**，而 **latexmk 时代**应用的流式错误通道也在读 stderr——1 MB 的 `kdebug:` 行会灌进解析缓冲；只做单次诊断性编译时才开。**内嵌形态下没有 kpathsea、也没有 stderr 管道**，这条只作历史；若在外部手工跑旧工具，坑仍成立。
 
 ## 前端与脚本杂项（WS 探针 / PowerShell / `<select>` / 死 CSS）
 
@@ -508,7 +562,7 @@ Get-ChildItem src -Recurse -Filter *.vue | ForEach-Object {
 
 ## 实验室的精简 bundle 不含 `beamer.cls`：选「幻灯片」会编不过（非缺陷）
 
-**症状**：向导里选「幻灯片」建出的骨架，在本机（引擎 = Tectonic 库内嵌 + `LATTESET_TECTONIC_BUNDLE=test_file/tectonic-bundle`）编译**失败得很快（0.35 s）**，错误列表一条：
+**症状**：向导里选「幻灯片」建出的骨架，在本机（引擎 = 内嵌 Tectonic + `LATTESET_TECTONIC_BUNDLE=test_file/tectonic-bundle`）编译**失败得很快（0.35 s）**，错误列表一条：
 
 ```
 ! LaTeX Error: File `beamer.cls' not found.
@@ -519,5 +573,5 @@ Get-ChildItem src -Recurse -Filter *.vue | ForEach-Object {
 **处理**：
 
 - **不要去改骨架**（`core::newfile` 的 beamer 分支是对的），也**不要**为了这个把 beamer 塞进精简 bundle —— 那会把"最小离线 fixture"变成又一个宏包仓库；
-- 要在本机验幻灯片这条路，只能换 **bundle**（引擎已不可切，ADR-0015）：在 `settings.json` 里把 `tectonic.bundle` 指向上游/完整 bundle（目录 bundle 写 `file:///E:/…`，**绝对 Windows 路径 `E:\…` 会被上游当 URL scheme 吃掉**，见 [design.md](./design.md) §3.2），或用 `LATTESET_TECTONIC_BUNDLE` 起 dev；
-- 形态位要点：`LATTESET_TECTONIC_LIB=1` 是**显式覆盖**（压过 `tectonic.lib_form` 设置）⇒ **设了它，设置面板里选「子进程」也仍然是 Tectonic 库形态**（实测：日志照旧 `库形态失败…`、`.log` 里是 Tectonic 的 `LaTeX2e <2021-11-15>`）。要去掉该环境变量再起 dev，设置里的形态选择才生效（引擎本身恒为 Tectonic）。
+- 要在本机验幻灯片这条路，只能换 **bundle**（引擎固定为内嵌、不可切，ADR-0015）：在 `settings.json` 里把 `tectonic.bundle` 指向上游/完整 bundle（目录 bundle 写 `file:///E:/…`，**绝对 Windows 路径 `E:\…` 会被上游当 URL scheme 吃掉**，见 [design.md](./design.md) §3.2），或用 `LATTESET_TECTONIC_BUNDLE` 起 dev；
+- **环境变量已收口**：`LATTESET_TECTONIC_LIB` 与设置里的 `tectonic.lib_form` 都已在阶段②删除——设了前者只会在启动日志收到一条「已删除，忽略」warn（`warn_removed_env_overrides`，幂等），**不会再改变形态**。现役资源类覆盖只剩 `LATTESET_TECTONIC_BUNDLE` / `LATTESET_TECTONIC_CACHE`（优先序：设置 > 环境变量 > 宿主默认）。

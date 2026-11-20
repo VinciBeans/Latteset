@@ -2,7 +2,7 @@
 
 mod commands;
 mod events;
-mod runner_switch;
+mod runner;
 
 use commands::AppState;
 use events::{
@@ -85,7 +85,7 @@ pub fn run() {
                 Arc::new(TauriProgress {
                     app: app.handle().clone(),
                 });
-            // 共享状态（设置要在 runner 之前建：`SwitchableRunner` 每趟读它选形态）
+            // 共享状态（设置要在 runner 之前建：薄壳每趟读它决定 bundle/cache）
             let project: Arc<RwLock<Option<latteset_core::project::ProjectState>>> =
                 Arc::new(RwLock::new(None));
             let settings: Arc<RwLock<Settings>> = Arc::new(RwLock::new(
@@ -106,17 +106,16 @@ pub fn run() {
             let overrides: Arc<RwLock<latteset_core::settings::ProjectOverrides>> =
                 Arc::new(RwLock::new(Default::default()));
 
-            // 装配点（方案 §3.2 / §4.1「装配点单一」）：装一个**可切换** runner ——
-            // 它每趟编译读一次 `settings.tectonic`（形态 / bundle / 缓存目录），
-            // **改设置即生效、不需要重启**（方案 §3.5 的设置面收口）。
-            // **D1：失败不静默回退** —— 选了库形态而没编进特性时显式报错（见 runner_switch）。
-            let runner: Arc<dyn latteset_core::scheduler::CompileRunner> =
-                Arc::new(runner_switch::SwitchableRunner::new(
-                    fs.clone(),
-                    progress,
-                    settings.clone(),
-                    app.path().app_cache_dir().ok(),
-                ));
+            // 装配点（阶段② D1：「薄壳 + 每趟读设置」）：只装一个内嵌 runner。
+            // 它**每趟编译**读一次 `settings.tectonic` 的 bundle/cache 重建 `TectonicLibRunner`
+            // ⇒ 资源设置改完即生效、不需要重启；形态唯一（内嵌 Tectonic，ADR-0015 决策 2），
+            // 没有形态分支、没有子进程回退。
+            let runner = commands::build_compile_runner(
+                fs.clone(),
+                progress,
+                settings.clone(),
+                app.path().app_cache_dir().ok(),
+            );
             // setup 闭包不是 tokio 上下文：用 tauri 的 runtime（任何线程可用）
             let (scheduler, scheduler_task) = Scheduler::create(runner, emitter);
             tauri::async_runtime::spawn(scheduler_task.run());
@@ -175,8 +174,6 @@ fn build_specta_builder() -> tauri_specta::Builder<tauri::Wry> {
             commands::synctex_inverse,
             commands::get_settings,
             commands::update_settings,
-            commands::lib_form_available,
-            commands::engine_form,
             commands::set_window_theme,
             commands::compile_math,
         ])
@@ -186,8 +183,9 @@ fn build_specta_builder() -> tauri_specta::Builder<tauri::Wry> {
             CompileErrorsEvent,
             // 编译中的部分 PDF（roadmap ㉞）：与 pdf-updated 分开，中间态不顶权威终态
             CompilePreviewEvent,
-            // 能力边界提示（ADR-0015 决策 4）：biber 由引擎调用外部程序（本机缺失/版本与 bundle 内
-            // biblatex 不匹配时失败），makeindex/glossaries 则不会被自动运行——检出即显式说明
+            // 能力边界提示（ADR-0015 决策 4）：biber 是外部程序（内嵌引擎不运行外部工具 ⇒ 不会调用
+            // biber、引用可能未解析、不生成 `.bbl`；backend=bibtex 走内建 BibtexEngine 不受影响），
+            // makeindex/glossaries 不会被自动运行 —— 检出即显式说明，不静默降级
             CompileNoticeEvent,
             ErrorsUpdatedEvent,
             PdfUpdatedEvent,

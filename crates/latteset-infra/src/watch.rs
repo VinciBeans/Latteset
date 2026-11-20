@@ -255,8 +255,8 @@ fn handle_settings_change(path: &Path, state: Arc<WatchState>) {
                 return;
             }
             if is_global {
-                // 与启动路径（`load_global`）共用同一条解析：**v1 → v2 迁移也在这里生效**
-                // （备份 + 落盘 + 一次性提示），否则手改旧文件的人永远看不到引擎统一的提示。
+                // 与启动路径（`load_global`）共用同一条解析：**v1 → v2 → v3 迁移也在这里生效**
+                // （备份 + 落盘 + 一次性提示），否则手改旧文件的人永远看不到引擎统一/形态固定的提示。
                 match state.storage.parse_global(&content).await {
                     Ok(parsed) => {
                         let overrides = state.overrides.read().await.clone();

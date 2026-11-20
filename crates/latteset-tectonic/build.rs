@@ -22,10 +22,16 @@
 //!
 //! 为什么落在本 crate：`crates/latteset-tectonic` 是 C 链的**唯一落点**（ADR-0012 / 方案 §4.2 的
 //! X-5），上游 bridge crate 的 build script 明确不管这件事（`tectonic_bridge_icu-0.2.4/build.rs:44-52`
-//! 只在 `-linux-` 上补 `icudata`）。放在这里也就不影响 `latteset-infra` 等默认构建成员。
+//! 只在 `-linux-` 上补 `icudata`）。
 //!
 //! kernel32 已由 Rust 默认链接行提供（`kernel32.lib` + `ntdll/userenv/ws2_32/dbghelp`），
 //! 其余 8 个逐条发出；重复发同一条库是无害的，缺失则会 LNK2019。
+//!
+//! **Windows 前置自检（阶段② §3.2 第 4 条，尽力提示）**：自阶段②起所有构建都需要 vcpkg
+//! （ADR-0015 决策 2）。缺 `VCPKG_ROOT`/`VCPKGRS_TRIPLET` 时，上游 vcpkg-rs 的报错**不指向环境**
+//! （实测：会炸成 "you need to install a pkg-config package for your OS" 之类），所以在链接补丁之前
+//! 先给一句可读的 panic + 可复制的修复命令。build script 执行顺序不保证 ⇒ 这只是尽力提示，
+//! 不是保证（真正缺库时上游仍会报错）。
 
 fn main() {
     println!("cargo:rerun-if-changed=build.rs");
@@ -34,6 +40,8 @@ fn main() {
     if target_os != "windows" {
         return;
     }
+
+    check_vcpkg_env();
 
     for lib in [
         "advapi32", // 注册表（__imp_RegCloseKey 等就缺在这里）
@@ -47,4 +55,34 @@ fn main() {
     ] {
         println!("cargo:rustc-link-lib={lib}");
     }
+}
+
+/// Windows 下 vcpkg 前置缺失 → **可读 panic**（含可复制命令），而不是让上游 build script 炸一句
+/// 与环境无关的报错。显式选择 system 后端（`TECTONIC_DEP_BACKEND=system`）时不拦。
+fn check_vcpkg_env() {
+    let backend = std::env::var("TECTONIC_DEP_BACKEND").unwrap_or_default();
+    if backend.eq_ignore_ascii_case("system") {
+        return;
+    }
+    let missing: Vec<&str> =
+        ["VCPKG_ROOT", "VCPKGRS_TRIPLET"].into_iter().filter(|k| std::env::var_os(k).is_none()).collect();
+    if missing.is_empty() {
+        return;
+    }
+    panic!(
+        "\n\
+         latteset-tectonic 构建前置缺失：Windows 下内嵌 Tectonic 必须走 vcpkg（ADR-0015 决策 2），\n\
+         但环境里没有：{}\n\
+         \n\
+         怎么修（复制即可跑，任选其一）：\n\
+         ① 只自检并打印环境（不编译）：\n\
+            pwsh -NoProfile -File scripts/with-tectonic-lib.ps1 -Mode check\n\
+         ② dot-source 同一脚本后再跑任意 cargo 命令（本 shell 内生效）：\n\
+            . ./scripts/with-tectonic-lib.ps1; cargo check -p latteset-tectonic\n\
+         ③ CI 见 .github/workflows/ci.yml 的 vcpkg setup 步骤（clone pin rev → bootstrap → install 六个端口）。\n\
+         \n\
+         说明：本检查只是尽力提示（build script 执行顺序不保证）；真正的 C 链来自 vcpkg triplet \n\
+         `x64-windows-static-release` 的六个端口：freetype harfbuzz graphite2 icu fontconfig libpng。\n",
+        missing.join(", ")
+    );
 }

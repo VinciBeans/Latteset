@@ -15,11 +15,11 @@ path = "src/bin/latteset-mcp.rs"
 [dependencies]
 latteset-core = { path = "../crates/../latteset-core" }
 latteset-infra = { path = "../latteset-infra" }
-# Tectonic **库形态**（路径 B，方案 §3.2 / ADR-0012）：可选依赖 + feature，**默认关**。
-# 关着的时候 headless 产物零原生依赖（不拉 freetype2/harfbuzz/ICU/graphite2 的 C 链、不需要 vcpkg）。
-# 打开：`cargo build -p latteset-server --features tectonic-lib`（外加运行期开关 LATTESET_TECTONIC_LIB=1）。
-# 与 `src-tauri/Cargo.toml` 的形态位同口径（方案 §6 P2 的复核入口就是这条 headless 路径）。
-latteset-tectonic = { path = "../latteset-tectonic", optional = true }
+# Tectonic 内嵌引擎（**唯一形态**，ADR-0015 决策 2）：非可选依赖 ⇒ 自阶段②起 headless 产物也始终
+# 带内嵌引擎，构建需要 vcpkg（入口：`scripts/with-tectonic-lib.ps1` / `npm run lib:check`）。
+# `network-bundle`：首次编译可联网取默认 bundle（ADR-0016 随包方案留③段再定）。
+# 与 `src-tauri/Cargo.toml` 的依赖口径一致（方案 §6 P2 的复核入口就是这条 headless 路径）。
+latteset-tectonic = { path = "../latteset-tectonic", features = ["network-bundle"] }
 serde.workspace = true
 serde_json = "1"
 tokio = { workspace = true, features = ["io-std"] }
@@ -28,10 +28,6 @@ thiserror.workspace = true
 tracing = "0.1"
 # 与工作区同源：要用 `EnvFilter`（`RUST_LOG` 细调日志级别）就必须带 `env-filter` 特性。
 tracing-subscriber = { workspace = true }
-
-[features]
-default = []
-tectonic-lib = ["dep:latteset-tectonic"]
 
 [dev-dependencies]
 tokio = { version = "1", features = ["full"] }

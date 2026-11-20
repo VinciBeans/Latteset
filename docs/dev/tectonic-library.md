@@ -1,82 +1,138 @@
-# Tectonic 库内嵌形态（契约与现状）
+# 内嵌 Tectonic 引擎（唯一形态）：构建、装配与契约
 
-> **这是什么、给谁看**：Tectonic「库内嵌」形态（路径 B）的构建入口、集成契约与验证现状。面向要构建/装配/复核这条路径的开发者与维护者。产品侧行为（引擎清单、形态位、超时与诊断语义）见 [design.md](../design.md) §3.2；runner 的逐层契约（输入四层、format、页哈希、bib 编排）见 [modules.md](./modules.md) §2.7。
+> **这是什么、给谁看**：阶段②（[ADR-0015](../adr/0015-tectonic-only-embedded-engine.md) 决策 2）之后，Tectonic 以**内嵌**为**唯一引擎形态**。本文写它的构建入口、环境前置、装配点、能力面、风险与验证入口，面向要构建 / 装配 / 复核这条路径的开发者。产品侧行为（Quick/Full 语义、超时与诊断、设置面）见 [design.md](../design.md) §2/§3；runner 的逐层实现契约（输入层、format、页哈希、bib 编排）见 [modules.md](./modules.md) §2.7。
+>
+> **本文事实有效期**：以 `test_file/phase2/REPORT-gates.md`（2026-11-20，T9）与 `test_file/build-env/REPORT-build-env.md` 的实测为准；这两份是工作区本地证据（未提交）。
 
 ## 1. 定位
 
 - **是什么**：把 Tectonic 引擎 crate 直接嵌进产品进程——自持 I/O 层（`IoProvider`：内存直喂输入 + 输出捕获 + format 自管）驱动 `CoreBridgeLauncher` → `TexEngine` → `XdvipdfmxEngine::process`，PDF 收尾原子替换到项目根。
-- **与子进程形态的关系**：两者并存，**设置面二选一**。形态位是全局设置 `settings.tectonic.lib_form`（GUI 的 `SwitchableRunner` 每趟编译读一次 ⇒ 改完即生效、不需重启）；ADR-0015 之后引擎恒为 Tectonic，形态位不再需要"只在 `engine == Tectonic` 时生效"那道闸门——真值表就是 `lib_form || env_forced`。运行期 `LATTESET_TECTONIC_LIB=1` 是**显式覆盖**，压过设置。**失败不自动回退**（D1）——回退是用户显式选回子进程形态。
-- **默认值是子进程**（`lib_form=false`）：库形态**不跑外部进程** ⇒ biber / makeindex / glossaries 的文档在它下面直接失败（检出即 `warn!`、`kind` 退回 `Quick`，由「引用待更新」兜底）。把默认切过去等于让这类文档开箱即败。
-  - ⚠ **biber 只在库形态下"完全跑不了"**：子进程形态会调用本机 biber（装了且与 biblatex 版本匹配就能生成参考文献），产品只是不自带（2026-11-16 实测，见 [ADR-0015](../adr/0015-tectonic-only-embedded-engine.md) 第 4 条）。
-- **它是正式的构建变体，不是实验开关**：开发默认构建**不含**它（主产物零原生依赖、不需要 vcpkg），**发布构建含**它（用户装到的包两种形态都能选）。
-- 子进程形态本身（命令、`-C` 条件化、缓存判定、失败文案）见 [design.md](../design.md) §3.2。
+- **唯一形态，不是构建变体**：子进程路径（`tectonic.exe` 命令构造、`-C` 缓存判定、进程树杀、stdout `[N]` 页进度）与 `tectonic-lib` feature / `LATTESET_TECTONIC_LIB` / `settings.tectonic.lib_form` **已全部删除**（`crates/latteset-infra/src/{runner.rs,tectonic/}` 整文件删除；`infra` 不再有 runner / tectonic 模块）。
+- **所有构建都需要 vcpkg**：`latteset-tectonic` 是 `src-tauri` 与 `crates/latteset-server` 的**非可选依赖**，不是"发布构建才带"的变体。`npm run tauri dev/build`、`cargo check/test -p latteset-server/-p latteset`、CI 默认 Windows 档、CLI 构建全部要过 §2 的环境前置。
+- **不启动外部进程、不读用户 TeX Live**：biber / makeindex / glossaries **不会**被自动运行（biber 的实测口径见 §4.3）。产品**没有回退形态**——bundle/缓存配置错误走 runner 的显式失败文案，不悄悄降级。
+- **ADR-0010 的第二落点**：`latteset-infra` 仍是默认依赖图里文件系统与进程的唯一落点；本 crate 是**外部依赖与 C 链的第二个落点**（ADR-0012 的 X-5 例外登记，见 §7）。
 
-## 2. 构建入口
+## 2. 构建入口（唯一）
 
-**唯一落点**：`scripts/with-tectonic-lib.ps1`（npm 侧 `lib:*`）。它一次做完三件事：① 校验 vcpkg 检出 / triplet 依赖 / 工具链，**缺项给可执行的修复命令**（此前是 build script 以 pkg-config 或 panic 的形式失败，文案不指向环境）；② 设 5 个环境变量（`TECTONIC_DEP_BACKEND=vcpkg`、`VCPKG_ROOT`、`VCPKG_DEFAULT_TRIPLET`、`VCPKG_DEFAULT_HOST_TRIPLET`、`VCPKGRS_TRIPLET`）并给 `RUSTFLAGS` 补 `-Ctarget-feature=+crt-static`（triplet 用 static CRT，Rust 侧必须同用，否则链接冲突）；③ 跑对应命令。**别再在别处抄这套环境**；CI 的 `build-windows-tectonic-lib` 档（版本 tag / 手动 dispatch）也走它。
+**唯一落点**：`scripts/with-tectonic-lib.ps1`。它一次做完三件事：① 校验 vcpkg 检出 / triplet / 端口 / 工具链，**缺项给可执行的修复命令**（而不是让 vcpkg-rs 或 build script 以不指向环境的文案 panic）；② 设 5 个环境变量（`TECTONIC_DEP_BACKEND=vcpkg`、`VCPKG_ROOT`、`VCPKG_DEFAULT_TRIPLET`、`VCPKG_DEFAULT_HOST_TRIPLET`、`VCPKGRS_TRIPLET`）并给 `RUSTFLAGS` 补 `-Ctarget-feature=+crt-static`（triplet 用 static CRT，Rust 侧必须同用，否则链接冲突）；③ 跑对应命令。**别再在别处抄这套环境**。脚本被 dot-source 时只设环境、不跑命令（CI / 手工 cargo 复用同一份口径）。
 
-| npm 脚本 | 作用 |
-|---|---|
-| `npm run lib:check` | 只校验前置（vcpkg / triplet / 工具链），不跑构建 |
-| `npm run lib:dev` | 起带 `tectonic-lib` 的 `tauri dev`（真机验证库形态） |
-| `npm run lib:build` | 出**含库形态**的发布包（等价 `tauri build --features tectonic-lib`） |
-| `npm run lib:test` | 跑带库形态的用例 |
-| `npm run lib:cli` | release 构建 headless CLI（`latteset-cli`，带库形态） |
+| npm 脚本 | 透传 | 作用 |
+|---|---|---|
+| `npm run lib:check` | `-Mode check` | 只校验前置（vcpkg / triplet / 端口 / 工具链），不跑构建 |
+| `npm run tauri dev` / `npm run tauri build` | `-Mode tauri dev|build` | 透传 `npx tauri …`；`tauri.conf.json` 的 beforeDev/Build 命令不变 |
+| `npm run lib:test` | `-Mode test` | 全仓 Rust 测试：`cargo test -p latteset-core -p latteset-infra -p latteset-server -p latteset-tectonic` |
+| `npm run lib:cli` | `-Mode cli` | release 构建 headless CLI（`latteset-cli`） |
 
-**前置**：vcpkg + `x64-windows-static-release` triplet + cmake / pkg-config / nasm + crates.io 网络。其中 **graphite2 / ICU / freetype2 / fontconfig / libpng 永远走外部探测，探测失败即 build script panic**（harfbuzz 随 crates.io 发布版内含源码，不踩空子模块坑）；这正是库形态与主产物必须分开构建的原因。
+**环境前置**：
 
-- **`build.rs` 的既有动作**：在 Windows 补发静态 ICU 需要的 8 个 MSVC 隐式系统库（`advapi32` 等），出处是 vcpkg 自己 `lib/pkgconfig/icu-uc.pc` 的 `baselibs`。**不加它 `cargo check` 过、`cargo test`/example 链接必失败**（`icuuc.lib(wintz.ao)` 未解析 `__imp_RegCloseKey`）。
-- **默认构建不含库形态的原因**：它的依赖闭包必然拉 C/C++ 链（freetype2 / harfbuzz / graphite2 / ICU / fontconfig / libpng，**21 个 native 标记**）。crate 因此是独立 workspace 成员，由根 `Cargo.toml` 的 `default-members` 排除在**不带 `-p`** 的构建之外；`tectonic-lib` feature 默认关。⚠ **feature 门控不免除依赖解析**：清单里存在可选依赖，任何构建都要能解析整棵依赖图。
-- `latteset-infra` **不依赖** `latteset-tectonic`（否则上面那条代价原样回来）；要用库形态只能经 `src-tauri` / `latteset-server` 的 feature。
+- **vcpkg 检出**：默认 `$env:VCPKG_ROOT`，否则 `<repo>/test_file/vcpkg`（本机夹具，被 gitignore）；pin rev `a62ce77d56ee07513b4b67de1ec2daeaebfae51a`（与 `.gitignore` 的复现命令、CI 一致）。
+- **triplet**：`x64-windows-static-release`，六个直接端口 `freetype harfbuzz graphite2 icu fontconfig libpng`（传递依赖 brotli / bzip2 / dirent / expat / zlib 由 vcpkg 拉）。缺项时 `lib:check` 直接给出 `vcpkg install …` 命令（与 CI 同一条）。
+- **工具链**：`cmake` / `pkg-config` / `nasm` 只在**要重建 ports** 时才需要；端口已装好时它们不在 PATH 只产生警告，不阻塞构建。
+- **MSVC**：任意 VS 2022/2026 均可（本机实测 MSVC 14.44 与 14.51 都能编）。
+- **本机 DSH 会话的额外一步**：若工作区被沙箱打了 **Low 完整性标签**（现象是 `cl.exe D8050` / `lib.exe LNK1104`），必须把 `TMP`/`TEMP` 指到工作区内目录再跑构建：`$env:TMP=$env:TEMP='<repo>\src-tauri\target\.tmp'`。根因、`icacls` 彻底修法与绕法见 [troubleshooting.md](../troubleshooting.md)「D8050 / LNK1104」条。**CI 与普通终端没有这个标签，不需要这一步。**
+- **构建代价（三项 `[未测]`）**：干净机器冷/热墙钟、峰值内存、安装包体积增量均未测；CI 内嵌档冷构建记录为 +15–20 min，靠 `rust-cache` 与 `installed/` 缓存缓解（见 `.github/workflows/ci.yml` 的 `build-windows`）。
 
-## 3. 集成要点
+**CI**：Windows 默认档就是内嵌档——checkout 钉 rev 的 vcpkg → bootstrap → 缓存 `installed/`+`downloads/` → 装六端口 → `-Mode check` → `-Mode test` → `-Mode tauri build`（NSIS 冒烟）。**不再有** `build-windows-tectonic-lib` 窄触发档（D5）。Ubuntu 档只跑前端 + core/infra（server 已非可选内嵌，Linux 不跑 server，R11 决策）。
 
-- **crate 落点**：`crates/latteset-tectonic/`（`src/{lib,io,status,bundle,runner,synctex}.rs` + `examples/`）。
-- **装配点两处**：GUI（`src-tauri`）装 `SwitchableRunner`，由每趟编译读到的全局设置决定形态；headless（`latteset-server`）的 `build_runner()` 在**装配期一次性**决定、**只看 `LATTESET_TECTONIC_LIB`**（不读 `settings.tectonic.lib_form`，也不看 `engine`）⇒ GUI 里打开「库内嵌」**不会**影响 CLI/MCP，headless 要用库形态必须显式给环境变量。
-- **调用序列摘要**：`TectonicIo`（`IoProvider`）→ `MinimalDriver` → `CoreBridgeLauncher` → `TexEngine`（format 趟 → 排版趟）→ `XdvipdfmxEngine::process`。**没有**"向 `ProcessingSession` 注入 `IoProvider`"这条写法（0.17 无该入口，其能力上限也只有内存输入 + 内存产物 + `StatusBackend`，没有逐页事件）。逐层契约（输入四层与"本次产物层"、输出镜像与 format 不镜像、format 键 = bundle digest、时间源、页哈希、bib 与重跑循环、失败面、分阶段计时）见 [modules.md](./modules.md) §2.7。
-- **同进程引擎全局互斥**：`with_global_lock` + `static ENGINE_LOCK` 把**整个 C 引擎调用**串起来（上游理由：C 侧 `setjmp/longjmp` 跨 FFI 是 UB）⇒ 排版趟与转换趟**不可能并行**（实测：4 线程并发墙钟 533 ms == 单线程跑 4 次 541 ms，零并行收益），编译在 `spawn_blocking` 里自建自跑。**这条决定了「编译中预览」只能在趟边界出图**。
-- **ADR-0010 裁决与必须的例外（X-5）**：本 crate 是**外部依赖 / C 链的第二个落点**；`latteset-infra` 仍是默认依赖图里文件系统与进程的唯一落点；`src-tauri` 仍不出现 `std::fs`/`std::process`；**`IoProvider` 那条读写路径必须代理到 core `FileSystem`**（引擎向我们要文件时不许直读盘）。登记在案的例外：
-  - `IoProvider` 是**同步** trait，而 core `FileSystem` 是 async ⇒ 同步上下文的磁盘读写只能在 `spawn_blocking` 里用 `std::fs`：建多层 format 缓存目录（trait 的 `create_dir` 是**单层**语义）、`pages`/`bibsig` 缓存读写、预热上一趟中间产物、PDF 原子替换、自建 `tmp/`。**同步上下文是这条例外的根因**；将来出现第二个消费者时应给 trait 补方法，而不是继续扩散 `std::fs`。
-  - **C 库自己读文件**（fontconfig/freetype2/harfbuzz/graphite2/ICU 的字体与 config）**无法**经 `FileSystem`（X-1）。
-  - **C 代码的 abort/panic 无法树杀**，取消只能做到"下一个 `IoProvider` 回调返回错误"（X-3）⇒ 取消延迟必须如实写进 UI 语义。
-  - **PDF 加密路径**的 C 层 `getenv("SOURCE_DATE_EPOCH")` 无 API 可注入/屏蔽——**未决策**，不是结论。
-  - 输入路径**无包含性检查**是上游设计立场（`FilesystemIo` 文档原文：不做 `../../../` 约束）；子进程形态下用户本就拥有其可读文件 ⇒ 信任模型等价，库形态不改这一点。
-- **bundle 口径**：`tectonic_bundles::detect_bundle(source, only_cached, Some(产品缓存目录))`；目录 → `DirBundle`（**必须自带 `SHA256SUM`**，裸 TeX Live 目录不能直接用）、`.zip` → ZipBundle、`.ttb` → TTBFsBundle，**其他扩展名 → `None`**。**绝对 Windows 路径会被当 URL scheme 吃掉** ⇒ 存储形态必须是 `file:///…` 或相对路径（设置面入口把 `E:\…` / `E:/…` / 带引号的"复制为路径"统一补成 `file:///…`）。空目录会被**静默当合法 bundle**（`file_count=0`，直到引擎要文件才报错）⇒ 产品侧自校验 + 分类文案（路径不存在 / 空目录 / 非 bundle 三类在库层是同一个 `None`）。`-b <本地 .tar>` 不可用。
-- **缓存口径**：优先序 **显式设置 > 环境变量 > 宿主默认**；`<cache>/formats` 存 format、`<cache>/bundles` 存 bundle。format 键 = **bundle digest**（`{digest}-latex-33.fmt`，换 bundle 必换文件）；**默认落点是项目目录——不显式注入就会把 24 MB 的 `.fmt` 扔进用户项目**。缓存目录**无进程间锁**（`.lock` 内容实测是 Unix 秒、不是锁），临时名用 `process::id()` ⇒ 同进程内并发会撞同一临时名：产品侧必须按缓存目录串行化或每任务独立目录。
-- **确定性口径**：库内**禁止** `build_date_from_env`（会把进程环境里的 `SOURCE_DATE_EPOCH` 吃进来）、**必须**显式 `build_date(SystemTime::now())`（上游默认值是 `UNIX_EPOCH`，忘写一行即把"`\today` 印 1970"变成默认行为）；一切 env 只经 `Command::env` 给子进程，库内**不** `std::env::set_var`。**"PDF 逐字节相等"不得作为 Tectonic 档的断言**（元数据/加密层不可控）。
+## 3. 装配点
 
-## 4. 实施现状（P0–P8 闸门）
+内嵌唯一后只剩"**每趟按当前设置重建 runner**"这一种装配，没有形态判定、没有 feature 门槛：
 
-| 闸门 | 现状 |
-|---|---|
-| **P0** `-C` 条件化与首次获取引导 | **已落地**（属子进程档，不属库形态）：`-C` 只在拿到缓存正向证据时加；判据 LIB-8，命令构造有单测断言 |
-| **P1** 依赖引入与最小可编译 | 落盘部分**已落地**（crate 落点 + `default-members` + 提交 `Cargo.lock`）；**构建代价三项仍未测**——干净机器的冷/热墙钟、峰值内存、体积增量（受外部前置阻塞：vcpkg + cmake/pkg-config/nasm + 网络） |
-| **P2** 骨架：库形态 runner + 内存产物 | **已落地**；可复核入口 `node scripts/validate-pdf.mjs` |
-| **P3** 自定义 I/O + 缓存隔离 + 离线 | **已落地**：三类 bundle 失败各有文案、项目目录不落 `.fmt`、format 落产品缓存 |
-| **P4** 常驻进程与 format 复用（J1） | **判决不成立**：进程地板仅 **9.3 ms**，轻档净收益 −26 ms，**重档（28 页多文件 Full）第 3 轮起退化、稳态比每次起进程慢 31%**（1450 vs 1109 ms，`passes`/`req_*` 每轮相同 ⇒ 是同进程内存压力把全部操作一起拖慢）。⇒ 按回退点**不投入常驻**，改投 bib 跳过判据与 bundle/format 常驻化 |
-| **P5** 编译中页事件（J2） | 官方 API **不成立**，自持输出层逐块解析**成立**（粒度 ≤16 KB 字节块，尾页可能迟到最末）。I/O 层的逐块钩子已预留，但**当前没有产品侧消费者**（`XdvParser` 只出现在 `examples/xdvscan.rs`）；提前量阈值 LIB-3d **未补测**。⚠ 产品侧的「编译中预览」走的是**趟边界出图**（§3 线程模型），不是这条逐块钩子 |
-| **P6** 内存 XDV → PDF（J3） | **已落地（整份路线）**：捕获表里的 XDV → `XdvipdfmxEngine` → 原子替换到项目根。**前缀（截断）路线按判决不做**（三种截断点一律 exit=1、0 字节产出） |
-| **P7** UI / 状态 / 回退可见性 | **已落地**：状态栏形态 chip（`子进程` / `库内嵌` / `库形态不可用`），判定由后端纯函数算一次；D1 的显式失败已真机验证（无"已回退"文案） |
-| **P8** 验证与收口 | 文档与 ADR **已收口**（ADR-0012 已接受、本文档与 [modules.md](./modules.md) §2.7 已成文）；计划里的"一次独立验证"**没有单独进行**——验证随各次改动做 |
+| 入口 | 落点 | 契约 |
+|---|---|---|
+| GUI 主编译 | `src-tauri/src/runner.rs` 的 `EmbeddedRunner`（薄壳） | 只持 `fs / progress / settings / app_cache_dir`；每趟 `compile` 读一次 `settings.tectonic` 的 bundle / cache 后重建 `TectonicLibRunner` ⇒ **资源设置改完即生效、不需要重启**（D1 = R3 选 A） |
+| GUI 公式预览 | `src-tauri/src/commands.rs` 的 `build_compile_runner` | 与主编译**共用**同一装配函数；不再有第三处口径漂移 |
+| headless（CLI/MCP） | `crates/latteset-server/src/lib.rs` 的 `build_runner` | 只构造 `TectonicLibRunner`；读 `Session.settings.tectonic`（D4） |
 
-## 5. 风险与未测清单
+**资源优先级（GUI 与 headless 同序）= 显式设置 > 环境变量 > 宿主默认**：
 
-**风险（编号用 `LBR-*`，与原测试计划的 `R-*` 区分）**：构建链变重与 CI 成本（21 个 native/C 链标记，Windows 必须维护 vcpkg）；**原生探测是硬失败**（少一个 port 即整仓构建失败）；CJK 字体 / fontconfig（库形态字体走 bundle，须坐实"中文不依赖本机 fontconfig"）；bundle 体积与许可（**G-L1..G-L9 未全绿前不得把 Tectonic/bundle 放进任何发行物**；C 依赖许可分布 `[未定]`）；Windows 未签名分发（与 ADR-0003 叠加，库形态不改变这点）；TL-less 下 SyncTeX 不可用（**库形态不解决**，仍依赖本机 CLI）；上游 0.x API 变更（钉 `Cargo.lock`，`IoProvider` 无 `create_output`/`output_file_names`/`output_open`）；取消语义退化（X-3）；缓存目录无进程间锁；`.fmt` 落错目录；**子目录 `\include` 的中间文件与搜索根**（U-14，最高风险的未验证项）；路径 B = 自研驱动取向（已走 ADR-0005 的决策门并获批准，登记在 ADR-0012）。
+- **bundle**：`settings.tectonic.bundle`（非空）→ `LATTESET_TECTONIC_BUNDLE` → 上游默认。上游默认是**网络地址**（`network-bundle` 特性由 `src-tauri` / `latteset-server` 的 manifest 打开）；本地目录 bundle 必须写 `file:///…` 或相对路径（**绝对 Windows 路径会被上游当 URL scheme 吃掉**）。
+- **缓存目录**：`settings.tectonic.cache_dir`（非空）→ `LATTESET_TECTONIC_CACHE` → 宿主应用缓存目录（GUI：Tauri 应用缓存；headless：`<配置目录父目录>/cache`）。缓存**必须**有落点：上游 format 默认落**项目目录**，不注入会把 ~24 MB 的 `.fmt` 扔进用户项目。
 
-**未测（不得当成立）**：构建代价三项；"空缓存 + 有网"的真实 bundle 下载行为与文案（U3）；`ProcessingSession` 全管线"TeX 源码内存输入 → 内存输出"（U1，仅作路径 A 的保留记录）；排版段 ≤16 KB 粒度直接观测（U2）；转换段"逐页 PDF 已可渲染"（U4）；内存层 `.log`/`.synctex.gz` 的可用性（U5）；**编辑触发档收敛预算的机器自适应**（阈值现为常数、按发布档标定，其它机器/CI 上"一趟耗时"的分布未测）；按 D-1/D-2 注入时间源后跨天两次运行的 PDF 是否逐字节相等；PDF 加密路径的 `SOURCE_DATE_EPOCH`（**未决策**）。
+## 4. 能力面（阶段②实测口径）
 
-**明确不做（不是未完成项）**：页级即时 flush（不经上游改 C 不可能，已写成需求项交上游）；字节级 I/O 拦截（需改引擎/文件系统驱动/API hook，且无消费方）；"编辑器未保存缓冲直喂引擎"（与 ADR-0007 冲突）；裸前缀 XDV → 部分 PDF（**已证伪**：要做得自己定义前缀协议并补后同步）。
+### 4.1 页进度与中间态
 
-## 6. 证据
+- **页进度来自捕获的 XDV 完整页数**：内嵌形态没有子进程 stdout 的 `[N]` 可扫；runner 在**每趟排版收尾**从捕获表里的 `<stem>.xdv` 数完整页（`core::xdv::complete_pages`），数值变大才 `progress.pages` ⇒ `compile-progress`。**粒度 = 趟边界**，与终态页哈希同一份权威数据。
+- **编译中预览**（`compile-preview`）：趟边界把已完成页缝成 `tmp/<stem>.preview.pdf` 原子替换；同一进程内引擎有全局锁（`ENGINE_LOCK`），排版趟与转换趟不能并行 ⇒ **只能在趟边界出图**。内嵌唯一后该事件**恒可用**。
+- **编译中错误**（`compile-errors`）：由引擎状态后端在 `MessageKind::Error` 时上报**非权威中间态**（无文件/行号、无诊断）；终态 `ContentError` 仍由 `.log` 解析给出完整清单。**提前量未测** `[未测]`（原 `live_errors` 用例已随子进程路径删除）。
+- **`compile-notice`**：由内嵌 runner 在**成功路径**发（外部工具能力边界，见 §4.3），GUI 落到状态栏 chip，不进 `errors`。
 
-- **收口证据** [../archive/research/tectonic-lib-evidence.md](../archive/research/tectonic-lib-evidence.md)：能真编出 PDF（中文夹具 1 页 / 7590 B，文本层可抽回）、bib 趟与收敛实测、页哈希与 A/B/C 的 GUI 真机矩阵 V1–V7、常驻档判决数字、编辑触发档收敛预算数字与反例。
-- **门禁与纪律** [../archive/research/tectonic-test-plan.md](../archive/research/tectonic-test-plan.md)：编号空间与判据（`LIB-*` / `INT-*` / `G-L*` / `U-*` / `R-*`）。
-- **方案与裁决（只读素材）** [../archive/tectonic-library-plan.md](../archive/tectonic-library-plan.md)：§3.2 crate 落点裁决、§3.4 路径 B 九步调用序列、§4.2 必须登记的例外、§5 bundle/缓存/确定性、§6 P0–P8 判据与复核命令。
-- **ADR**：[ADR-0012](../adr/0012-tectonic-library-form-engine.md)（选定路径 B + X-5 偏离 + 批准记录）、[ADR-0010](../adr/0010-infra-crate-boundary.md)（infra 是默认依赖图的唯一落点）、[ADR-0005](../adr/0005-latexmk-first-incremental-next.md)（**保留条款**："性能瓶颈出现时以预算为标尺评估是否自研驱动"——本次正是触发该条款并获批准，ADR-0005 本身**不改**）、[ADR-0014](../adr/0014-tectonic-first.md)（Tectonic-first：新功能的基准形态，默认引擎已切 Tectonic、形态位仍默认子进程）。
-- **复核脚本（已入仓）**：`scripts/validate-pdf.mjs`、`scripts/bench-tectonic-lib.mjs`（`--runs 3 --mode fresh|resident`）、`scripts/tectonic-lib-xdvscan.mjs`。**仍缺** `scripts/bench-tectonic-build.ps1`（P1 的构建补测入口，当前实现只在 `test_file/research-tectonic-lib/build-spike/` 下的开发期脚本里）。`test_file/research-tectonic-lib/**` 只作**开发期原始证据**，不作复核入口。
+### 4.2 超时与取消
 
-## 7. 新实测证据的落点约定
+- **超时证据 = `.log` + 引擎状态环尾部 + 已上报页**：内嵌形态的日志边写边在**内存**里（不像子进程要等收尾落盘），状态后端另外保留状态环；证据合并后交给同一套 `diagnose_timeout` ⇒ 诊断文案以"**引擎输出显示…**"起头，不猜因果。
+- **取消 / 超时是协作式的（X-3）**：没有进程可树杀，置位后每个 `IoProvider` 回调入口立刻报错，引擎在**下一个 I/O 回调**处中止。延迟必须如实写进 UI 语义（ADR-0015 负面项）；手动终止仍按设计只呈现 `Aborted`、不产证据条目。
+- **真实超时路径 `[未测]`**：由单测（`timeout_evidence_merges_log_and_status_tail_and_observed_pages` 等）覆盖，未构造真实超时真编。
 
-- 新的实测结论沉淀进**本文档**或 [design.md](../design.md) 的对应小节；复核脚本进 `scripts/`。
-- **`docs/archive/` 不再接收新证据**（归档只读）：历史约定「结论文档放 `docs/research/`」已随归档失效，历史结论只留在 `../archive/research/` 里作为带日期的证据。
-- `test_file/**` 与 `examples/` 下的原始证据不入库、不作复核入口。
+### 4.3 外部工具（重要：内嵌**不跑**外部工具）
+
+- **biber**：内嵌形态**不会调用外部 biber**。T9 实测：本机 PATH 上有真 biber 2.21，编译**不跑它**、**不产 `.bbl`**，只按 `.run.xml` 里的 `<binary>biber</binary>` 发一条 WARN 级 `compile-notice`，`kind` 如实退回草稿态。`backend=bibtex` 的文档走**内建 `BibtexEngine`** 正常生成 `.bbl`（实测 PDF 文本含 `Knuth`/`TeXbook`），**不会**误报 biber。
+- **makeindex / glossaries**：同样不自动运行，检出 `.idx` / `.glo` 即 `compile-notice`（索引 / 术语表为空）；**真编夹具 `[未测]`**（仅单测覆盖三类提示）。
+- **`.ins` / `.dtx` 源码版模板提示保留**：阶段① `enrich_source_release_hints` 的语义已搬进内嵌 runner 的失败路径（D7），缺 `.cls` 且项目里有同名 `.ins` 时仍给"先执行 `xelatex X.ins`"。
+- **文案纪律**：不得写成"引擎会调用 biber"或"引擎不支持 biber"；正确口径是"**引擎依赖外部 biber，而内嵌形态不会替你运行**"。
+
+### 4.4 Quick / Full
+
+- **Quick = 请求强度，不是固定档**：编辑触发请求同样走重跑循环（含 bib 趟），**预算内**收敛就按实际结果报 `full`（前端 `draft=false`，不排空闲收敛）；三重闸门 = `passes < 3` ∧ 第 1 趟 < 1000 ms ∧ 累计 < 2000 ms。超出预算或检出外部工具即停在草稿态。
+- T9 实测：热缓存 Quick 请求 75 ms、`upgraded_from_quick=true`（已收敛如实报 full，不虚报草稿）；冷缓存 Full 1,200 ms（format 974 ms + 排版 149 + 转换 76）。
+
+### 4.5 页哈希与 bundle
+
+- **页哈希恒可用**（XDV 在捕获表里）：`page_hashes` 喂 `core::xdv`，缓存名固定 `tmp/<stem>.tectonic.pages`；**空表仍只表示"无法判定"**（XDV 缺失/损坏）⇒ 前端全量刷新，不能当死代码删。
+- **bundle 三类**：目录 → `DirBundle`（必须自带 `SHA256SUM`，裸 TeX Live 目录不能直接用）、`.zip` → ZipBundle、`.ttb` → TTBFsBundle，其他扩展名 → `None`；空目录会被静默当合法 bundle（`file_count=0`）⇒ 产品侧自校验 + 分类文案。`-b <本地 .tar>` 不可用。
+- **format**：键 = bundle digest（`{digest}-latex-33.fmt`，换 bundle 必换文件），落点 `<cache>/formats/`；算不出缓存落点显式报错，**不落项目目录**。缓存目录无进程间锁，产品侧按缓存目录串行化（引擎全局锁天然串行）。
+- **确定性**：库内**禁止** `build_date_from_env`、**必须**显式 `build_date(SystemTime::now())`；"PDF 逐字节相等"不得作为 Tectonic 档的断言（元数据/加密层不可控）。
+
+## 5. 风险与未测
+
+**风险**：
+
+- **bundle 分发方案待③段重定**：[ADR-0016](../adr/0016-ship-bundle-offline.md) 原定"随包完整宏包集"，实测完整默认 bundle ≈ **2.88 GB** ⇒ 随包不可行。当前默认走 `network-bundle`（bundle = null ⇒ 上游网络地址 ⇒ **首次联网取包**，之后复用本机缓存），用户可显式配本地 bundle。**联网默认路径 `[未测]`**（T9 用本地 `DirBundle` 夹具验证）。
+- **构建面变重**：所有构建（含 `tauri dev`、CI）都需要 vcpkg + 六端口；缺一个 port 即整仓构建硬失败。
+- **没有回退形态**：内嵌引擎的 bug 没有"切回子进程"的逃生门；C 层 abort/panic 不可树杀，取消延迟如实写进 UI。
+- **U-14（子目录 `\include` + 中文路径）**：已从"最大未验证风险"变为**已跑绿**（T9 内嵌形态 exit 0 / 3 页 / 0 个 U+FFFD，`tmp/章节/` 由产品自建）；CI 夹具仍待补。
+- 上游 0.x API 变更（钉 `Cargo.lock`）；`.fmt` 落错目录；缓存无进程间锁；**安装包体积增量 `[未测]`**；常驻档（P4）判决不成立（历史，不再投入）。
+
+**未测（不得当成立）**：
+
+- 构建代价三项（干净机器冷/热墙钟、峰值内存、体积增量）；
+- **真机窗口 / 窗口内可编辑**：T9 会话因工作区 Low 完整性标签写不了 `%LOCALAPPDATA%`，WebView2 起不来 ⇒ `[未测-环境限制]`；替代证据 = 启动时长 + MCP bridge + watch 线程就绪 + bindings 自动导出 + headless 全链路真编（见 §6）；
+- 联网默认 bundle 的真实下载行为与文案；
+- 真实超时真编；makeindex / glossaries 真编；
+- 安装包（NSIS）冷启动与体积。
+
+## 6. 验证入口
+
+| 要验的东西 | 入口 | 当前结果（T9，2026-11-20） |
+|---|---|---|
+| 构建前置 | `npm run lib:check` | exit 0（仅 nasm/pkg-config 不在 PATH 的警告） |
+| core | `cargo test -p latteset-core` | 268 passed / 0 ignored |
+| infra | `cargo test -p latteset-infra` | 40 passed / 0 ignored |
+| 内嵌 crate | `cargo test -p latteset-tectonic` | 44 passed / 1 ignored；`-- --ignored` 下真编 1 passed |
+| headless | `cargo test -p latteset-server` | lib 12 passed / 4 ignored + cli 8 passed；`-- --ignored` 4 个真编全过 |
+| MCP 协议链路 | `cargo test -p latteset-server --test mcp_stdio` | 5 passed / 1 ignored（`--ignored` 下真编过） |
+| 全仓 Rust（唯一入口） | `npm run lib:test` | **377 passed / 6 ignored** |
+| 前端构建 / 单测 | `npm run build` / `npm run test` | 0 error；**17 files / 151 tests passed** |
+| bindings 生成物 | `src/bindings.ts` + T7 核对脚本 | 13/13 PASS（命令 18 条 / 事件 9 个与 Rust 一致） |
+| headless 真编（唯一证据链） | `latteset-cli --project <夹具> compile` + `node scripts/validate-pdf.mjs` | U-14 中文/子目录 exit 0（3 页、0 U+FFFD）；Full 1,200 ms；Quick 75 ms；内容错误精确归属 `chapters/ch1.tex:3`；biber/bibtex 对照见 §4.3 |
+| 启动时长 | `npm run tauri dev`（唯一入口） | 热增量到 watch 线程 **5.78 s**；强制重编 **12.96 s**（≤60 s） |
+| 真机窗口/可编辑 | 同一命令 + tauri server MCP | **`[未测]`（会话环境限制）**，替代证据见上；需在可写 `%LOCALAPPDATA%` 的会话补做 |
+
+复核脚本仍在仓：`scripts/validate-pdf.mjs`（PDF 页数/文本层断言）、`scripts/tectonic-lib-xdvscan.mjs`（XDV 页表复核）。`scripts/bench-tectonic-lib.mjs` 原用途是**库形态 vs 子进程 A/B 对照**——对照对象已删除，只作历史入口保留，不要拿它判定当前实现。
+
+## 7. ADR-0010 裁决与必须的例外（X-5，继续有效）
+
+`latteset-infra` 仍是默认依赖图里文件系统与进程的唯一落点；`src-tauri` 仍不出现 `std::fs`/`std::process`；**`IoProvider` 那条读写路径必须代理到 core `FileSystem`**（引擎向我们要文件时不许直读盘）。登记在案的例外：
+
+- `IoProvider` 是**同步** trait、core `FileSystem` 是 async ⇒ 同步上下文的磁盘读写只能在 `spawn_blocking` 里用 `std::fs`（建多层 format 目录、pages/bibsig 缓存、预热中间产物、PDF 原子替换、自建 `tmp/`）。**同步上下文是这条例外的根因**。
+- **C 库自己读文件**（fontconfig/freetype2/harfbuzz/graphite2/ICU 的字体与 config）**无法**经 `FileSystem`（X-1）。
+- **C 代码的 abort/panic 无法树杀**，取消只能做到"下一个 `IoProvider` 回调返回错误"（X-3）⇒ 取消延迟必须如实写进 UI 语义。
+- **PDF 加密路径**的 C 层 `getenv("SOURCE_DATE_EPOCH")` 无 API 可注入/屏蔽——**未决策**，不是结论。
+- 输入路径**无包含性检查**是上游设计立场（`FilesystemIo` 文档原文：不做 `../../../` 约束）⇒ 内嵌形态不改这一点。
+
+## 8. 证据与历史
+
+- **阶段②验证据**：`test_file/phase2/REPORT-gates.md`（T9 全量门禁 + 内嵌真编 + 启动时长；工作区本地、未提交）、`test_file/build-env/REPORT-build-env.md`（D8050 根因与环境结论）。
+- **ADR**：[ADR-0015](../adr/0015-tectonic-only-embedded-engine.md)（唯一引擎 + 唯一形态，②段执行记录见文末）、[ADR-0012](../adr/0012-tectonic-library-form-engine.md)（路径 B + X-5 例外）、[ADR-0010](../adr/0010-infra-crate-boundary.md)（crate 边界）、[ADR-0016](../adr/0016-ship-bundle-offline.md)（bundle 分发，待③段重定）。
+- **历史方案（只读素材）**：[../archive/tectonic-library-plan.md](../archive/tectonic-library-plan.md)、[../archive/research/tectonic-lib-evidence.md](../archive/research/tectonic-lib-evidence.md)、[../archive/research/tectonic-test-plan.md](../archive/research/tectonic-test-plan.md)。**`docs/archive/` 不再接收新证据**；新结论写进本文档或 [design.md](../design.md) 对应小节，复核脚本进 `scripts/`。
+- **P0–P8 闸门表**：已随②段收口退役（本文 §1–§6 是它的现行替代）；历史判据留在归档测试计划里。

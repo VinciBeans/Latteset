@@ -47,3 +47,34 @@
 ## 回退
 
 **回退成本高**：删掉的是整条子进程路径与三个引擎的命令构造，恢复要靠 git 历史反打，并且用户可见行为（不再要求装 Tectonic/TeX Live）会随之改变；这正是本决策需要单独成 ADR 的原因。若内嵌形态出现阻塞级问题，优先修内嵌形态，而不是恢复矩阵。
+
+## ②段执行记录（2026-11-20，只记录执行事实，不改本决策正文）
+
+> 性质：本 ADR 决策 2 的施工记录与验收证据。数字与结论来自 `test_file/phase2/REPORT-gates.md`（T9，工作区本地、未提交）与 `test_file/build-env/REPORT-build-env.md`。**不改变**上面任何决策条文。
+
+**落地范围**
+
+1. **代码**：`crates/latteset-infra/src/runner.rs`（1844 行）与 `crates/latteset-infra/src/tectonic/` **整文件删除**；`src-tauri/src/runner_switch.rs` 删除，换成 `src-tauri/src/runner.rs` 的 `EmbeddedRunner` 薄壳（每趟按当前设置重建 `TectonicLibRunner` ⇒ bundle/cache 改完即生效）；`src-tauri` 与 `latteset-server` 对 `latteset-tectonic` 改为**非可选依赖 + `network-bundle`**；根 `Cargo.toml` 删除 `default-members`。headless `build_runner` 读 `Session.settings.tectonic`（显式设置 > 环境变量 > 宿主默认）。`lib_form_available` / `engine_form` / `EngineForm*` 命令与 DTO 删除（命令面 18 条），`src/bindings.ts` 重新生成，T7 核对 13/13 PASS。
+2. **设置 v3**：`SCHEMA_VERSION = 3`；`TectonicSettings` 只剩 `bundle` / `cache_dir`；迁移链 **v1→v2→v3**，按迁移源版本备份 `.v1.bak` / `.v2.bak`（已有不覆盖），两条 v3 notice（`form-embedded-v3` 恒加、`subprocess-form-removed-v3` 仅旧值 `lib_form == false`）。`LATTESET_TECTONIC_LIB` 已删除，启动时检测到打一条 warn。
+3. **构建/CI**：`scripts/with-tectonic-lib.ps1` 成为唯一入口（`-Mode check|tauri|test|cli`），`npm run tauri dev/build`、`lib:test`（全仓 4 crate）、`lib:cli` 全走它；CI 默认 Windows 档改为内嵌构建并**删除**独立的 `build-windows-tectonic-lib` 档；Ubuntu 档不再跑 server（R11）。
+4. **前端**：状态栏形态 chip、设置页形态选择、「已排版 N 页」保持（页进度改由内嵌形态给出）；两个 spec 同步改，vitest 151 passed。
+5. **文档**：`docs/` 与 `README.md` 按"内嵌唯一"收口（`docs/dev/tectonic-library.md` 重写、`modules.md`/`design.md`/`glossary.md`/`cli.md`/`troubleshooting.md`/`roadmap.md` 同步）。
+
+**验收结果（T9，全部 PASS；证据见报告）**
+
+| 项 | 结果 |
+|---|---|
+| Rust 用例 | core 268 passed；infra 40 passed；tectonic 44 passed / 1 ignored（`--ignored` 真编通过）；server lib 12+4 / cli 8 / mcp_stdio 5+1；`npm run lib:test` 合计 **377 passed / 6 ignored** |
+| headless 真编（唯一证据链） | U-14 中文目录+中文子目录 `\include` exit 0（3 页、0 U+FFFD）；冷缓存 Full 1,200 ms；热缓存 Quick 请求 75 ms（如实报 full）；内容错误精确归属 `chapters/ch1.tex:3`；PDF 校验全过 |
+| 启动 | 热增量到 watch 线程 **5.78 s**；强制重编 **12.96 s**（≤60 s） |
+| 前端 | `npm run build` 0 error；`npm run test` 17 files / 151 tests |
+| 绑定生成物 | 13/13 PASS |
+| 真机窗口/可编辑 | **`[未测]`（会话环境限制）**：工作区 Low 完整性标签导致 WebView2 起不来；替代证据（启动时长 / MCP bridge / watch 线程 / bindings 自动导出 / headless 全链路真编）见报告 §2.1 |
+
+**实测口径修正（记录用，不改决策）**
+
+- **biber**：②段内嵌形态**不调用外部 biber**（T9 实测：本机 PATH 上有真 biber 2.21 也不被调用、不产 `.bbl`，只发 `compile-notice`；`backend=bibtex` 由内建 BibtexEngine 出 `.bbl`）。本 ADR 第 4 条 2026-11-16「子进程形态会调用本机 biber」那半，随子进程形态一并删除 ⇒ **②段起应读作"内嵌形态不跑外部 biber"**；决策 4 的"显式诊断、不静默降级"要求不变。
+- **`-C` / stdout `[N]` / 树杀**：随子进程路径删除，不再有对应语义；取消改为协作式（X-3），延迟如实写进 UI。
+- **构建环境**：本机此前记录的"无 vcpkg / `cl D8050`"被证伪——vcpkg 在 `test_file/vcpkg` 可用，D8050 根因是工作区 Low 完整性标签（绕法：`TMP`/`TEMP` 指到工作区内目录；彻底修：`icacls` 改回 Medium）。属环境归属，不是本决策的代价项变化。
+
+**遗留（交③段）**：六档 cold/noop/edit 基线 `[未测]`；联网默认 bundle 的下载行为 `[未测]`；安装包体积增量 `[未测]`；真机窗口可编辑性需在可写 `%APPDATA%` 的会话补验；bundle 分发方案按 ADR-0016「实测修正」重定。

@@ -1,7 +1,7 @@
 //! `CompileRunner` 接口（modules.md §2.4）。
 //!
-//! 超时检测、进程树杀、PDF 拷贝全部在 runner 内（设计决策 D2）：
-//! 调度器无时钟、无进程概念，单测只需喂假 `CompileOutcome`。
+//! 超时检测、取消（阶段②起是**协作式取消**，内嵌形态无子进程可树杀）、PDF 拷贝全部在 runner 内
+//! （设计决策 D2）：调度器无时钟、无进程概念，单测只需喂假 `CompileOutcome`。
 
 use crate::types::{CompileOutcome, CompileRequest, ErrorEntry};
 use async_trait::async_trait;
@@ -11,25 +11,29 @@ use tokio_util::sync::CancellationToken;
 /// 编译执行抽象：core 唯一知道的"怎么编译"。
 ///
 /// 契约：
-/// - `cancel` 被取消后必须尽快终止（树杀）并返回 `Aborted`；
-/// - 超时由 runner 自行检测（`req.timeout`），超时后树杀并返回 `Timeout`；
+/// - `cancel` 被取消后必须尽快终止并返回 `Aborted`（内嵌形态走协作式取消：置标志后引擎在下一个
+///   I/O 回调处中止，没有子进程可树杀）；
+/// - 超时由 runner 自行检测（`req.timeout`），超时后同上（协作式中止）并返回 `Timeout`；
 /// - 成功时 PDF 必须已拷贝到项目根（`Success.pdf_path`）。
 #[async_trait]
 pub trait CompileRunner: Send + Sync {
     async fn compile(&self, req: CompileRequest, cancel: CancellationToken) -> CompileOutcome;
 }
 
-/// 编译**进行中**的反馈通道（roadmap「阶段 2 · 流式输出」）：runner 在进程还活着时
+/// 编译**进行中**的反馈通道（roadmap「阶段 2 · 流式输出」）：runner 在编译尚未结束时
 /// 就能把"排到第几页""已经出现了哪些错误"报上来，而不必等编译结束。
 ///
 /// 为什么是 runner 的可选依赖而不是 `Emitter` 的一部分：调度器的 `Emitter` 只在**任务完成**
-/// 时被调用（合并队列/失败语义都发生在那一刻）；流式反馈属于"运行中的进程输出"，与调度语义
+/// 时被调用（合并队列/失败语义都发生在那一刻）；流式反馈属于"运行中的引擎状态/输出"，与调度语义
 /// 正交。默认实现全为空，测试与 headless 不必关心。
 ///
 /// 契约：**非权威**。编译结束时 runner 仍要返回权威的 `CompileOutcome`，前端应以最终结果覆盖
 /// 流式期间的中间态（`errors` 尤其如此——半截日志可能给出不完整的条目）。
 pub trait CompileProgress: Send + Sync {
-    /// 已排版页数（来自引擎输出的 `[N]` 标记）；只在**数值变大**时调用。
+    /// 已排版页数；只在**数值变大**时调用。
+    ///
+    /// 阶段②起唯一形态 = 内嵌引擎：没有子进程 stdout 的 `[N]` 可扫，runner 在**每趟排版收尾**
+    /// 从捕获的 `<stem>.xdv` 数完整页（`core::xdv::complete_pages`），与终态页哈希同一份权威数据。
     fn pages(&self, _pages: u32) {}
 
     /// 编译进行中解析到的**致命错误**条目（节流 + 去重后）。
@@ -40,7 +44,7 @@ pub trait CompileProgress: Send + Sync {
     fn errors(&self, _errors: &[ErrorEntry]) {}
 
     /// **编译成功但需要用户注意**的一句话提示（能力边界，ADR-0015 第 4 条）：例如
-    /// "这份文档需要 biber（引擎会调用外部程序，缺失/版本不匹配会失败）"或
+    /// "这份文档需要 biber（内嵌引擎不运行外部工具，引用可能未解析）"或
     /// "索引/术语表不会被自动运行"。
     ///
     /// 契约：只在**成功**路径发（失败路径走 `errors`）；非权威、可多条、不保证顺序。
@@ -55,7 +59,7 @@ pub trait CompileProgress: Send + Sync {
     /// - **不得**把它当作页哈希 / A 闸门 / 收敛判断的输入（中间态会污染基线）；
     /// - `pages` **只增不减**；同一次编译里可能被调用多次（限流后的节拍）。
     ///
-    /// 默认空实现：只有**库形态**有内存 XDV 可合成；子进程档没有这条通道，headless 也不需要。
+    /// 默认空实现：只有**内嵌引擎**有内存 XDV 可合成（阶段②起它是唯一形态）；headless 不需要。
     /// 调用方（runner）负责把"只在编译确实跑得久时才出图"的阈值与限流做在前面。
     fn partial_pdf(&self, _path: &Path, _pages: u32) {}
 }

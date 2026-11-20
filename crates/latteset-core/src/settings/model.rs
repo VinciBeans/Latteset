@@ -11,8 +11,12 @@ use std::path::PathBuf;
 /// 设置文件 schema 版本（modules.md §6：schema_version 字段，未来迁移用）。
 ///
 /// **v2**（ADR-0015）：引擎统一为 Tectonic，删除 `compile.engine`（全局与项目覆盖两层）。
-/// v1 → v2 的迁移在 infra（`latteset_infra::storage`）：旧文件被读入时自动改写并留 `settings.json.v1.bak`。
-pub const SCHEMA_VERSION: u32 = 2;
+/// **v3**（ADR-0015 决策 2）：形态收成**内嵌 Tectonic 唯一**，删除 `tectonic` 里的形态位
+/// （子进程形态已删除）。
+///
+/// v1 → v2 → v3 的迁移在 infra（`latteset_infra::storage`）：旧文件被读入时自动逐级改写；
+/// 原文按**迁移源版本**各留一份（`settings.json.v1.bak` / `settings.json.v2.bak`）。
+pub const SCHEMA_VERSION: u32 = 3;
 
 /// 一次性提示的级别（前端据此选样式：info = 中性告知，warning = 需要注意）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Type)]
@@ -43,19 +47,31 @@ pub const ENGINE_UNIFIED_NOTICE_ID: &str = "engine-unified-v2";
 pub const ENGINE_UNIFIED_NOTICE_MESSAGE: &str =
     "引擎已统一为 Tectonic（v2 起不再有引擎设置），原设置已忽略。";
 
-/// Tectonic 形态与资源设置（⑫ 里程碑的设置面收口项；方案 §3.5）。
+/// 形态固定为内嵌 Tectonic 的迁移提示 id（v2 → v3 恒加）。
+pub const FORM_EMBEDDED_NOTICE_ID: &str = "form-embedded-v3";
+
+/// v2 → v3 迁移恒加的提示文案：形态设置位从这一版起不复存在。
+pub const FORM_EMBEDDED_NOTICE_MESSAGE: &str =
+    "引擎形态已固定为内嵌 Tectonic（v3 起不再有形态设置），原形态设置已忽略。";
+
+/// 子进程形态被删除的迁移提示 id（v2 → v3，**仅当**旧值表示"子进程档"时追加）。
+pub const SUBPROCESS_FORM_REMOVED_NOTICE_ID: &str = "subprocess-form-removed-v3";
+
+/// 子进程形态被删除的提示文案（ADR-0015 第 4 条"不静默降级"的落点）。
 ///
-/// **只在全局设置里**（不进 [`ProjectOverrides`]）：引擎形态由装配点的 runner 决定，而 GUI 侧
-/// 的 runner **每趟编译读一次全局设置**（见 `src-tauri` 的 `SwitchableRunner`）；项目级覆盖要走
-/// "形态位随 `CompileRequest` 下发"那条路，属后续项 —— 现在放一个项目级字段只会是**看着能覆盖、
-/// 实际不生效**的假开关。
+/// 只对**显式选过子进程**的老用户追加：他们是唯一可能依赖"引擎调本机 biber"的人，必须
+/// 白纸黑字告知这条能力没了——而不是让编译行为悄悄变了。
+pub const SUBPROCESS_FORM_REMOVED_NOTICE_MESSAGE: &str =
+    "你原来使用子进程形态（tectonic.exe）。该形态已删除；从本版本起编译始终在内嵌引擎中进行——\
+     不再调用本机 biber，makeindex/glossaries 也不会自动运行。需要外部工具的文档请先确认替代做法。";
+
+/// Tectonic 资源配置（bundle / 缓存目录）；形态位在 v3 随子进程形态一并删除。
+///
+/// **只在全局设置里**（不进 [`ProjectOverrides`]）：装配点**每趟编译读一次全局设置**（见
+/// `src-tauri` 的 runner 装配）；项目级覆盖要走"资源随 `CompileRequest` 下发"那条路，属后续项
+/// ——现在放一个项目级字段只会是**看着能覆盖、实际不生效**的假开关。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
 pub struct TectonicSettings {
-    /// 引擎形态：`false`（默认）= **子进程**（`tectonic.exe`）；`true` = **库内嵌**（路径 B，ADR-0012）。
-    ///
-    /// 需要构建时打开 `tectonic-lib` 特性；没编进去而用户选了库形态时 runner **显式失败**
-    /// （D1：不静默回退到子进程）。
-    pub lib_form: bool,
     /// bundle 来源：`None`/空 = 上游兜底**网络地址**；否则 `file:///…` 或**相对路径**的目录 bundle。
     ///
     /// ⚠ **存储形态**不能是 `E:\…`：上游 `detect_bundle` 会把它当 URL scheme 解析成 `Ok(None)`
@@ -73,7 +89,6 @@ pub struct TectonicSettings {
 impl Default for TectonicSettings {
     fn default() -> Self {
         Self {
-            lib_form: false,
             bundle: None,
             cache_dir: None,
         }
@@ -81,22 +96,6 @@ impl Default for TectonicSettings {
 }
 
 impl TectonicSettings {
-    /// 本趟编译是否走**库内嵌**形态（`false` = 子进程）。
-    ///
-    /// 引擎统一为 Tectonic（ADR-0015）之后，形态位不再需要"只在选中 Tectonic 时生效"那道闸门
-    /// ——引擎恒为 Tectonic，`lib_form` 的语义就是它自己。真值表 = `lib_form || env_forced`：
-    ///
-    /// | `lib_form` | `env_forced`（`LATTESET_TECTONIC_LIB=1`） | 结果 |
-    /// |---|---|---|
-    /// | false | false | 子进程 |
-    /// | true | false | 库内嵌 |
-    /// | 任意 | true | 库内嵌 |
-    ///
-    /// `env_forced` 是**显式覆盖**：复核/CI 要在不改用户设置的前提下复现库形态那条路径。
-    pub fn use_library_form(&self, env_forced: bool) -> bool {
-        self.lib_form || env_forced
-    }
-
     /// 用户给的 bundle 路径 → **存储形态**（上游 `detect_bundle` 认的 URL 或相对路径）。
     ///
     /// 设置面与命令行拿到的是普通 Windows 路径（资源管理器地址栏、`复制为路径` 还带一对引号），
@@ -178,7 +177,7 @@ pub struct Settings {
     #[serde(default = "default_schema_version")]
     pub schema_version: u32,
     pub compile: CompileSettings,
-    /// Tectonic 形态与资源（全局；见 [`TectonicSettings`] 的说明）。
+    /// Tectonic **资源**（全局：bundle 源 / 缓存目录；形态自 v3 起唯一 = 内嵌，见 [`TectonicSettings`]）。
     #[serde(default)]
     pub tectonic: TectonicSettings,
     /// 界面（全局；`#[serde(default)]` ⇒ 旧 settings.json 没有 `ui` 也能读）。
@@ -262,9 +261,6 @@ pub struct SettingsPatch {
     )]
     #[specta(type = Option<Option<PathBuf>>)]
     pub root_file: Option<Option<PathBuf>>,
-    /// 引擎形态（Tectonic 库内嵌）：`None` = 不动。
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub lib_form: Option<bool>,
     /// bundle 来源：`None` = 不动；**空串 = 清除**（回到上游兜底）；其它 = 设置。
     ///
     /// 用"空串 = 清除"而不是 `Option<Option<..>>`：设置面总是发具体值，用户清空输入框就是清除，
@@ -297,12 +293,11 @@ mod tests {
     fn defaults_match_design() {
         let s = Settings::default();
         assert_eq!(s.schema_version, SCHEMA_VERSION);
-        assert_eq!(SCHEMA_VERSION, 2, "v2 = 引擎统一（ADR-0015）");
+        assert_eq!(SCHEMA_VERSION, 3, "v3 = 形态收成内嵌唯一（ADR-0015 决策 2）");
         assert_eq!(s.compile.mode, CompileMode::Continuous);
         assert_eq!(s.compile.debounce_ms, 500);
         assert_eq!(s.compile.timeout_secs, 120);
-        // 形态位默认子进程档：库形态要构建时打开特性（ADR-0012）
-        assert!(!s.tectonic.lib_form);
+        assert_eq!(s.tectonic, TectonicSettings::default(), "默认没有资源覆盖");
         assert!(s.notices.is_empty(), "默认不该带迁移提示");
         assert_eq!(s.root_file, None);
     }
@@ -328,6 +323,27 @@ mod tests {
         let o: ProjectOverrides = serde_json::from_str(r#"{"compile":{"engine":"lualatex"}}"#)
             .expect("项目覆盖里的旧 engine 必须被忽略");
         assert_eq!(o.compile.unwrap().timeout_secs, None);
+    }
+
+    /// v3 删掉了形态位：旧文件里残留的形态位键必须**静默忽略**
+    /// （同 `compile.engine`：不加 `deny_unknown_fields`），同段资源照常读出，
+    /// 且新写出的 JSON 不再带这个键。
+    #[test]
+    fn legacy_form_key_is_ignored_not_rejected() {
+        let json = r#"{"schema_version":2,"compile":{"mode":"continuous","debounce_ms":500,
+            "timeout_secs":120},"tectonic":{"lib_form":true,
+            "bundle":"file:///E:/Works/bundle","cache_dir":null},"root_file":null}"#;
+        let s: Settings = serde_json::from_str(json).expect("旧形态位必须被忽略");
+        assert_eq!(
+            s.tectonic.bundle.as_deref(),
+            Some("file:///E:/Works/bundle"),
+            "同一段里的资源设置要保留"
+        );
+        let reserialized = serde_json::to_value(&s.tectonic).unwrap();
+        assert!(
+            reserialized.get("lib_form").is_none(),
+            "v3 的 tectonic 不再有形态位：{reserialized}"
+        );
     }
 
     /// `notices` 空表不落盘（老前端不会看到多出来的键），有值时正常往返。
@@ -390,6 +406,11 @@ mod tests {
         // 显式清空：root_file = null
         let clear: SettingsPatch = serde_json::from_str(r#"{"root_file": null}"#).unwrap();
         assert_eq!(clear.root_file, Some(None));
+        // 旧前端仍可能发旧形态位键：按未知字段忽略、不报错（v3 已无这个设置）
+        let legacy: SettingsPatch =
+            serde_json::from_str(r#"{"lib_form":true,"timeout_secs":60}"#).unwrap();
+        assert_eq!(legacy.timeout_secs, Some(60), "同批合法键仍要生效");
+        assert_eq!(legacy, SettingsPatch { timeout_secs: Some(60), ..Default::default() });
     }
 
     /// 绝对 Windows 路径要补成上游认的 `file:///` URL（LB-1：否则被当成 scheme `e` 吃掉）。
@@ -419,21 +440,5 @@ mod tests {
         }
         // 只有盘符、没有分隔符的（`E:`）不算绝对路径，交给 validate/上游报错，不要猜
         assert_eq!(TectonicSettings::normalize_bundle("E:"), "E:");
-    }
-
-    /// 形态判定的**真值表**：`lib_form || env_forced`（引擎已统一，不再有引擎闸门）。
-    ///
-    /// 这条取代了旧的"库形态只在选中 Tectonic 时才允许"闸门测试——那道闸门的存在前提
-    /// （引擎可多选）已被 ADR-0015 删除，但真值语义必须逐格钉住：
-    /// `env_forced`（`LATTESET_TECTONIC_LIB=1`）是显式覆盖，`lib_form=false` 也能压过设置。
-    #[test]
-    fn library_form_truth_table() {
-        let lib_on = TectonicSettings { lib_form: true, ..Default::default() };
-        let lib_off = TectonicSettings::default();
-
-        assert!(!lib_off.use_library_form(false), "默认 = 子进程");
-        assert!(lib_on.use_library_form(false), "形态位开 = 库内嵌");
-        assert!(lib_off.use_library_form(true), "环境变量是显式覆盖（压过设置）");
-        assert!(lib_on.use_library_form(true), "两者都真 = 库内嵌");
     }
 }

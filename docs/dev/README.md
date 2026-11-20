@@ -4,33 +4,36 @@
 
 ## 上手
 
-**环境前置**：Windows 10/11（首发平台）、Node ≥18、Rust **msvc** toolchain、WebView2 Runtime（Win11 自带）；跑真实编译需要 **PATH 上有 `tectonic`**（子进程形态，产品不代装；缺了报错文案会指出来）——**不再需要 TeX Live / MiKTeX**（ADR-0015 删除了 xelatex/latexmk 驱动；`synctex.exe` 只留给复核脚本）。库形态另需 vcpkg（见 [tectonic-library.md](./tectonic-library.md)）。
+**环境前置**：Windows 10/11（首发平台）、Node ≥18、Rust **msvc** toolchain、WebView2 Runtime（Win11 自带）、**vcpkg**（内嵌 Tectonic 的 C 链：`x64-windows-static-release` 六端口）。**所有构建（含 `npm run tauri dev` 与 CI）都需要 vcpkg 环境**——统一入口是 `scripts/with-tectonic-lib.ps1`，先用 `npm run lib:check` 自检（缺项给可执行修复命令）。**不需要** TeX Live / MiKTeX，也**不要求 PATH 上有 `tectonic`**（子进程形态已删除，ADR-0015 决策 2；`synctex.exe` 只留给复核脚本）。本机若在受限沙箱会话（工作区带 Low 完整性标签）里构建，另需把 `TMP`/`TEMP` 指到工作区内目录，见 [../troubleshooting.md](../troubleshooting.md)。
 
 ```bash
 npm install
+npm run lib:check      # 校验 vcpkg / triplet / 端口 / 工具链
 npm run tauri dev      # 构建 Rust + 起 vite + 真窗口（GUI 测试必须用它）
 ```
 
 | 常用命令 | 作用 |
 |---|---|
-| `npm run tauri dev` | 真机窗口（改代码后验收 GUI 走这条） |
+| `npm run tauri dev` | 真机窗口（改代码后验收 GUI 走这条；唯一入口会先校验 vcpkg 前置） |
+| `npm run tauri build` | 打包（NSIS 冒烟，验证 ADR-0003 分发路径） |
 | `npm run dev` | 只起 vite（`localhost:1420`），**不**调起窗口 |
 | `npm run build` | `copy:pdf-worker` + `vue-tsc --noEmit` + `vite build`（交付前类型检查） |
-| `npm run tauri build` | 打包（NSIS 冒烟，验证 ADR-0003 分发路径） |
 | `npm run test` / `test:watch` | 前端 vitest |
-| `cargo test -p latteset-core \| -p latteset-infra \| -p latteset-server` | 分层 Rust 测试（见 [testing.md](./testing.md)） |
-| `npm run lib:check / lib:dev / lib:test / lib:cli / lib:build` | 库形态（vcpkg 环境）的 check / 开发 / 测试 / CLI / 发布构建 |
-| `cargo build -p latteset-server` | headless 两个二进制（[cli.md](../cli.md)） |
+| `npm run lib:check` | 构建前置自检（vcpkg / triplet / 端口 / 工具链） |
+| `npm run lib:test` | 全仓 Rust 测试（core / infra / server / tectonic 四个 crate） |
+| `npm run lib:cli` | release 构建 headless CLI（`latteset-cli`） |
+| `cargo test -p latteset-core \| -p latteset-infra` | 不依赖 C 链的两层，日常最快反馈（见 [testing.md](./testing.md)） |
 
 ## 代码地图
 
 ```
 ├── src-tauri/             # Tauri 壳：命令面（commands）、事件契约与装配（events / lib）
+│                          #   runner.rs 是编译 runner 的薄壳：每趟读设置重建内嵌 runner
 ├── crates/latteset-core   # 核心（纯逻辑，可测）：编译调度器、.log 解析与诊断、设置模型与合并、
 │                          #   根文件探测、文档大纲、SyncTeX 纯逻辑、XDV 页哈希
-├── crates/latteset-infra  # 基础设施（无 Tauri）：文件系统、tectonic/synctex 进程、notify 监视、设置存储
+├── crates/latteset-infra  # 基础设施（无 Tauri）：文件系统、synctex CLI、notify 监视、设置存储
 ├── crates/latteset-server # 无 GUI 交互层：headless Session + latteset-cli + latteset-mcp
-├── crates/latteset-tectonic # Tectonic 库内嵌形态（可选特性；见 tectonic-library.md）
+├── crates/latteset-tectonic # 内嵌 Tectonic 引擎（唯一形态，C 链，见 tectonic-library.md）
 ├── src/                   # Vue 前端：stores（Pinia）/ 组件 / Monaco 语法 / IPC 服务层
 ├── docs/                  # 本目录（开发文档）+ design.md / adr/ / archive/
 ├── public/                # 图标资源与 pdf.js 产物（cmaps/worker，npm 脚本生成）
@@ -42,7 +45,7 @@ npm run tauri dev      # 构建 Rust + 起 vite + 真窗口（GUI 测试必须�
 - **`latteset-infra` 是外部依赖与文件系统的唯一落点**：上层（`src-tauri` / `latteset-server`）不得直接调 `tokio::fs` / `std::fs` / `std::process`（ADR-0010）。
 - **文件系统是内容真相源**（ADR-0007），命令面做路径校验；编辑器缓冲区与磁盘不一致时以磁盘为准的那套分支有专门的冲突判据。
 
-事件单向分发与"两条入口（GUI + headless）共用 core + infra"的架构要点见 [../design.md](../design.md) 与 [../adr/](../adr/)。
+事件单向分发与"两条入口（GUI + headless）共用 core + infra"的架构要点见 [../design.md](../design.md) 与 [../adr/](../adr/)；内嵌引擎的构建前置、装配点与能力面见 [tectonic-library.md](./tectonic-library.md)。
 
 ## 文档入口
 
@@ -50,7 +53,7 @@ npm run tauri dev      # 构建 Rust + 起 vite + 真窗口（GUI 测试必须�
 |---|---|
 | [modules.md](./modules.md) | 模块实现契约、当前行为基线、已知债与验证入口 |
 | [testing.md](./testing.md) | 怎么跑测试、真机验收清单、真机探针手法 |
-| [tectonic-library.md](./tectonic-library.md) | Tectonic 库形态：构建、bundle、两形态差异 |
+| [tectonic-library.md](./tectonic-library.md) | 内嵌 Tectonic（唯一形态）：构建入口、装配点、能力面与验证入口 |
 | [tectonic-licensing.md](./tectonic-licensing.md) | 分发许可审计：Rust/C 依赖与宏包集的许可证、义务清单、G-L1..G-L9 门禁状态 |
 | [../design.md](../design.md) | 设计与架构（含延迟预算实测） |
 | [../adr/](../adr/) | 决策记录（ADR） |

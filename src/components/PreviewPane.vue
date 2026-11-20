@@ -921,7 +921,7 @@ onBeforeUnmount(() => clearTimeout(draftTimer));
       <!-- SyncTeX 提示（roadmap ⑤）：落到生成文件/同步不可用时的可见反馈，几秒后自动消失 -->
       <span class="sync-note" v-if="preview.syncNote" :title="preview.syncNote">{{ preview.syncNote }}</span>
       <!-- 编译中预览（roadmap ㉞）：屏幕上这份是**部分 PDF**，不是最终产物。只在真的收到帧时出现
-           （子进程档 / 短编译不会走到这里，行为与今天一致），因此它同时就是这条能力的"能力位" -->
+           （短编译不会走到这里），因此它同时就是这条能力的"能力位" -->
       <span
         class="live-preview"
         v-if="preview.livePreview"

@@ -47,7 +47,7 @@ const MAX_UPDATES: usize = 8;
 /// 流式出图开关。默认**开**；`LATTESET_PREVIEW_STREAM=0|false|off|no` 关掉。
 ///
 /// 为什么留一个开关：它是"编译期额外干活"的通道，A/B 复核（对比开/关时的编译墙钟与产物）需要
-/// 一个不重新编译二进制的对照手段；与 `LATTESET_TECTONIC_LIB` / `_BUNDLE` / `_CACHE` 同一层。
+/// 一个不重新编译二进制的对照手段；与 `LATTESET_TECTONIC_BUNDLE` / `LATTESET_TECTONIC_CACHE` 同一层。
 pub fn stream_enabled() -> bool {
     match std::env::var("LATTESET_PREVIEW_STREAM") {
         Ok(v) => !matches!(

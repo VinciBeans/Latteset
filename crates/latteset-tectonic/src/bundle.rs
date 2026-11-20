@@ -41,6 +41,16 @@ pub fn default_bundle_url() -> String {
     tectonic_bundles::get_fallback_bundle_url(FORMAT_SERIAL)
 }
 
+/// 默认（网络兜底）bundle 打不开时的**可行动出路**（阶段② D2：默认 bundle = 联网取包，
+/// 它是产品默认路径，失败时必须指向用户能操作的地方，不能只说"打开失败"）。
+///
+/// 三条出口：设置面板「引擎 → bundle 源」、环境变量、以及"本地目录需自带 SHA256SUM"的格式要求
+/// （绝对 Windows 路径要写 `file:///…`，见 [`classify`]）。
+pub const DEFAULT_BUNDLE_HINT: &str =
+    "默认 bundle 需要联网获取：① 检查网络/代理；② 或用本地目录 bundle —— 在「设置 → 引擎」把 \
+     bundle 源设为本地目录（目录需自带 SHA256SUM；写 `file:///E:/…` 或相对路径，不要写 `E:\\…`），\
+     或设置环境变量 `LATTESET_TECTONIC_BUNDLE=<相对路径 或 file:///绝对路径>`。";
+
 /// 分类失败文案（三类，方案 §5.6 LB-5 / §9 F2b/F2c）。
 fn classify(source: &str) -> Option<String> {
     // 网络源 + 本构建没开 `network-bundle` ⇒ 必然失败，且上游的报错不会点出"特性没开"。
@@ -49,8 +59,8 @@ fn classify(source: &str) -> Option<String> {
     if source.starts_with("https://") || source.starts_with("http://") {
         return Some(format!(
             "bundle 源 `{source}` 是网络地址，但本构建**未启用 `network-bundle` 特性**（方案 §4.2 X-2 选 (a)：\
-             默认关掉 HTTP）⇒ 请改用本地目录 bundle（`{}=<相对路径 或 file:///绝对路径>`，目录需自带 SHA256SUM），\
-             或按需重新构建时打开该特性",
+             默认关掉 HTTP）⇒ 请改用本地目录 bundle：在「设置 → 引擎」把 bundle 源设为本地目录\
+             （需自带 SHA256SUM），或设置环境变量 `{}=<相对路径 或 file:///绝对路径>`",
             crate::BUNDLE_ENV
         ));
     }
@@ -106,11 +116,26 @@ pub fn open_bundle(
     }
     match detect_bundle(src.clone(), only_cached, cache_dir) {
         Ok(Some(b)) => Ok(Some(b)),
-        Ok(None) => Err(format!(
-            "bundle 源无法识别：`{src}`（上游 `detect_bundle` 返回 None）。\
-             本地目录/文件请写成 `file:///…` 或相对路径；网络 bundle 需要 `network-bundle` 特性"
-        )),
-        Err(e) => Err(format!("bundle 打开失败（{src}）：{e:#}")),
+        Ok(None) => {
+            let mut msg = format!(
+                "bundle 源无法识别：`{src}`（上游 `detect_bundle` 返回 None）。\
+                 本地目录/文件请写成 `file:///…` 或相对路径；网络 bundle 需要 `network-bundle` 特性"
+            );
+            if matches!(source, BundleSource::Default) {
+                msg.push('。');
+                msg.push_str(DEFAULT_BUNDLE_HINT);
+            }
+            Err(msg)
+        }
+        Err(e) => {
+            let mut msg = format!("bundle 打开失败（{src}）：{e:#}");
+            // D2：网络兜底是**产品默认路径**，失败时必须给用户可行动的出路（设置面板 / 环境变量）。
+            if matches!(source, BundleSource::Default) {
+                msg.push('。');
+                msg.push_str(DEFAULT_BUNDLE_HINT);
+            }
+            Err(msg)
+        }
     }
 }
 
@@ -250,6 +275,16 @@ mod tests {
             .expect("目录 bundle 应当被识别为 DirBundle（LB-4）");
         let err = bundle_digest(&mut *bundle).expect_err("缺 SHA256SUM 必须报错");
         assert!(err.contains("digest"), "{err}");
+    }
+
+    /// D2：默认（网络）bundle 失败时的出路必须**可操作**（指到设置面板 / 环境变量 / 目录格式要求），
+    /// 不能只说"打开失败"——内嵌唯一形态下这是产品默认路径。
+    #[test]
+    fn default_bundle_hint_is_actionable() {
+        assert!(DEFAULT_BUNDLE_HINT.contains("设置"), "{}", DEFAULT_BUNDLE_HINT);
+        assert!(DEFAULT_BUNDLE_HINT.contains(crate::BUNDLE_ENV), "{}", DEFAULT_BUNDLE_HINT);
+        assert!(DEFAULT_BUNDLE_HINT.contains("SHA256SUM"), "{}", DEFAULT_BUNDLE_HINT);
+        assert!(DEFAULT_BUNDLE_HINT.contains("file:///"), "{}", DEFAULT_BUNDLE_HINT);
     }
 }
 

@@ -9,7 +9,7 @@
 | 脚本 | 用途 | 调用处 |
 |---|---|---|
 | `copy-pdf-worker.mjs` | 把 pdfjs 的 worker/cmaps 拷进 `public/pdfjs/`（`?worker&inline` 在 Tauri 下有 MIME/生命周期坑） | `npm run dev/build`（自动） |
-| `with-tectonic-lib.ps1` | **库形态的唯一入口**：vcpkg 环境（`RUSTFLAGS`/triplet）+ `-Mode check\|dev\|build\|test\|cli` | `npm run lib:*`、CI 的 tag 档 |
+| `with-tectonic-lib.ps1` | **内嵌 Tectonic（唯一形态）的唯一构建入口**：校验 vcpkg 环境（`RUSTFLAGS` / triplet / 六端口）+ `-Mode check\|tauri\|test\|cli`（`-Mode tauri` 透传 `npx tauri dev/build`；dot-source 时只设环境） | `npm run lib:check` / `lib:test` / `lib:cli`、`npm run tauri dev/build`、CI 的 `build-windows` 默认档（**已无 tag 专用库形态档**） |
 
 ## 基准与门禁（超预算/不确定即退出码 1）
 
@@ -19,7 +19,7 @@
 | `bench.mjs` | 延迟预算报告：冷编译 / 空跑 / 编辑触发 / 端到端 |
 | `bench-single-pass.mjs` | 编辑期"单趟 xelatex" vs 完整 latexmk 的 A/B（roadmap ㉘ 的收益评估） |
 | `check-determinism.mjs` | 构建确定性：同一份源码连跑两次，PDF 是否**逐字节**相同（`--without-epoch` 可复现非确定性） |
-| `validate-pdf.mjs` | PDF 页数 / 文本层断言（库形态复核用） |
+| `validate-pdf.mjs` | PDF 页数 / 文本层断言（内嵌引擎真编复核用） |
 
 ## 编辑器与预览（真机探针）
 
@@ -38,8 +38,8 @@
 | `xdv-report.mjs` | XDV 页索引 / 页级差分 / 截断可读性（`--diff=` / `--truncate-at=` / `--watch=`） |
 | `xdv-inc.mjs` | 追加式（增量）页索引：`--selftest` 与全量逐字段对拍、`--cost=` 成本对比 |
 | `xdv-partial.mjs` | 半成品 XDV 合成器（流式出图的前置件，roadmap ㉞） |
-| `tectonic-lib-xdvscan.mjs` | 库形态下的 XDV 扫描复核 |
-| `bench-tectonic-lib.mjs` | 库形态的**常驻 / 冷启**性能对照（tag 档发布构建的配套测量） |
+| `tectonic-lib-xdvscan.mjs` | XDV 扫描复核（内嵌形态的 `tmp/<stem>.xdv` 恒存在） |
+| `bench-tectonic-lib.mjs` | **历史入口**：原用于「库形态 vs 子进程」A/B 性能对照——子进程路径已在阶段②删除，对照对象不存在；不要用它判定当前实现 |
 
 ## 依赖与其它
 

@@ -6,16 +6,20 @@
 
 | 想验什么 | 命令 | 覆盖 |
 |---|---|---|
-| 纯逻辑 | `cargo test -p latteset-core` | 调度器语义（队列合并 / 超时 / 重试 / 终止）、`.log` 解析与诊断、设置模型与合并、根文件探测、大纲、SyncTeX 纯逻辑（路径与回落分类）、XDV 页哈希、公式扫描与片段装配 |
-| 文件系统 / 进程 / watch / 存储 | `cargo test -p latteset-infra` | 文件系统实现、**Tectonic 命令构造**（argv 两档 + `-C` 条件 + 不设 `SOURCE_DATE_EPOCH`）、`CREATE_NO_WINDOW`、notify 监视、设置存储（含 v1→v2 迁移）、外部工具提示 |
-| 真实 Tectonic / synctex | `cargo test -p latteset-infra -- --ignored` | 成功 / 内容错误 / 超时树杀 / 取消 / Quick 升级 Full / 中文路径双向 / 流式页进度（`reports_streaming_pages_before_compile_finishes`）/ 超时证据（`timeout_diagnosis_uses_streamed_page_evidence`：断言超时被杀时 `.log` 还没落盘、诊断用上 stdout 的 `[N]`）。**闸门 = PATH 上有 `tectonic`**，缺则跳过并打「跳过：未安装 tectonic（或不在 PATH 上）」。⚠ 旧 `live_errors`（错误提前 ≥100ms）已随 latexmk 路径删除，错误通道的提前量未复测 |
-| headless（CLI / MCP） | `cargo test -p latteset-server`（`-- --ignored` 真编译） | `Session`（打开 / 读写 / 树 / 大纲 / 非 UTF-8 / 编译拒绝 / 配置目录）、CLI 参数解析（**23 passed**） |
-| MCP 协议链路 | `cargo test -p latteset-server --test mcp_stdio` | **真实二进制 + stdio 管道**：握手 / `tools/list` / 工具往返 / 错误语义 / 逐调用切项目（5 用例 + 1 个 `#[ignore]` 编译用例，闸门同上探测 `tectonic`） |
-| 前端 | `npm run test`（`test:watch` 监视） | stores（project/editor/compile/preview/outline）、composables（useAutoSave / useIdleConvergence / useSyncTex / useTheme）、组件（ErrorList / RootFilePicker / SettingsPanel）、services（paths / fuzzy / draftPatch） |
-| 库形态 | `npm run lib:test` | `latteset-tectonic`：synctex 主输入补丁、bundle 与引擎路径。**本机无 vcpkg**：`cargo check -p latteset-tectonic` 失败在 `tectonic_bridge_core` 的 C 编译（`cl.exe D8050`，环境问题、非源码错误）⇒ **本机未跑**，最终由 CI 的 `lib:test` 验证 |
+| 纯逻辑 | `cargo test -p latteset-core` | 调度器语义（队列合并 / 超时 / 重试 / 终止）、`.log` 解析与诊断、设置模型与合并（含 v3 默认值 / 旧 `lib_form` 键忽略）、根文件探测、大纲、SyncTeX 纯逻辑（路径与回落分类）、XDV 页哈希、公式扫描与片段装配 |
+| 文件系统 / 存储 / watch | `cargo test -p latteset-infra` | 文件系统实现、notify 监视、设置存储（**v1→v2→v3 迁移**：备份名 / notice 矩阵 / 幂等 / 只读 / 损坏 / BOM）、manifest 解析；子进程 runner 的 32 个用例已随整文件删除 |
+| 内嵌 Tectonic（单测） | `cargo test -p latteset-tectonic`（需 vcpkg env；或 `npm run lib:test`） | format 键 / bundle 三类失败文案 / 页哈希接线 / D3① 外部工具提示 / D3③ 页进度（XDV 完整页）/ D3② 超时证据 / D7 模板提示 / Quick 预算闸门 / SyncTeX 主输入补丁 |
+| 内嵌 Tectonic（真编） | `cargo test -p latteset-tectonic -- --ignored` | **闸门 = 编进来 + 有可用 bundle**（不再探测 PATH 上的 `tectonic`）：format 生成 + 真 PDF 出图 + 页进度 + `compile-notice` 断言。T9 实测 1 个用例通过（5.33 s） |
+| headless（CLI / MCP） | `cargo test -p latteset-server`（`-- --ignored` 真编译） | `Session`（打开 / 读写 / 树 / 大纲 / 非 UTF-8 / 编译拒绝 / 配置目录 / D4 资源优先级）；lib **12 passed / 4 ignored** + cli **8 passed**（T9 实测） |
+| MCP 协议链路 | `cargo test -p latteset-server --test mcp_stdio` | **真实二进制 + stdio 管道**：握手 / `tools/list` / 工具往返 / 错误语义 / 逐调用切项目（**5 passed + 1 个 `#[ignore]`** 编译用例，闸门同上） |
+| 前端 | `npm run test`（`test:watch` 监视） | stores（project/editor/compile/preview/outline）、composables（useAutoSave / useIdleConvergence / useSyncTex / useTheme）、组件（ErrorList / RootFilePicker / SettingsPanel / StatusBar）、services（paths / fuzzy / draftPatch）；T9 实测 **17 files / 151 tests** |
+| 全仓 Rust（唯一入口） | `npm run lib:test` | 四个 crate 一起跑；T9 实测 **377 passed / 6 ignored**（6 个真编在 `--ignored` 下全过） |
 | 交付前 | `npm run build` | `copy:pdf-worker` + `vue-tsc --noEmit` + `vite build` |
+| 绑定生成物 | 启动一次 debug 构建自动导出 `src/bindings.ts`（Tauri 测试二进制在本机起不来，`export_bindings` 捷径不可用）；T9 核对 13/13 PASS（命令 18 条 / 事件 9 个与 Rust 一致） |
 
-模块分工与各用例的判据见 [modules.md](./modules.md)；延迟预算报告用 `node scripts/bench.mjs`。
+模块分工与各用例的判据见 [modules.md](./modules.md)；延迟预算报告用 `node scripts/bench.mjs`（**历史脚本，仍驱动 latexmk/xelatex**，见下「脚本失效说明」）。
+
+> **构建前置（内嵌唯一后必读）**：任何 `cargo` / `tauri` 命令都需要 vcpkg 环境——统一走 `scripts/with-tectonic-lib.ps1`（先 `npm run lib:check` 自检），**不要裸跑 `cargo test`**（build script 会因缺 5 个环境变量 panic）。本机若在受限沙箱会话（工作区带 Low 完整性标签，报 `cl D8050` / `LNK1104`），还要先把 `TMP`/`TEMP` 指到工作区内目录，见 [troubleshooting.md](../troubleshooting.md)。正常终端/CI 不需要这一步。
 
 **哪些算「真机」**：只有 `npm run tauri dev`（正确构建 Rust + 起 vite + 真正调起 Tauri 窗口）能验 GUI。`npm run dev` 只起 vite（`localhost:1420`），配手动拉起的 debug 二进制**前端不渲染**（`button.btn.primary` 找不到）——不要用这条路做 GUI 测试。
 
@@ -41,8 +45,8 @@
 | 6 | **预览耗时（基准）** | `webview_execute_js` 读 `window.__previewLastReload` | 得到 `{fetch,parse,render,total,pagesRendered}`；与 `scripts/bench.mjs` 的输出拼成端到端 |
 | 7 | 反向 SyncTeX | `webview_find_element .page-wrap canvas` 取页几何 → 点击正文区 → 读状态栏 | 编辑器切到对应 `.tex` 且行号≈点击句所在行（`multifile` 实测点第 5 页正文 → `chapters/intro.tex` **Ln 3**，跨文件）。**点目录区**不打开生成的 `.toc`：工具条出现「此处来自自动生成的文件 main.toc…」或「已回落到最近的源码（main.tex:37）」提示 |
 | 8 | 中文路径渲染 | 用 `中文测试工程` 夹具重复 1/5 | 中文标题/目录/正文/公式正常渲染，`fetch` 无 404 |
-| 9 | 编辑期草稿 + 空闲收敛 | 点「编译」建产物 → **在编辑器里敲一行**（见下「如何在应用内输入文字」）→ 记录状态栏时间线 | `排版中…` → `就绪` + **「引用待更新」** → 约 2s 后再次 `排版中…`（空闲收敛的 Full）→ 提示消失；dev stdout 同 cycle 有 `启动编译（Tectonic 子进程；Full = 引擎自带收敛）`，其中 `kind=quick` / `kind=full` 可区分两档（旧文案 `Quick 编译（单趟直调引擎）` / `Full 编译（完整 latexmk 收敛）` 已随引擎删除） |
-| 10 | 超时诊断 + 一键提超时重试 | 设置面板把超时改 **5s** → 清掉 `tmp/` 制造首编 → 点「编译」→ 读 `.error-list .entry` | 状态栏「失败·超时」；列表一条：原因含「**引擎输出显示**已经排版到第 N 页——是在推进」（或「**引擎输出里**还没出现任何页面输出」）+ 建议 + 按钮**「提高到 900s 并重试」**（首编跳档）；点按钮后 `get_settings` 超时变为 900、编译启动并转「就绪」、条目消失。**证据口径**：证据 = 已捕获的引擎输出（`-p` 的 `[N]` + stdout/stderr 尾部）+ `.log`（有内容才用）+ 流式通道已上报的最大页，合并后判定——Tectonic 的 `.log` **收尾才落盘**，被树杀时常常零字节，只读日志会退化成「无页输出」。**注意**：这一项会把全局 `settings.json` 的超时改掉，验完记得改回 120 |
+| 9 | 编辑期草稿 + 空闲收敛 | 点「编译」建产物 → **在编辑器里敲一行**（见下「如何在应用内输入文字」）→ 记录状态栏时间线 | `排版中…` → `就绪` + **「引用待更新」** → 约 2s 后再次 `排版中…`（空闲收敛的 Full）→ 提示消失；同 cycle 的 dev stdout / 日志与 `kind` 字段可区分实际强度（内嵌形态的 Quick 是请求强度：预算内收敛会如实报 Full，此时**不该**亮「引用待更新」） |
+| 10 | 超时诊断 + 一键提超时重试 | 设置面板把超时改 **5s** → 清掉 `tmp/` 制造首编 → 点「编译」→ 读 `.error-list .entry` | 状态栏「失败·超时」；列表一条：原因含「**引擎输出显示**已经排版到第 N 页——是在推进」（或「**引擎输出里**还没出现任何页面输出」）+ 建议 + 按钮**「提高到 900s 并重试」**（首编跳档）；点按钮后 `get_settings` 超时变为 900、编译启动并转「就绪」、条目消失。**证据口径**：证据 = 捕获的 `.log`（内嵌形态边写边在内存里）+ 引擎状态环尾部 + 已上报最大页，合并后判定。⚠ 该路径**真实超时未在阶段②真机跑过**（单测覆盖），跑之前先按 `test_file/phase2/REPORT-gates.md` 的记录补「真实超时真编 `[未测]`」状态。**注意**：这一项会把全局 `settings.json` 的超时改掉，验完记得改回 120 |
 | 11 | SyncTeX 生成产物回落 | 点 PDF **目录区**（`multifile` 第 3 页中部，x≈20% 页宽 / y≈65–85% 页高）→ 读 `.sync-note` 与标签页 | 工具条提示「此处来自自动生成的文件 main.toc（…）」或「已回落到最近的源码（main.tex:37，向下探测）」；**标签页不得出现 `main.toc`**；提示约 5s 后自动消失 |
 | 12 | 正向 SyncTeX 高亮（`webview_interact` 无修饰键） | 用 Vite 预打包 URL 动态 import Monaco → `ed.setPosition(...)` → 对编辑器 DOM 派发 `mousedown/mouseup/click`（带 `ctrlKey: true`）→ 读 `.highlight` 的 `display/left/top` | 恰好一个 `.highlight` 为 `display: block` 且落在目标页；编辑器 `onMouseDown(ctrlKey)` 是真实入口，派发等价于用户 Ctrl+点击 |
 | 13 | 非 UTF-8 源文件提示 | 夹具 `中文GBK工程` → 展开 `子目录` → 点 `gbk.tex` → 读 `.open-error` 与标签页 | 状态栏出现中文提示「…不是 UTF-8 编码…另存为 UTF-8…」；**不开新标签**（此前是无人接的 rejection） |
@@ -115,7 +119,7 @@ new MutationObserver(() => { const s = snap(); const l = log[log.length-1];
 // 之后隔几秒用 () => window.__dshProbe 读一次即可
 ```
 
-**编译产物的时间戳也能当证据（仅旧驱动）**：`tmp/main.fdb_latexmk` 的 mtime 只在 **latexmk** 跑过时才推进——它曾用来区分 Quick 与 Full。⚠ **该文件不再生成**（latexmk 已删除）：现在改用 dev stdout 的 `kind=` 与状态栏 `draft` / 「引用待更新」判定两档；`.fls` 同此（两者都是 latexmk 产物，见 [troubleshooting.md](../troubleshooting.md) 的相关小节标注）。
+**编译产物的时间戳也能当证据（仅旧驱动）**：`tmp/main.fdb_latexmk` 的 mtime 只在 **latexmk** 跑过时才推进——它曾用来区分 Quick 与 Full。⚠ **该文件不再生成**（latexmk 已删除）：现在改用编译结果里的 `kind` 字段与状态栏 `draft` / 「引用待更新」判定两档；`.fls` 同此（两者都是 latexmk 产物，见 [troubleshooting.md](../troubleshooting.md) 的相关小节标注）。
 
 ### SyncTeX 精度怎么量（一条命令）
 
@@ -155,7 +159,7 @@ node scripts/synctex-report.mjs --projects=<dir> --recompile
 
 - `bench.mjs`——冷编译 / 空跑 / 编辑触发 / 端到端的延迟预算报告（超预算退出码 1）；真机第 6 步与它拼成端到端。
 - `synctex-report.mjs`——SyncTeX 双向精度基线（见上）。
-- `validate-pdf.mjs`——PDF 页数 / 文本层断言，库形态复核用（**别在引擎刚退出时立刻量**）。
+- `validate-pdf.mjs`——PDF 页数 / 文本层断言，内嵌引擎真编复核用（**别在引擎刚退出时立刻量**）。
 - `check-determinism.mjs`——同一份源码连跑两次 PDF 是否逐字节相同。
 - `editor-report.mjs`——WS 直驱真机的 8 探针（每击键 / 折叠 / 大纲往返 / 内存…），超门槛退出码 1。
 - `fls-report.mjs`——`.fls` / `.fdb_latexmk` 依赖差集，排"改了文件没生效"时用。
@@ -176,8 +180,7 @@ node scripts/synctex-report.mjs --projects=<dir> --recompile
 
 ## CI 概览
 
-[.github/workflows/ci.yml](../../.github/workflows/ci.yml) 两个常跑档 + 一个窄触发档：
+[.github/workflows/ci.yml](../../.github/workflows/ci.yml) 两个档：
 
-- **check**（`ubuntu-latest`，push / PR）：`npm ci` → `npm run build`（含 `vue-tsc --noEmit`）→ `npm run test` → `cargo test -p latteset-core` → `cargo test -p latteset-infra` → `cargo test -p latteset-server`。真实 latexmk/synctex 的 `#[ignore]` 用例**不在**这里跑。
-- **build-windows**（`windows-latest`）：`npm run tauri build`，含 NSIS 安装包冒烟（ADR-0003 分发路径）。这一档**不带** tectonic-lib，主产物保持零原生依赖。
-- **build-windows-tectonic-lib**（仅 tag `v*` / 手动 dispatch）：装 vcpkg 六端口 → `scripts/with-tectonic-lib.ps1 -Mode check` → `-Mode test` → `-Mode build`。刻意收窄触发面（冷构建 +15–20 min）。库形态构建细节见 [tectonic-library.md](./tectonic-library.md)。
+- **check**（`ubuntu-latest`，push / PR）：`npm ci` → `npm run build`（含 `vue-tsc --noEmit`）→ `npm run test` → `cargo test -p latteset-core` → `cargo test -p latteset-infra`。**不跑 `latteset-server`**（server 已非可选依赖内嵌 Tectonic，Linux 上会去探测 pkg-config 的 C 链；R11 决策：挪到 Windows 档）。真实编译的 `#[ignore]` 用例**不在**这里跑。
+- **build-windows**（`windows-latest`）：checkout 钉 rev 的 vcpkg → bootstrap → 缓存 `installed/`+`downloads/` → `vcpkg install` 六端口 → `with-tectonic-lib.ps1 -Mode check` → `-Mode test`（**全仓 Rust 测试，含 server 与内嵌 crate**）→ `-Mode tauri build`（含 NSIS 安装包冒烟，ADR-0003 分发路径）。**阶段②起没有独立的 `build-windows-tectonic-lib` 档**——内嵌档就是默认档，代价是每次 push/PR 都要装六端口（缓存命中时只剩校验开销）。内嵌构建细节见 [tectonic-library.md](./tectonic-library.md) §2。

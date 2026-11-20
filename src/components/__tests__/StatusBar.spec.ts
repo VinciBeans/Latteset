@@ -1,5 +1,5 @@
 // StatusBar 单测：锁 ADR-0015 之后状态栏的两件事——
-// ① 引擎名是常量 Tectonic（不读设置、不拉清单），形态位只要拿到 form 数据就显示；
+// ① 引擎名是常量 Tectonic（不读设置、不拉清单）；形态位已随 v3 删除，状态栏不再显示形态；
 // ② 两套提示 chip：`Settings.notices`（持久，点击 dismiss_notice 写盘）与
 //    `compile-notice` 落进 noticesStore 的运行时提示（非持久，点击清空）。
 import { describe, it, expect, vi, beforeEach } from "vitest";
@@ -9,7 +9,7 @@ import StatusBar from "../StatusBar.vue";
 import { useCompileStore } from "../../stores/compile";
 import { useNoticesStore } from "../../stores/notices";
 import { useSettingsStore } from "../../stores/settings";
-import type { EngineForm, Settings } from "../../bindings";
+import type { Settings } from "../../bindings";
 
 /** 后端 `Settings.notices` 的一项（`{id, level, message}`）。 */
 type Notice = { id: string; level: "info" | "warning"; message: string };
@@ -19,15 +19,9 @@ type SettingsWithNotices = Settings & { notices: Notice[] };
 let stored: SettingsWithNotices;
 /** 最近一次 `update_settings` 的 patch（dismiss_notice 断言用）。 */
 let lastPatch: Record<string, unknown> | null = null;
-/** `engine_form` 的返回值；`null` = 命令失败（状态栏不该显示形态）。 */
-let formPayload: { form: EngineForm; env_forced: boolean; lib_compiled_in: boolean } | null = null;
 
 vi.mock("../../services/ipc", () => ({
   ipc: {
-    engineForm: vi.fn(async () => {
-      if (!formPayload) throw { code: "Internal", message: "桩：拿不到形态" };
-      return structuredClone(formPayload);
-    }),
     updateSettings: vi.fn(async (patch: Record<string, unknown>) => {
       lastPatch = patch;
       // 真实后端会把这条通知从磁盘设置里删掉 ⇒ 桩也照做，点击后 chip 应当消失
@@ -41,12 +35,11 @@ vi.mock("../../services/ipc", () => ({
 
 beforeEach(() => {
   lastPatch = null;
-  formPayload = { form: "subprocess", env_forced: false, lib_compiled_in: false };
 });
 
 async function mountBar(notices: Notice[] = [], runtime: string[] = []) {
   stored = {
-    schema_version: 2,
+    schema_version: 3,
     compile: { mode: "continuous", debounce_ms: 500, timeout_secs: 120 },
     root_file: null,
     notices,
@@ -65,36 +58,12 @@ async function mountBar(notices: Notice[] = [], runtime: string[] = []) {
   return w;
 }
 
-describe("StatusBar：引擎与形态（ADR-0015）", () => {
-  it("引擎名是常量 Tectonic（设置里没有 engine 字段也照常显示）", async () => {
+describe("StatusBar：引擎（ADR-0015）", () => {
+  it("引擎名是常量 Tectonic（设置里没有 engine 字段也照常显示），且不再有形态 chip", async () => {
     const w = await mountBar();
     expect(w.find(".engine").text()).toBe("Tectonic");
     expect(w.find(".engine").attributes("title")).toContain("当前引擎：Tectonic");
-    w.unmount();
-  });
-
-  it("子进程形态文案点名可执行文件", async () => {
-    const w = await mountBar();
-    expect(w.find(".form").text()).toBe("子进程（tectonic.exe）");
-    w.unmount();
-  });
-
-  it("库形态 / 不可用形态各自有文案", async () => {
-    formPayload = { form: "lib", env_forced: false, lib_compiled_in: true };
-    const lib = await mountBar();
-    expect(lib.find(".form").text()).toBe("库内嵌");
-    lib.unmount();
-
-    formPayload = { form: "lib_unavailable", env_forced: false, lib_compiled_in: false };
-    const missing = await mountBar();
-    expect(missing.find(".form").text()).toBe("库形态不可用");
-    expect(missing.find(".form").classes()).toContain("warn");
-    missing.unmount();
-  });
-
-  it("拿不到 form 数据 ⇒ 不显示形态（不猜）", async () => {
-    formPayload = null;
-    const w = await mountBar();
+    // 形态位（`.form`）已随 v3 删除：状态栏不再显示"子进程 / 库内嵌"
     expect(w.find(".form").exists()).toBe(false);
     w.unmount();
   });

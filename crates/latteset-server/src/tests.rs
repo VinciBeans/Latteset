@@ -1,8 +1,12 @@
 //! headless 服务的单元/集成测试（`cargo test -p latteset-server`）。
 //!
-//! 不需要 LaTeX 的部分（打开/读/写/树/大纲/错误形状）在默认测试里跑；
-//! 真编译与 SyncTeX 相关用例标 `#[ignore]`（与 `latteset-infra` 的约定一致，需要 PATH 上有 `tectonic`）：
+//! 不需要编译器的部分（打开/读/写/树/大纲/错误形状/设置形状）在默认测试里跑；
+//! 真编译与 SyncTeX 相关用例标 `#[ignore]`（阶段② D6 的闸门 =「编进来 + 有可用 bundle」，
+//! 不再探测 PATH 上的 `tectonic`）：
 //! `cargo test -p latteset-server -- --ignored`。
+//!
+//! 真编夹具：`LATTESET_TECTONIC_BUNDLE` 指向可用 bundle，或工作区里放
+//! `test_file/tectonic-bundle`（被 gitignore）。没有夹具时用例自行跳过（打印原因，不伪造通过）。
 
 use super::*;
 use std::fs;
@@ -58,14 +62,18 @@ async fn open_project_detects_unique_root_and_reports_settings() {
     assert_eq!(report.root_candidates.len(), 1, "唯一候选也回报（与 GUI 语义一致）");
     // 默认设置来自隔离的配置目录（不存在 → 默认值）
     assert_eq!(report.settings.compile.timeout_secs, 120);
-    // schema v2（ADR-0015）：引擎统一为 Tectonic，`compile.engine` 已从设置面删除；
-    // 用 JSON 断言（编译期就不存在这个字段了，只能从序列化结果确认它没被偷偷加回来）。
+    // schema v3（阶段② ADR-0015 决策 2）：形态收成内嵌唯一，`compile.engine` 与 `tectonic.lib_form`
+    // 都已从设置面删除；用 JSON 断言（编译期就不存在这些字段了，只能从序列化结果确认没被加回来）。
     let settings_json = serde_json::to_value(&report.settings).expect("设置应可序列化");
     assert!(
         settings_json["compile"].get("engine").is_none(),
         "v2 起不应再有 compile.engine：{settings_json}"
     );
-    assert_eq!(settings_json["schema_version"], 2, "{settings_json}");
+    assert!(
+        settings_json["tectonic"].get("lib_form").is_none(),
+        "v3 起不应再有 tectonic.lib_form（形态唯一 = 内嵌）：{settings_json}"
+    );
+    assert_eq!(settings_json["schema_version"], 3, "{settings_json}");
 }
 
 #[tokio::test]
@@ -233,35 +241,91 @@ fn default_config_dir_matches_gui_and_honours_env_override() {
     unsafe { std::env::remove_var("LATTESET_CONFIG_DIR") };
 }
 
-// ---- 真实编译（需要 PATH 上有 tectonic）----
+// ---- 资源优先级（D4：显式设置 > 环境变量 > 宿主默认）----
 
-/// 闸门探的是**真正被调用的引擎**（ADR-0015）：Tectonic 不依赖 TeX Live，
-/// 所以不能再用 latexmk/xelatex 的安装状态判断"环境是否具备"。
-fn tectonic_available() -> bool {
-    std::process::Command::new("tectonic")
-        .arg("--version")
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .status()
-        .map(|s| s.success())
-        .unwrap_or(false)
+/// 缓存目录优先级是 `build_runner` 的判据核心：设置非空时压过环境变量/宿主默认（改完即生效）。
+#[test]
+fn cache_priority_is_explicit_then_env_then_host() {
+    let explicit = PathBuf::from(r"E:\cache-explicit");
+    let env = PathBuf::from(r"E:\cache-env");
+    let host = PathBuf::from(r"E:\cache-host");
+
+    assert_eq!(
+        pick_cache(Some(explicit.clone()), Some(env.clone()), Some(host.clone())),
+        Some(explicit),
+        "设置里的缓存目录必须压过环境变量/宿主默认"
+    );
+    assert_eq!(pick_cache(None, Some(env.clone()), Some(host.clone())), Some(env), "环境变量次之");
+    assert_eq!(pick_cache(None, None, Some(host.clone())), Some(host), "最后才用宿主默认");
+    assert_eq!(pick_cache(None, None, None), None, "三者都没有 ⇒ 交给 runner 显式报错");
+}
+
+/// bundle 源：设置里的空串/纯空白 = 未设置（回落环境变量/上游默认）。
+#[test]
+fn bundle_setting_only_wins_when_non_empty() {
+    assert_eq!(
+        explicit_bundle(Some(" file:///E:/bundle ")),
+        Some(latteset_tectonic::BundleSource::Explicit("file:///E:/bundle".to_owned())),
+        "设置值 trim 后原样当显式来源"
+    );
+    assert_eq!(explicit_bundle(Some("")), None);
+    assert_eq!(explicit_bundle(Some("   ")), None);
+    assert_eq!(explicit_bundle(None), None);
+}
+
+// ---- 真实编译（D6 闸门：编进来 + 有可用 bundle；不再探测 PATH 上的 tectonic）----
+
+/// 真编闸门：**有可用 bundle** 才跑（阶段② D6）。来源与 D4 同一优先级：
+/// `LATTESET_TECTONIC_BUNDLE` → 工作区夹具 `test_file/tectonic-bundle`（被 gitignore）。
+///
+/// 没有夹具时用例**自行跳过并打印原因**（CI 用 env/缓存提供，不伪造通过）。
+fn bundle_fixture() -> Option<String> {
+    if let Ok(v) = std::env::var(latteset_tectonic::BUNDLE_ENV) {
+        let t = v.trim();
+        let disabled = matches!(t.to_ascii_lowercase().as_str(), "" | "none" | "off" | "0" | "false");
+        if !disabled {
+            return Some(t.to_owned());
+        }
+    }
+    let repo = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..").canonicalize().ok()?;
+    let dir = repo.join("test_file/tectonic-bundle");
+    if !dir.join("SHA256SUM").is_file() {
+        return None;
+    }
+    let url = dir.to_string_lossy().replace('\\', "/");
+    // Windows 的 canonicalize 带 `\\?\` verbatim 前缀；拼 `file:///` URL 时必须剥掉。
+    let url = match url.strip_prefix("//?/") {
+        Some(stripped) => stripped.to_owned(),
+        None => url,
+    };
+    Some(format!("file:///{url}"))
+}
+
+/// 把**设置面**的 bundle/cache 指向本机夹具 —— 这同时是 **D4 的端到端验证**：
+/// headless 的 `build_runner` 必须读 `Session.settings.tectonic`（不是只看环境变量）。
+fn configure_embedded(s: &mut Session, p: &TempProject, bundle: String) {
+    let cache = p.dir.join("cache");
+    std::fs::create_dir_all(&cache).expect("建测试缓存目录");
+    s.settings.tectonic.bundle = Some(bundle);
+    s.settings.tectonic.cache_dir = Some(cache);
 }
 
 #[tokio::test]
 #[ignore]
 async fn compile_waits_and_returns_success_report() {
-    if !tectonic_available() {
-        eprintln!("跳过：未安装 tectonic（或不在 PATH 上）");
+    let Some(bundle) = bundle_fixture() else {
+        eprintln!("跳过：没有可用 bundle（设 LATTESET_TECTONIC_BUNDLE 或放 test_file/tectonic-bundle 夹具）");
         return;
-    }
+    };
     let p = TempProject::new("compile");
     p.put("main.tex", MAIN);
     let mut s = p.session();
     s.open_project(&p.dir).await.unwrap();
+    configure_embedded(&mut s, &p, bundle);
 
     let report = s.compile(false).await.expect("编译应成功");
     assert_eq!(report.status, "success");
-    assert_eq!(report.kind, "full");
+    assert_eq!(report.kind, "full", "Full 请求跑到中间产物稳定 ⇒ 如实报 full");
     assert!(report.elapsed_ms > 0, "必须带耗时");
     let pdf = report.pdf_path.expect("应有 PDF 路径");
     assert!(PathBuf::from(&pdf).exists(), "PDF 应落在项目根：{pdf}");
@@ -273,10 +337,10 @@ async fn compile_waits_and_returns_success_report() {
 #[tokio::test]
 #[ignore]
 async fn compile_failure_returns_structured_errors_with_diagnosis() {
-    if !tectonic_available() {
-        eprintln!("跳过：未安装 tectonic（或不在 PATH 上）");
+    let Some(bundle) = bundle_fixture() else {
+        eprintln!("跳过：没有可用 bundle（设 LATTESET_TECTONIC_BUNDLE 或放 test_file/tectonic-bundle 夹具）");
         return;
-    }
+    };
     let p = TempProject::new("compile-fail");
     p.put(
         "main.tex",
@@ -284,6 +348,7 @@ async fn compile_failure_returns_structured_errors_with_diagnosis() {
     );
     let mut s = p.session();
     s.open_project(&p.dir).await.unwrap();
+    configure_embedded(&mut s, &p, bundle);
 
     let report = s.compile(false).await.unwrap();
     assert_eq!(report.status, "failed");
@@ -296,35 +361,42 @@ async fn compile_failure_returns_structured_errors_with_diagnosis() {
 #[tokio::test]
 #[ignore]
 async fn quick_compile_reports_kind_and_upgrade() {
-    if !tectonic_available() {
-        eprintln!("跳过：未安装 tectonic（或不在 PATH 上）");
+    let Some(bundle) = bundle_fixture() else {
+        eprintln!("跳过：没有可用 bundle（设 LATTESET_TECTONIC_BUNDLE 或放 test_file/tectonic-bundle 夹具）");
         return;
-    }
+    };
     let p = TempProject::new("compile-quick");
     p.put("main.tex", MAIN);
     let mut s = p.session();
     s.open_project(&p.dir).await.unwrap();
+    configure_embedded(&mut s, &p, bundle);
 
-    // 无产物 → Quick 请求被 runner 升级为 Full，报告要如实说明
-    let first = s.compile(true).await.unwrap();
-    assert_eq!(first.status, "success");
-    assert_eq!(first.kind, "full");
-    assert!(first.upgraded_from_quick, "首编应标注自动升级");
+    // 先跑一次 Full 预热（生成 format + `tmp/` 中间产物，后面 Quick 才有"上一趟"可比）。
+    assert_eq!(s.compile(false).await.unwrap().status, "success");
 
-    // 有产物 → 真的单趟
-    let second = s.compile(true).await.unwrap();
-    assert_eq!(second.status, "success");
-    assert_eq!(second.kind, "quick");
-    assert!(!second.upgraded_from_quick);
+    // 内嵌语义（V-04）：Quick 请求也走收敛判定 —— 已有产物且内容稳定的文档一趟就判稳定，
+    // 按**实际结果**报 full（不虚报草稿态，也不让前端白排一次空闲收敛）。
+    let quick_ok = s.compile(true).await.unwrap();
+    assert_eq!(quick_ok.status, "success");
+    assert_eq!(quick_ok.kind, "full", "已收敛 ⇒ 如实报实际强度");
+    assert!(quick_ok.upgraded_from_quick, "请求 Quick 实跑 Full ⇒ 必须标注升级");
+
+    // 文档需要本引擎不跑的外部工具（用上一趟的 `.idx` 造同一判据）⇒ **不得虚报收敛**，
+    // 必须停在 quick（引用/索引可能落后），这是 ㉘『引用待更新』的语义基础。
+    std::fs::write(p.dir.join("tmp/main.idx"), "\\indexentry{foo}{1}\n").expect("写 .idx 夹具");
+    let draft = s.compile(true).await.unwrap();
+    assert_eq!(draft.status, "success");
+    assert_eq!(draft.kind, "quick", "有外部工具没跑 ⇒ 不能报 Full");
+    assert!(!draft.upgraded_from_quick);
 }
 
 #[tokio::test]
 #[ignore]
 async fn synctex_roundtrip_through_session() {
-    if !tectonic_available() {
-        eprintln!("跳过：未安装 tectonic（或不在 PATH 上）");
+    let Some(bundle) = bundle_fixture() else {
+        eprintln!("跳过：没有可用 bundle（设 LATTESET_TECTONIC_BUNDLE 或放 test_file/tectonic-bundle 夹具）");
         return;
-    }
+    };
     let p = TempProject::new("synctex");
     p.put(
         "main.tex",
@@ -332,6 +404,7 @@ async fn synctex_roundtrip_through_session() {
     );
     let mut s = p.session();
     s.open_project(&p.dir).await.unwrap();
+    configure_embedded(&mut s, &p, bundle);
     assert_eq!(s.compile(false).await.unwrap().status, "success");
 
     let fwd = s

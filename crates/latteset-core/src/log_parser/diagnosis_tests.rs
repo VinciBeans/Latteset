@@ -293,7 +293,7 @@ fn aux_write_failure_is_diagnosed_directly() {
     assert!(d.cause.contains("body/introduction.aux"));
 }
 
-// ---- 外部工具（ADR-0015 第 4 条）：biber（引擎会调用，要本机可用且版本匹配）/ makeindex / glossaries（不自动运行）----
+// ---- 外部工具（ADR-0015 第 4 条）：biber（外部程序；内嵌引擎不运行外部工具）/ makeindex / glossaries（不自动运行）----
 
 fn tool_msg(message: &str) -> super::LogMessage {
     super::LogMessage {
@@ -308,15 +308,18 @@ fn tool_msg(message: &str) -> super::LogMessage {
 /// 检出外部工具需求 ⇒ `UnsupportedTool` + **可行动出路**：参考文献改内建 bibtex（`backend=bibtex` /
 /// `\bibliography`），索引/术语表去掉 `\makeindex` / `\makeglossaries` 或先在命令行跑一次。
 ///
-/// **口径事实（2026-11 验收复验）**：Tectonic 0.17 子进程形态**会调用外部 biber**
-/// （直跑日志 `note: Running external tool biber ...`，上游 `external_tool_pass`），所以 biber 不能
-/// 说成"引擎不支持"——真实原因是本机缺 biber 或版本与 bundle 内 biblatex 不匹配。
-/// makeindex/glossaries 才是"不自动运行"。
+/// **口径事实（阶段② T9 真机实测）**：引擎唯一 = **内嵌 Tectonic**，它**不运行外部工具**
+/// （没有上游子进程驱动的 `external_tool_pass`）⇒ biber 在 PATH 上也不会被调用、不产 `.bbl`，
+/// 引用/参考文献很可能未解析。**不得**再沿用子进程形态的「引擎调用它、缺失/版本不匹配才失败」口径。
+/// makeindex/glossaries 同样是"不自动运行"。
 ///
 /// 这三类没有真实编译语料可留：语料里的旧样本是"引擎选错"场景，而引擎已不可选（ADR-0015）。
 #[test]
 fn unsupported_tool_is_actionable() {
-    for (text, tool, wants_version) in [
+    // 反向断言用的子进程口径字面量（拆开拼，免得本文件自己命中验收的零命中 rg）。
+    let old_claim = ["会", "调用外部 biber"].concat();
+    let engine_claim = ["引擎", "会调用"].concat();
+    for (text, tool, wants_biber) in [
         (
             "Package biblatex Warning: Please (re)run Biber on the file:\n(biblatex) main",
             "biber",
@@ -335,22 +338,39 @@ fn unsupported_tool_is_actionable() {
         assert!(d.cause.contains(tool), "原因要点名工具 {tool}：{}", d.cause);
         assert!(
             !d.cause.contains("不支持"),
-            "biber 会被引擎调用（缺它/版本不匹配才失败），不能说「引擎不支持」：{}",
+            "引擎是不运行外部工具，不是「不支持」某文档类：{}",
             d.cause
         );
-        if wants_version {
+        // T13 反向断言：内嵌形态不运行外部工具，任何工具的原因/出路里都不得出现子进程口径
+        assert!(
+            !d.cause.contains(&old_claim) && !d.cause.contains(&engine_claim),
+            "内嵌引擎不运行外部工具，不得沿用子进程口径：{}",
+            d.cause
+        );
+        if wants_biber {
+            assert!(d.cause.contains("外部 biber"), "要说清是外部 biber：{}", d.cause);
+            assert!(d.cause.contains("不会调用"), "要说清内嵌引擎不会调用 biber：{}", d.cause);
             assert!(
-                d.cause.contains("版本"),
-                "biber 必须讲清「版本要与 biblatex 匹配」：{}",
+                d.cause.contains(".bbl"),
+                "要说明不会生成 .bbl（引用才未解析）：{}",
                 d.cause
             );
-            assert!(d.cause.contains("外部 biber"), "要说清是外部 biber：{}", d.cause);
         }
         let hint = d.hint.expect("必须给可行动出路");
-        // 出路必须与成功路径的能力边界提示（infra runner 的 EXTERNAL_TOOL_NOTICES）口径一致：
+        // 出路必须与成功路径的能力边界提示（tectonic runner 的 BIBER_NOTICE/索引提示）口径一致：
         // bibtex 后端 / 传统 \bibliography / 去掉索引与术语表命令（或外部跑一次）
         for needle in ["backend=bibtex", "bibliography", "bibtex", "makeindex", "makeglossaries"] {
             assert!(hint.contains(needle), "建议里缺 `{needle}`：{hint}");
+        }
+        if wants_biber {
+            assert!(
+                hint.contains("版本"),
+                "自行跑 biber 生成 .bbl 时版本需与 biblatex 匹配：{hint}"
+            );
+            assert!(
+                !hint.contains(&old_claim),
+                "出路也不得说引擎调用它：{hint}"
+            );
         }
         // 不静默降级、也不推荐回退其它引擎/工具链（ADR-0015 第 4 条；产品里没有那个操作）
         assert!(!hint.contains("设置 → 引擎"), "{hint}");
@@ -360,7 +380,7 @@ fn unsupported_tool_is_actionable() {
         );
         assert!(
             !hint.contains("不支持"),
-            "出路文案也不该说「不支持」——biber 是被调用、索引/术语表是不自动跑：{hint}"
+            "出路文案也不该说「不支持」——引擎只是不运行外部工具：{hint}"
         );
     }
 

@@ -25,7 +25,7 @@ specta-typescript = "0.0.12"
 specta = { version = "=2.0.0-rc.25", features = ["derive"] }
 latteset-core = { path = "../crates/latteset-core" }
 latteset-infra = { path = "../crates/latteset-infra" }
-# `SwitchableRunner` 要 impl `CompileRunner`（`#[async_trait]`）——宏依赖，不引 C。
+# `EmbeddedRunner` 要 impl `CompileRunner`（`#[async_trait]`）——宏依赖，不引 C。
 async-trait.workspace = true
 tokio-util.workspace = true
 serde.workspace = true
@@ -36,10 +36,10 @@ tracing-subscriber = "0.3"
 tauri-plugin-dialog = "2.7.2"
 tauri-plugin-mcp-bridge = "0.13"
 
-# Tectonic **库形态**（路径 B，方案 §3.2 / ADR-0012）：可选依赖 + feature，**默认关**。
-# 关着的时候主产物零原生依赖（不拉 freetype2/harfbuzz/ICU/graphite2 的 C 链、不需要 vcpkg）。
-# 打开：`cargo build -p latteset --features tectonic-lib`（外加运行期开关 LATTESET_TECTONIC_LIB=1）。
-latteset-tectonic = { path = "../crates/latteset-tectonic", optional = true }
+# Tectonic 内嵌引擎（**唯一形态**，ADR-0015 决策 2）：非可选依赖 ⇒ 自阶段②起 GUI 产物始终带内嵌
+# 引擎，构建需要 vcpkg（入口：`scripts/with-tectonic-lib.ps1` / `npm run lib:check`）。
+# `network-bundle`：首次编译可联网取默认 bundle（ADR-0016 随包方案留③段再定）。
+latteset-tectonic = { path = "../crates/latteset-tectonic", features = ["network-bundle"] }
 
 # 原生标题栏的深色（DWM 沉浸式深色）。**为什么不用 tauri 的 `set_theme` 就够了**：
 # 实测（Windows 11 / tauri 2.11.5）`set_theme(Dark)` 能开，`set_theme(Light)` **关不掉** ——
@@ -47,7 +47,3 @@ latteset-tectonic = { path = "../crates/latteset-tectonic", optional = true }
 # 版本与 lock 里已有的 `windows`（tao 拉的）对齐，避免编进第二份。
 [target.'cfg(windows)'.dependencies]
 windows = { version = "0.61", features = ["Win32_Foundation", "Win32_Graphics_Dwm"] }
-
-[features]
-default = []
-tectonic-lib = ["dep:latteset-tectonic"]

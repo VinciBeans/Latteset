@@ -18,8 +18,9 @@
 //!    `BibtexEngine` 并**重跑一趟 TeX**（上游 `default_pass` 同序）⇒ `\bibliography{...}` + `.bib`
 //!    的文档引用会解析成编号、参考文献表会印出来。**输入没变就跳过**那条路见
 //!    [`bib_signature`]：bibtex 的输出只取决于引用集合与 `.bib` 状态，两者与产出 `.bbl` 那次一致时
-//!    重跑只会得到同一份 `.bbl`，却会连带多跑一趟排版。**biber 仍不支持**（biblatex 要外部 `biber`）：
-//!    检出 `<stem>.run.xml` 时显式 `warn!`，见 [`crate::BIBER_PASS_MISSING_NOTE`]。
+//!    重跑只会得到同一份 `.bbl`，却会连带多跑一趟排版。**biber 仍不支持**（biblatex 需要外部 `biber`，
+//!    而本引擎不运行外部工具）：检出 `<stem>.run.xml` 里的 `<binary>biber</binary>` 时显式 `warn!`，
+//!    见 [`crate::BIBER_PASS_MISSING_NOTE`]。
 //! 6. **收敛判定**（t24 / V-04，2026-09-15 扩到编辑触发档）：重跑循环比较 rerun 相关中间产物，
 //!    稳定即算收敛 ⇒ `CompileOutcome.kind` 报 [`CompileKind::Full`]，否则退回
 //!    [`CompileKind::Quick`]（先前固定报 `Full` 是错的：那会让 ㉘ 的"引用待更新"/`draft` 语义失效）。
@@ -31,12 +32,15 @@
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant, SystemTime};
 
 use async_trait::async_trait;
-use latteset_core::log_parser::{MessageKind, diagnose, parse_log};
+use latteset_core::log_parser::{
+    DiagnosisKind, MessageKind, TimeoutEvidence, diagnose, diagnose_timeout, pages_typeset,
+    parse_log, source_release_hint,
+};
 use latteset_core::project::FileSystem;
 use latteset_core::scheduler::{CompileProgress, CompileRunner};
 use latteset_core::types::{CompileKind, CompileOutcome, CompileRequest, ErrorEntry, ErrorKind};
@@ -137,6 +141,17 @@ fn log_tail(log_ring: &Arc<Mutex<Vec<String>>>) -> String {
     }
 }
 
+/// 捕获表里 XDV 的**已完成页数**（页进度事件的产端，D3③）。
+///
+/// 内嵌形态没有子进程 stdout 可扫 `[N]`（那是子进程形态的页标记通道），但捕获表里的
+/// `<stem>.xdv` 就是**权威页表**：`core::xdv::complete_pages` 直接在字节流上切完整页。
+/// 每趟排版收尾调一次（O(XDV 字节)，与一次页哈希同量级），数值变大才发事件。
+fn captured_pages(shared: &SharedCapture, xdv_name: &str) -> u32 {
+    let bytes = capture_bytes(shared, xdv_name).unwrap_or_default();
+    latteset_core::xdv::complete_pages(&bytes).len().try_into().unwrap_or(u32::MAX)
+}
+
+
 /// 重跑上限（上游 `DEFAULT_MAX_TEX_PASSES = 6`）：防"每趟都在变"的文档把编译拖死。
 const MAX_TEX_PASSES: usize = 6;
 
@@ -168,6 +183,10 @@ const QUICK_MAX_PASSES: usize = 3;
 /// 1 s 的取舍：一趟 ≤1 s 的文档，"编辑触发档自己收敛"（1–3 趟、≤2 s）严格快于
 /// "草稿 + 2 s 等待 + 再补一趟"；一趟 >1 s 的文档，多跑一趟的代价已经吃掉全部好处。
 const QUICK_FIRST_PASS_MAX: Duration = Duration::from_millis(1000);
+
+/// 超时后给协作式取消的**收尾等待**：置标志 → 引擎在下一个 I/O 回调处中止 → `.log`/状态环
+/// 才完整。超过这个上界就不再等（引擎可能卡在 C 侧一段长计算里，那正是需要如实报告的情形）。
+const TIMEOUT_CANCEL_GRACE: Duration = Duration::from_millis(1500);
 
 /// 编辑触发档还能不能再跑一趟（纯函数：单测直接打边界）。
 ///
@@ -314,11 +333,269 @@ fn aux_files_requesting_bibtex(shared: &SharedCapture, primary_aux: &str) -> Vec
     out
 }
 
-/// 是否请求 biber（上游 `check_biber_requirement`：biblatex 会写 `<主文件名>.run.xml`）。
-fn biber_requested(shared: &SharedCapture, stem: &str) -> bool {
-    let name = format!("{stem}.run.xml");
-    shared.lock().unwrap_or_else(|e| e.into_inner()).files.contains_key(&name)
+/// 捕获表里是否**出现过**某个输出名（`\openout` 打开过它，哪怕内容为空）。
+fn has_capture(shared: &SharedCapture, name: &str) -> bool {
+    shared.lock().unwrap_or_else(|e| e.into_inner()).files.contains_key(name)
 }
+
+/// 是否**真的**请求 biber（上游 `check_biber_requirement`：biblatex 会写 `<主文件名>.run.xml`）。
+///
+/// ⚠ 判据**不能只看 `.run.xml` 是否存在**（阶段① review E2 实测）：biblatex 的
+/// `backend=bibtex` 也写 `.run.xml`，但里面是 `<binary>bibtex</binary>`、`biber` **0 处**，
+/// 参考文献照常生成 —— 只看文件存在就会把这类文档误报成"需要 biber"。
+/// 上游 Tectonic 自己的判据也是扫 XML 里的 `<binary>` 文本
+/// （`test_file/tectonic-src/src/driver.rs:2147-2167`），看不到 `biber` 就不跑 biber。
+fn run_xml_requests_biber(shared: &SharedCapture, stem: &str) -> bool {
+    let text = capture_text(shared, &format!("{stem}.run.xml"));
+    run_xml_binary_requests_biber(&text)
+}
+
+/// 纯文本判定（见 [`run_xml_requests_biber`]）：扫每个 `<binary>` 元素的文本，等于 `biber` 才算。
+///
+/// 读不到 / 没有闭合标签 → **不算**（宁可漏报也不误报：误报会把参考文献已生成的文档说成不支持）。
+fn run_xml_binary_requests_biber(text: &str) -> bool {
+    const OPEN: &str = "<binary>";
+    const CLOSE: &str = "</binary>";
+    let mut rest = text;
+    while let Some(start) = rest.find(OPEN) {
+        rest = &rest[start + OPEN.len()..];
+        let Some(end) = rest.find(CLOSE) else { return false };
+        if rest[..end].trim() == "biber" {
+            return true;
+        }
+        rest = &rest[end + CLOSE.len()..];
+    }
+    false
+}
+
+/// 三类外部工具的**能力边界提示**（D3①；ADR-0015 第 4 条：检出即如实说明，不静默降级）。
+///
+/// 判据是工具自己的中间产物：`<stem>.run.xml` 里真的请求了 `<binary>biber</binary>`（biblatex）、
+/// `<stem>.idx`（makeindex）、`<stem>.glo`（glossaries）。
+///
+/// 三类工具的实际形态不同（阶段② T9 真机实测，2026-11）：
+/// - **biber**：**外部程序**（不随本产品分发），而**内嵌引擎不运行外部工具**（没有上游子进程驱动的
+///   `external_tool_pass`）⇒ biber 在 PATH 上也不会被跑、不产 `.bbl`，引用/参考文献可能停在未解析状态。
+///   **不得沿用子进程形态的「引擎调用 biber、缺失/版本不匹配才失败」口径**（那是子进程的事实）；
+///   出路是 biblatex 改 `backend=bibtex`（走内建 BibtexEngine）或先自行生成 `.bbl`。
+/// - **makeindex / glossaries**：引擎**不会**自动运行它们（只跳过那一步）⇒ "编译成功但索引/术语表为空"。
+///
+/// 文案只给**本产品内真实可行的出路**（Tectonic 自带 bundle、不依赖 TeX Live；"换用完整 TeX Live"
+/// 在产品里没有对应操作，等于没给出路）。
+const BIBER_NOTICE: &str = "检测到 biber 的构建请求（<stem>.run.xml 里 <binary>biber</binary>）：\
+     内嵌引擎**不会调用 biber**（本形态不运行外部工具）⇒ 该文档的引用/参考文献表\
+     **可能停在未解析状态**（不会生成 `.bbl`）。出路：① biblatex 写 \
+     \\usepackage[backend=bibtex]{biblatex}（走内建 BibtexEngine，正常生成 `.bbl`，改动最小）；\
+     ② 或改用传统的 \\bibliography{...} + \\bibliographystyle{...}（同样走内建 bibtex）；\
+     ③ 留在 biber 上，就在本机命令行先用 biber 生成 `.bbl` 再编译（引擎会读项目里的 `.bbl`；\
+     本机 biber 的版本要与文档用的 biblatex 匹配），或改用支持外部工具的其它构建流程；\
+     ④ 先接受引用显示为空。";
+
+const MAKEINDEX_NOTICE: &str = "检测到 makeindex 的索引文件（<stem>.idx）：本引擎不会自动运行 makeindex，\
+     生成的 PDF 里索引为空。出路：暂时去掉 \\makeindex/\\printindex（在正文里手工列出条目），或在命令行对 \
+     <stem>.idx 跑一次 makeindex 后再编译；也可以接受索引为空。";
+
+const GLOSSARIES_NOTICE: &str = "检测到 glossaries 的术语表文件（<stem>.glo）：本引擎不会自动运行 \
+     makeglossaries，术语表为空。出路：暂时去掉 \\makeglossaries/\\printglossaries，或在命令行跑一次 \
+     makeglossaries 后再编译；也可以接受术语表为空。";
+
+/// 编译**成功后**要报给用户的外部工具提示（无命中 = 空表；顺序即提示顺序）。
+fn external_tool_notices(shared: &SharedCapture, stem: &str) -> Vec<&'static str> {
+    let mut notices = Vec::new();
+    if run_xml_requests_biber(shared, stem) {
+        notices.push(BIBER_NOTICE);
+    }
+    if has_capture(shared, &format!("{stem}.idx")) {
+        notices.push(MAKEINDEX_NOTICE);
+    }
+    if has_capture(shared, &format!("{stem}.glo")) {
+        notices.push(GLOSSARIES_NOTICE);
+    }
+    notices
+}
+
+// ---------------------------------------------------------------- 超时证据（D3②）
+
+/// 超时诊断的证据文本（阶段① `timeout_evidence_text` 的口径，按内嵌形态重写）。
+///
+/// 证据两路：① 捕获表里的 `<stem>.log`（有内容就有用，内嵌形态日志是**边写边在内存里**的，
+/// 不像子进程形态要等收尾落盘）；② 引擎状态环尾部（流式输出的最后一段，含 `Note`/`Error`）。
+/// 再用 `observed_pages`（本趟已上报的最大页）兜住"状态环的尾部窗口没记到 `[N]`"的情况 ——
+/// 既然引擎确实排到过这一页，就把它补成一行 `[N]` 交回同一套解析（不新造判据）。
+///
+/// **不得**据此猜测因果：`diagnose_timeout` 只按"证据里有没有致命错误 / 有没有页输出"分档。
+fn timeout_evidence_text(log: &str, status_tail: &str, observed_pages: Option<u32>) -> String {
+    let tail = denoise_output_tail(status_tail);
+    let mut text = if log.trim().is_empty() {
+        tail
+    } else if tail.is_empty() {
+        log.to_owned()
+    } else {
+        let mut text = String::with_capacity(log.len() + tail.len() + 1);
+        text.push_str(log);
+        if !text.ends_with('\n') {
+            text.push('\n');
+        }
+        text.push_str(&tail);
+        text
+    };
+    if let Some(observed) = observed_pages {
+        let in_text = pages_typeset(&text);
+        if in_text.map_or(true, |p| observed > p) {
+            text.push_str(&format!("[{observed}]\n"));
+        }
+    }
+    text
+}
+
+/// 输出尾部的轻量去噪：去 ANSI 序列与 `\r`（Tectonic 的进度行会用回车原地刷新），丢掉纯空白行。
+/// **不动** `[N]` 页标记与错误文本 —— 它们正是证据本身。
+fn denoise_output_tail(output: &str) -> String {
+    let mut out = String::with_capacity(output.len());
+    for line in output.lines() {
+        let cleaned = strip_ansi(line).replace('\r', "");
+        let trimmed = cleaned.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        out.push_str(trimmed);
+        out.push('\n');
+    }
+    out
+}
+
+/// 去掉 CSI/OSC 转义序列（`ESC [ … m` 之类）。只处理尾部证据用的最小集合（阶段①同一实现）。
+fn strip_ansi(line: &str) -> String {
+    if !line.contains('\u{1b}') {
+        return line.to_owned();
+    }
+    let mut out = String::with_capacity(line.len());
+    let mut chars = line.chars().peekable();
+    while let Some(c) = chars.next() {
+        if c != '\u{1b}' {
+            out.push(c);
+            continue;
+        }
+        match chars.peek() {
+            // CSI：ESC [ … 终止于 0x40..=0x7e
+            Some('[') => {
+                chars.next();
+                for c in chars.by_ref() {
+                    if ('\u{40}'..='\u{7e}').contains(&c) {
+                        break;
+                    }
+                }
+            }
+            // OSC：ESC ] … 终止于 BEL 或 ESC \
+            Some(']') => {
+                chars.next();
+                while let Some(c) = chars.next() {
+                    if c == '\u{7}' {
+                        break;
+                    }
+                    if c == '\u{1b}' {
+                        if chars.peek() == Some(&'\\') {
+                            chars.next();
+                        }
+                        break;
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    out
+}
+
+/// 超时错误条目（D3②）：**证据化诊断**，文案点明"内嵌形态无子树可杀、已置协作式取消"。
+///
+/// 证据：`.log` + 状态环尾部 + 已上报页（见 [`timeout_evidence_text`]）→ `core::log_parser::diagnose_timeout`
+/// 给"慢 vs 卡住 vs 早就出错"的人话原因与一键提高超时的建议。`settled` = 取消后引擎是否已在
+/// 下一个 I/O 回调处停下（决定文案用"已中止"还是"仍在收尾"——不虚报）。
+fn timeout_entry(
+    timeout: Duration,
+    had_aux: bool,
+    tex_files: Option<usize>,
+    evidence_text: &str,
+    settled: bool,
+) -> ErrorEntry {
+    let timeout_secs = u32::try_from(timeout.as_secs()).unwrap_or(u32::MAX);
+    let pages = pages_typeset(evidence_text);
+    let evidence = TimeoutEvidence { timeout_secs, first_build: !had_aux, tex_files };
+    let diagnosis = diagnose_timeout(evidence_text, &evidence);
+
+    let mut facts = vec![if had_aux { "增量编译".to_string() } else { "首次编译".to_string() }];
+    if let Some(n) = tex_files {
+        facts.push(format!("{n} 个 .tex 源文件"));
+    }
+    if let Some(p) = pages {
+        facts.push(format!("已排版到第 {p} 页"));
+    } else {
+        facts.push("日志与输出均无页输出".to_string());
+    }
+    let stop = if settled {
+        "引擎已在下一个 I/O 回调处中止"
+    } else {
+        "引擎仍在收尾（下一个 I/O 回调处中止；中止延迟上界 = 一次输出写/输入打开回调的间隔）"
+    };
+    ErrorEntry {
+        message: format!(
+            "内嵌引擎编译超过 {timeout_secs}s 上限：已置协作式取消标志（内嵌形态没有子进程可树杀），\
+             {stop}。证据（引擎输出显示）：{}",
+            facts.join("，")
+        ),
+        file: None,
+        line: None,
+        kind: ErrorKind::Timeout,
+        diagnosis: Some(diagnosis),
+    }
+}
+
+// ---------------------------------------------------------------- 源码版模板提示（D7）
+
+/// 源码版模板提示（阶段① `enrich_source_release_hints` 的语义，搬进本 crate 的失败路径）。
+///
+/// 编译报"缺 `.cls`"时，看看项目根里是不是只有 `.ins`/`.dtx`（源码版模板的发布形态）。
+/// 判据是**看得见的事实**：根目录有哪些文件；"该编哪个文件"由 core 的
+/// [`latteset_core::log_parser::source_release_hint`] 决定（同名优先、单一候选次之、拿不准就不给）。
+fn enrich_with_candidates(mut errors: Vec<ErrorEntry>, candidates: &[String]) -> Vec<ErrorEntry> {
+    for entry in &mut errors {
+        let Some(diag) = entry.diagnosis.as_mut() else { continue };
+        if diag.kind != DiagnosisKind::MissingClass {
+            continue;
+        }
+        let Some(missing) = diag.missing_file.clone() else { continue };
+        if let Some(hint) = source_release_hint(&missing, candidates) {
+            diag.hint = Some(hint);
+        }
+    }
+    errors
+}
+
+/// 见 [`enrich_with_candidates`]：只有确实出现"缺 `.cls`"时才读项目根（其余失败路径零成本）。
+fn enrich_source_release_hints(errors: Vec<ErrorEntry>, project_root: &Path) -> Vec<ErrorEntry> {
+    let needs_lookup = errors.iter().any(|e| {
+        e.diagnosis.as_ref().is_some_and(|d| {
+            d.kind == DiagnosisKind::MissingClass && d.missing_file.is_some()
+        })
+    });
+    if !needs_lookup {
+        return errors;
+    }
+    let candidates: Vec<String> = match std::fs::read_dir(project_root) {
+        Ok(entries) => entries
+            .flatten()
+            .filter(|e| !e.file_type().map(|t| t.is_dir()).unwrap_or(true))
+            .filter_map(|e| e.file_name().to_str().map(str::to_owned))
+            .collect(),
+        Err(e) => {
+            debug!(root = %project_root.display(), "读项目根失败，跳过源码版模板识别：{e}");
+            return errors;
+        }
+    };
+    enrich_with_candidates(errors, &candidates)
+}
+
 
 // ---------------------------------------------------------------- bib 跳过（方案 §6.4 ④）
 
@@ -572,10 +849,14 @@ fn run_engines(
     requests: Arc<Mutex<Vec<String>>>,
     shared: SharedCapture,
     cancel: Arc<AtomicBool>,
+    // 已上报过的最大页数（D3③）：趟边界写页进度，超时路径据此补页标记证据。
+    pages_seen: Arc<AtomicU32>,
 ) -> CompileOutcome {
     let xdv_name = format!("{stem}.xdv");
     let pdf_name = format!("{stem}.pdf");
     let log_name = format!("{stem}.log");
+    // 失败路径的源码版模板提示要读项目根；`project_root` 紧接着会被 `TectonicIo` 拿走。
+    let project_root_for_hints = project_root.clone();
     // 强度分档（㉘）：Quick = 单趟直调引擎（引用/目录落后一趟）；Full = 跑到中间产物稳定。
     let wants_full = matches!(requested_kind, CompileKind::Full);
 
@@ -662,7 +943,7 @@ fn run_engines(
     // ① 自持输出层 → ② MinimalDriver → ③ CoreBridgeLauncher（`engine-spike/src/bin/xdv2pdf.rs:180-186`
     //    是实测同构的调用形态）。
     let mut driver = MinimalDriver::new(io);
-    let mut status = ProgressStatus::new(progress, log_ring.clone());
+    let mut status = ProgressStatus::new(progress.clone(), log_ring.clone());
     // 分阶段计时（P2 的复核证据：库形态的钱花在哪一趟）。命中 format 缓存时 format 趟为 0。
     let t_start = Instant::now();
     let mut phase_ms = (0u128, 0u128, 0u128);
@@ -753,6 +1034,8 @@ fn run_engines(
             let mut bib_done = false;
             let mut stable = false;
             let mut unsupported_tool: Option<&'static str> = None;
+            // D3③：已上报过的页数（只增不减；超时路径也用它兜页标记证据）。
+            let mut reported_pages = 0u32;
             // 预算只算排版循环本身：format 趟（冷缓存要生成 `.fmt`）不占编辑触发档的额度。
             let loop_started = Instant::now();
             // 第 1 趟的墙钟（`quick_pass_allowed` 的第二个条件：一趟就慢的文档不再多跑）。
@@ -783,14 +1066,28 @@ fn run_engines(
                 // （Full 不设这道闸门，它的上限就是下面的 `MAX_TEX_PASSES`）。
                 let quick_may_continue = quick_pass_allowed(passes, first_pass, loop_started.elapsed());
 
-                // 外部工具类（biber / makeindex / glossaries）：库形态不跑外部工具 ⇒ 登记后
+                // D3③ 页进度：内嵌形态没有子进程 stdout 的 `[N]` 可扫，但捕获表里的 XDV 就是
+                // 权威页表 ⇒ 每趟收尾数一次完整页，**数值变大才发**（CompileProgress::pages 契约）。
+                // 成本 = O(XDV 字节)，与一次页哈希同量级；这里只数页、不算哈希（哈希留给收尾的 A 闸门）。
+                let pages_now = captured_pages(&shared, &xdv_name);
+                if pages_now > reported_pages {
+                    reported_pages = pages_now;
+                    progress.pages(pages_now);
+                    pages_seen.store(pages_now, Ordering::Relaxed);
+                }
+
+                // 外部工具类（biber / makeindex / glossaries）：内嵌形态不跑外部工具 ⇒ 登记后
                 // **不得声称已收敛**（下面 kind 会退回 Quick）。检出信号取上游口径：
-                // biber = `<stem>.run.xml`（`check_biber_requirement`）。
-                if biber_requested(&shared, &stem) {
+                // biber = `.run.xml` 里真的写 `<binary>biber</binary>`（`check_biber_requirement`），
+                // 不是只看文件存在（backend=bibtex 也写 `.run.xml`）。
+                if run_xml_requests_biber(&shared, &stem) {
                     unsupported_tool = Some("biber（biblatex）");
                 }
-                if rerun_snapshot(&shared).keys().any(|k| k.ends_with(".idx")) {
+                if has_capture(&shared, &format!("{stem}.idx")) {
                     unsupported_tool = Some("makeindex（`.idx`）");
+                }
+                if has_capture(&shared, &format!("{stem}.glo")) {
+                    unsupported_tool = Some("glossaries（`.glo`）");
                 }
 
                 let mut force_rerun = false;
@@ -1017,6 +1314,12 @@ fn run_engines(
                 format_read_ms = format_ns as f64 / 1e6,
                 "库形态分阶段耗时"
             );
+            // D3① 外部工具类能力边界提示（ADR-0015 第 4 条：检出即如实说明、不静默降级）。
+            // 契约：`CompileProgress::notice` **只在成功路径**发（失败路径走 `errors`）。
+            for msg in external_tool_notices(&shared, &stem) {
+                debug!("编译成功但需要用户注意：外部工具能力边界提示");
+                progress.notice(msg);
+            }
             CompileOutcome::Success {
                 pdf_path: pdf_dst,
                 // V-04：**按实际做到的事报**（先前固定报 `Full` 是错的 —— 会让 ㉘ 的
@@ -1033,7 +1336,8 @@ fn run_engines(
         }
         Err(msg) => {
             // 判据 4：失败不静默——优先给结构化错误列表（`.log` 是权威），否则 IoError + 输入请求证据。
-            let errors = entries_from_log(&log_text, true);
+            // D7：源码版模板提示（`.ins`/`.dtx`）在失败路径保留阶段①语义，不静默丢。
+            let errors = enrich_source_release_hints(entries_from_log(&log_text, true), &project_root_for_hints);
             if !errors.is_empty() {
                 debug!(count = errors.len(), "库形态失败：已从 I/O 层捕获的 .log 解析出错误条目");
                 CompileOutcome::ContentError { errors }
@@ -1081,6 +1385,15 @@ impl CompileRunner for TectonicLibRunner {
         seed_previous_intermediates(&shared, &tmp_dir);
         let requests: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
         let log_ring: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
+        // D3③：已上报过的最大页（超时证据用它兜住"状态环尾部窗口没截到页标记"的情形）。
+        let pages_seen = Arc::new(AtomicU32::new(0));
+        // D3②：超时取证要用的别名 —— 原值紧接着会被 move 进阻塞段。
+        let log_name = format!("{stem}.log");
+        let shared_for_timeout = shared.clone();
+        let ring_for_timeout = log_ring.clone();
+        let pages_for_timeout = pages_seen.clone();
+        // 超时诊断的"首次编译"判据：**开始时**有没有上一趟的 `.aux`（必须在本次排版前看）。
+        let had_aux = self.fs.exists(&tmp_dir.join(format!("{stem}.aux"))).await.unwrap_or(false);
         // V-06：协作式取消标志。置位后 `TectonicIo` 的每个入口立刻报错 ⇒ 引擎在**下一个
         // I/O 回调**处中止，而不是跑完当前趟（这是 LIB-9「下个回调报错」口径的落地）。
         let cancel_flag = Arc::new(AtomicBool::new(false));
@@ -1092,7 +1405,7 @@ impl CompileRunner for TectonicLibRunner {
         let requested_kind = req.kind;
         let project_root = req.project_root.clone();
         let root_file = req.root_file.clone();
-        let blocking = tokio::task::spawn_blocking(move || {
+        let mut blocking = Box::pin(tokio::task::spawn_blocking(move || {
             run_engines(
                 bundle_source,
                 only_cached,
@@ -1110,40 +1423,60 @@ impl CompileRunner for TectonicLibRunner {
                 requests,
                 shared,
                 cancel_for_task,
+                pages_seen,
             )
-        });
+        }));
 
-        // 超时/取消：库形态**无法树杀**，但**不是**"只能放弃等待"——置协作式取消标志后，
+        // 超时/取消：内嵌形态**无法树杀**，但**不是**"只能放弃等待"——置协作式取消标志后，
         // `TectonicIo` 会在下一个 I/O 回调处返回错误，引擎随即中止该趟（V-06 / LIB-9）。
-        // 上界 = 一次输出写 / 输入打开回调的间隔；**实测延迟 `[未测到]`**（本机没有可用 bundle、
-        // 跑不了真编；补测前提 = P0/t10 的本地 bundle）。`ENGINE_LOCK` 仍保证进程内不并发两个引擎。
+        // 上界 = 一次输出写 / 输入打开回调的间隔（实测数字见 docs/dev/tectonic-library.md）。
+        // `ENGINE_LOCK` 仍保证进程内不并发两个引擎。
         tokio::select! {
-            joined = blocking => match joined {
+            joined = &mut blocking => match joined {
                 Ok(outcome) => outcome,
                 Err(e) => CompileOutcome::IoError {
                     message: format!("库形态编译线程异常终止（panic）：{e}"),
                 },
             },
             _ = tokio::time::sleep(req.timeout) => {
-                warn!(timeout = req.timeout.as_secs(), "库形态编译超时：置协作式取消标志（引擎在下一个 I/O 回调处中止）");
+                warn!(timeout = req.timeout.as_secs(), "内嵌引擎编译超时：置协作式取消标志（引擎在下一个 I/O 回调处中止）");
                 cancel_flag.store(true, Ordering::Relaxed);
-                CompileOutcome::Timeout {
-                    entry: ErrorEntry {
-                        message: format!(
-                            "库形态编译超过 {}s 上限：库形态没有子进程可树杀，已置协作式取消标志 \
-                             （引擎会在下一个 I/O 回调处中止；中止延迟上界 = 一次输出写/输入打开回调的间隔，\
-                             实测数字 [未测到]）。建议提高超时后重试，或切回子进程形态。",
-                            req.timeout.as_secs()
-                        ),
-                        file: None,
-                        line: None,
-                        kind: ErrorKind::Timeout,
-                        diagnosis: None,
-                    },
-                }
+                // 给协作式取消一小段收尾时间：引擎在**下一个 I/O 回调**处中止，`.log` 与状态环
+                // 那时才是中止后的完整证据（这段等待计入超时返回值，上界 = TIMEOUT_CANCEL_GRACE）。
+                let settled = tokio::time::timeout(TIMEOUT_CANCEL_GRACE, &mut blocking).await.is_ok();
+                let log_text = capture_text(&shared_for_timeout, &log_name);
+                let status_tail = ring_for_timeout
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .join("\n");
+                let observed = pages_for_timeout.load(Ordering::Relaxed);
+                let evidence = timeout_evidence_text(
+                    &log_text,
+                    &status_tail,
+                    (observed > 0).then_some(observed),
+                );
+                // "项目里有多少 .tex"只为诊断用（首编规模判据），只在超时这条慢路径上扫。
+                let tex_files = latteset_core::project::collect_tex_files(
+                    self.fs.as_ref(),
+                    &req.project_root,
+                )
+                .await
+                .ok()
+                .map(|v| v.len());
+                let entry = timeout_entry(req.timeout, had_aux, tex_files, &evidence, settled);
+                debug!(
+                    timeout_secs = req.timeout.as_secs(),
+                    first_build = !had_aux,
+                    tex_files = ?tex_files,
+                    pages = ?pages_typeset(&evidence),
+                    settled,
+                    log_bytes = log_text.len(),
+                    "内嵌编译超时：已采集诊断证据（.log + 状态尾部 + 已上报页）"
+                );
+                CompileOutcome::Timeout { entry }
             }
             _ = cancel.cancelled() => {
-                warn!("库形态编译收到手动终止：置协作式取消标志（引擎在下一个 I/O 回调处中止）");
+                warn!("内嵌引擎编译收到手动终止：置协作式取消标志（引擎在下一个 I/O 回调处中止）");
                 cancel_flag.store(true, Ordering::Relaxed);
                 CompileOutcome::Aborted
             }
@@ -1216,20 +1549,163 @@ mod tests {
         assert!(!got.contains(&"ch1.aux".to_owned()), "无 \\bibdata 的章 aux 不该跑（避免噪音）");
     }
 
-    /// biber 的检出信号是 `<stem>.run.xml`（上游 `check_biber_requirement`）。
+    /// biber 的检出信号是 `<stem>.run.xml` 里**真的**写 `<binary>biber</binary>`
+    /// （上游 `check_biber_requirement`）；`backend=bibtex` 也写 `.run.xml`，但请求的是 bibtex。
+    ///
+    /// 阶段① review E2 的回归守卫：只看文件存在会把"参考文献已正常生成"的文档误报成需要 biber。
     #[test]
-    fn biber_is_detected_by_run_xml() {
-        let with = capture_with(&[("main.run.xml", "<requests/>")]);
-        assert!(biber_requested(&with, "main"));
-        let without = capture_with(&[("main.aux", "\\bibdata{refs}")]);
-        assert!(!biber_requested(&without, "main"));
+    fn biber_is_detected_by_binary_element_not_by_file_presence() {
+        let with = capture_with(&[(
+            "main.run.xml",
+            "<requests><request><binary>biber</binary></request></requests>",
+        )]);
+        assert!(run_xml_requests_biber(&with, "main"));
+
+        let bibtex_backend = capture_with(&[(
+            "main.run.xml",
+            "<requests><request><binary>bibtex</binary></request></requests>",
+        )]);
+        assert!(
+            !run_xml_requests_biber(&bibtex_backend, "main"),
+            "backend=bibtex 也写 run.xml，但它请求的是 bibtex —— 不许误报成 biber"
+        );
+
+        let no_run_xml = capture_with(&[("main.aux", "\\bibdata{refs}")]);
+        assert!(!run_xml_requests_biber(&no_run_xml, "main"));
+        // 读不到 / 没有闭合标签 → 不算（宁可漏报也不误报）
+        assert!(!run_xml_binary_requests_biber("<binary>biber"));
+        assert!(!run_xml_binary_requests_biber(""));
     }
 
-    /// 声明文案必须点明"可能未解析"，不能只说"少跑一步"（如实收窄，不静默）。
+    /// D3①：三类外部工具的提示只在**检出**时出现，顺序固定；`.idx`/`.glo` 按文件存在判。
     #[test]
-    fn biber_note_states_the_possible_nonresolution() {
-        assert!(crate::BIBER_PASS_MISSING_NOTE.contains("可能未解析"), "{}", crate::BIBER_PASS_MISSING_NOTE);
-        assert!(crate::BIBER_PASS_MISSING_NOTE.contains("biber"), "{}", crate::BIBER_PASS_MISSING_NOTE);
+    fn external_tool_notices_cover_the_three_nonexecutable_tools() {
+        let all = capture_with(&[
+            ("main.run.xml", "<request><binary>biber</binary></request>"),
+            ("main.idx", ""),
+            ("main.glo", ""),
+        ]);
+        let notices = external_tool_notices(&all, "main");
+        assert_eq!(notices.len(), 3, "{notices:?}");
+        assert!(notices[0].contains("biber"), "{}", notices[0]);
+        assert!(notices[1].contains("makeindex"), "{}", notices[1]);
+        assert!(notices[2].contains("glossaries"), "{}", notices[2]);
+
+        // 普通文档（无外部工具签名）：零提示（不得无端吓用户）
+        let plain = capture_with(&[("main.log", "This is XeTeX"), ("main.aux", "\\relax")]);
+        assert!(external_tool_notices(&plain, "main").is_empty());
+    }
+
+    /// biber 声明文案必须与**内嵌形态的事实**一致：引擎不运行外部工具 ⇒ 不调用 biber、不产 `.bbl`；
+    /// 同时点明"引用可能未解析"与可行动出路（不伪造能力、也不静默降级 —— ADR-0015 第 4 条）。
+    ///
+    /// 反向断言守住 T9 实测口径：**不得**出现子进程形态的「引擎调用外部 biber、缺失或版本不匹配才失败」。
+    #[test]
+    fn biber_notice_states_external_tool_and_nonresolution() {
+        assert!(BIBER_NOTICE.contains("不会调用 biber"), "{}", BIBER_NOTICE);
+        assert!(BIBER_NOTICE.contains("不运行外部工具"), "{}", BIBER_NOTICE);
+        assert!(BIBER_NOTICE.contains("未解析"), "{}", BIBER_NOTICE);
+        assert!(BIBER_NOTICE.contains("backend=bibtex"), "{}", BIBER_NOTICE);
+        assert!(BIBER_NOTICE.contains("`.bbl`"), "{}", BIBER_NOTICE);
+        // T13 反向断言：内嵌形态不运行外部工具，不得沿用子进程口径。
+        // 字面量拆开拼，免得本文件自己命中验收对这两句旧话的零命中门禁。
+        let old_claim = ["会", "调用外部 biber"].concat();
+        let engine_claim = ["引擎", "会调用"].concat();
+        assert!(!BIBER_NOTICE.contains(&old_claim), "内嵌引擎不调用外部 biber：{}", BIBER_NOTICE);
+        assert!(!BIBER_NOTICE.contains(&engine_claim), "{}", BIBER_NOTICE);
+        // 警告文案（日志通道）同口径
+        assert!(
+            crate::BIBER_PASS_MISSING_NOTE.contains("可能未解析"),
+            "{}",
+            crate::BIBER_PASS_MISSING_NOTE
+        );
+        assert!(
+            !crate::BIBER_PASS_MISSING_NOTE.contains("外部 `biber` 二进制"),
+            "内嵌形态不需要外部 biber 二进制：{}",
+            crate::BIBER_PASS_MISSING_NOTE
+        );
+        assert!(!crate::BIBER_PASS_MISSING_NOTE.contains(&old_claim));
+    }
+
+    /// D3②：超时证据文本 = `.log` + 去噪后的状态尾部；已上报页要能兜住尾部窗口漏掉的 `[N]`。
+    #[test]
+    fn timeout_evidence_merges_log_and_status_tail_and_observed_pages() {
+        let text = timeout_evidence_text("log 里有 [12]\n", "[1mNote: 页 [13][0m\r\n\n", Some(14));
+        assert!(text.contains("log 里有 [12]"), "日志要保留：{text}");
+        assert!(text.contains("Note: 页 [13]"), "状态尾部要保留（ANSI/CR 已去）：{text}");
+        assert!(!text.contains('\u{1b}'), "ANSI 必须去掉：{text:?}");
+        assert!(!text.contains('\r'), "回车必须去掉：{text:?}");
+        assert!(text.contains("[14]"), "已上报页要补成页标记（同一套解析）：{text}");
+        assert_eq!(pages_typeset(&text), Some(14));
+
+        // 尾部已经记到更大页码时不再补（不重复、不伪造前进）
+        let text = timeout_evidence_text("", "[20]\n", Some(14));
+        assert_eq!(pages_typeset(&text), Some(20));
+
+        // 两个来源都空 ⇒ 空文本（调用方据此报"无页输出"）
+        assert!(timeout_evidence_text("", "", None).is_empty());
+    }
+
+    /// D3②：超时条目必须带**证据化诊断**（不是只给一句"超时了"），并把协作式取消的性质说清。
+    #[test]
+    fn timeout_entry_carries_diagnosis_and_cooperative_cancel_wording() {
+        let entry = timeout_entry(Duration::from_secs(120), true, Some(3), "[1] [2]\n", true);
+        assert_eq!(entry.kind, ErrorKind::Timeout);
+        assert!(entry.message.contains("内嵌引擎编译超过 120s"), "{}", entry.message);
+        assert!(entry.message.contains("没有子进程可树杀"), "{}", entry.message);
+        assert!(entry.message.contains("证据（引擎输出显示）"), "{}", entry.message);
+        assert!(entry.message.contains("已排版到第 2 页"), "{}", entry.message);
+        assert!(entry.message.contains("增量编译"), "{}", entry.message);
+        let diag = entry.diagnosis.expect("超时必须有诊断");
+        assert_eq!(diag.kind, DiagnosisKind::CompileTimeout, "有页输出 ⇒ 在推进，只是慢");
+        assert!(diag.suggested_timeout_secs.is_some(), "有页输出时该给一键提高超时的建议");
+
+        // 没有任何页输出 ⇒ 不武断说卡住（core 的 CompileTimeoutStalled 口径）
+        let stalled = timeout_entry(Duration::from_secs(30), false, None, "", false);
+        assert_eq!(stalled.diagnosis.expect("诊断").kind, DiagnosisKind::CompileTimeoutStalled);
+        assert!(stalled.message.contains("仍在收尾"), "{}", stalled.message);
+    }
+
+    /// D7：源码版模板提示（`.ins`/`.dtx`）在失败路径保留语义，且只动"缺 `.cls`"那几条。
+    #[test]
+    fn enrich_source_release_hints_keeps_stage_one_semantics() {
+        let mut errors = entries_from_log(
+            "! LaTeX Error: File `thuthesis.cls' not found.\n",
+            true,
+        );
+        assert!(!errors.is_empty(), "夹具必须解析出缺 .cls 错误");
+        let candidates = vec!["thuthesis.ins".to_owned(), "README.md".to_owned()];
+        let enriched = enrich_with_candidates(errors.clone(), &candidates);
+        let hint = enriched[0].diagnosis.as_ref().and_then(|d| d.hint.clone()).expect("要有源码版模板提示");
+        assert!(hint.contains("thuthesis.ins"), "要点名该编哪个文件：{hint}");
+        assert!(hint.contains("xelatex"), "要给可执行命令：{hint}");
+
+        // 项目里没有 .ins/.dtx ⇒ 提示保持原样（降级为泛化建议，不编造命令）
+        let untouched = enrich_with_candidates(errors.clone(), &["README.md".to_owned()]);
+        assert_eq!(
+            untouched[0].diagnosis.as_ref().and_then(|d| d.hint.clone()),
+            errors[0].diagnosis.as_ref().and_then(|d| d.hint.clone()),
+            "没有源码版模板文件时不得改写提示"
+        );
+
+        // 无诊断 / 非缺 .cls 的错误原样返回
+        errors.clear();
+        assert!(enrich_with_candidates(errors, &candidates).is_empty());
+    }
+
+    /// D3③：页进度的产端 —— 捕获表里的 XDV 完整页数（不是"零页"、也不是 `[N]` 文本）。
+    #[test]
+    fn captured_pages_counts_complete_xdv_pages() {
+        let c = capture_with_bytes(&[("main.xdv", tiny_xdv(4))]);
+        assert_eq!(captured_pages(&c, "main.xdv"), 4);
+        // 没有 XDV ⇒ 0（"还数不出来"，不是"零页"：调用方只在变大时才发事件）
+        assert_eq!(captured_pages(&c, "nope.xdv"), 0);
+        // 半页（缺最后一页的 eop + post）：只算完整页
+        let mut half = tiny_xdv(2);
+        half.pop(); // 去掉 post(248)
+        half.pop(); // 去掉最后一页的 eop(140)
+        let c = capture_with_bytes(&[("main.xdv", half)]);
+        assert_eq!(captured_pages(&c, "main.xdv"), 1);
     }
 
     /// **编辑触发档的收敛预算**（2026-09-15）：三道边界都要钉住 —— 预算内且第 1 趟够快才允许
@@ -1253,15 +1729,19 @@ mod tests {
         assert_eq!(QUICK_CONVERGENCE_BUDGET, ms(2000), "必须与前端空闲收敛的 DELAY_MS 同值");
     }
 
-    /// 收敛支持位必须与实现一致：bib 已支持、biber 不支持、收敛**有条件**支持、页哈希已支持。
+    /// 收敛支持位必须与实现一致：bib 已支持、biber 不支持（内嵌不运行外部工具）、收敛**有条件**支持、
+    /// 页哈希已支持。
     #[test]
     fn support_flags_match_the_implementation() {
         assert!(crate::BIB_PASS_SUPPORTED, "bib 趟已实现 ⇒ 该位必须为 true");
-        assert!(!crate::BIBER_PASS_SUPPORTED, "biber 要外部二进制 ⇒ 仍不支持");
+        assert!(
+            !crate::BIBER_PASS_SUPPORTED,
+            "biber 是外部程序、内嵌引擎不运行外部工具 ⇒ 仍不支持"
+        );
         assert!(
             crate::CONVERGENCE_SUPPORTED,
             "重跑循环已实现（跑到中间产物稳定）⇒ 该位为 true；编辑触发档在预算内也收敛，\
-             只有预算用尽或含 biber/makeindex 的文档才退回 Quick"
+             只有预算用尽或含 biber/makeindex/glossaries 的文档才退回 Quick"
         );
         assert!(
             crate::PAGE_HASH_SUPPORTED,
@@ -1494,6 +1974,200 @@ mod tests {
         // 名字里带制表符也不会错位（名字取前 n-2 段）
         let weird = BibSignature { commands: 1, databases: vec![("a\tb.bib".into(), 5, 6)] };
         assert_eq!(BibSignature::parse(&weird.format()).as_ref(), Some(&weird));
+    }
+
+    // ---------------------------------------------------------------- 真编（`#[ignore]`）
+
+    use latteset_core::project::DirEntry;
+    use latteset_core::scheduler::NoProgress;
+
+    /// 极简 `FileSystem`（真编用例专用，与 `examples/bench.rs` 同一套）：runner 只经 `read_bytes`
+    /// 读根文件、`exists` 看上一趟的 `.aux`，其余输入走自持 I/O 层 ⇒ 直读 `std::fs` 即可。
+    struct LocalFs;
+
+    #[async_trait]
+    impl FileSystem for LocalFs {
+        async fn read_dir(&self, path: &Path) -> std::io::Result<Vec<DirEntry>> {
+            let mut out = Vec::new();
+            for e in std::fs::read_dir(path)? {
+                let e = e?;
+                out.push(DirEntry { path: e.path(), is_dir: e.file_type()?.is_dir() });
+            }
+            Ok(out)
+        }
+        async fn read_to_string(&self, path: &Path) -> std::io::Result<String> {
+            std::fs::read_to_string(path)
+        }
+        async fn read_bytes(&self, path: &Path) -> std::io::Result<Vec<u8>> {
+            std::fs::read(path)
+        }
+        async fn canonicalize(&self, path: &Path) -> std::io::Result<PathBuf> {
+            std::fs::canonicalize(path)
+        }
+        async fn is_dir(&self, path: &Path) -> std::io::Result<bool> {
+            Ok(path.is_dir())
+        }
+        async fn exists(&self, path: &Path) -> std::io::Result<bool> {
+            Ok(path.exists())
+        }
+        async fn write(&self, path: &Path, contents: &str) -> std::io::Result<()> {
+            std::fs::write(path, contents)
+        }
+        async fn create_dir(&self, path: &Path) -> std::io::Result<()> {
+            std::fs::create_dir(path)
+        }
+        async fn remove_file(&self, path: &Path) -> std::io::Result<()> {
+            std::fs::remove_file(path)
+        }
+        async fn remove_dir_all(&self, path: &Path) -> std::io::Result<()> {
+            std::fs::remove_dir_all(path)
+        }
+        async fn rename(&self, from: &Path, to: &Path) -> std::io::Result<()> {
+            std::fs::rename(from, to)
+        }
+    }
+
+    /// 记录型反馈通道（验证 D3①/③ 的产端真的被调用）。
+    #[derive(Default)]
+    struct RecordingProgress {
+        pages: Mutex<Vec<u32>>,
+        notices: Mutex<Vec<String>>,
+        partial_pages: Mutex<Vec<u32>>,
+    }
+
+    impl CompileProgress for RecordingProgress {
+        fn pages(&self, pages: u32) {
+            self.pages.lock().unwrap_or_else(|e| e.into_inner()).push(pages);
+        }
+        fn notice(&self, msg: &str) {
+            self.notices.lock().unwrap_or_else(|e| e.into_inner()).push(msg.to_owned());
+        }
+        fn partial_pdf(&self, _path: &Path, pages: u32) {
+            self.partial_pages.lock().unwrap_or_else(|e| e.into_inner()).push(pages);
+        }
+    }
+
+    /// **真编**（`#[ignore]`，本机夹具）：D3①/D3③ 的产端端到端验证 + 超时证据路径。
+    ///
+    /// 闸门 = PLAN [D6] 口径「编进来 + 有可用 bundle」：本机夹具 `test_file/tectonic-bundle`
+    /// （424 文件 / 自带 SHA256SUM，被 gitignore）存在才跑；CI 无夹具时用例自行跳过。
+    /// 缓存落在**工作区**（`test_file/tmp/tectonic-real-compile/cache`）—— 本会话写宿主
+    /// `%TEMP%`/用户缓存可能被拒，且不该污染用户的真实 Tectonic 缓存。
+    ///
+    /// 跑法（必须带 vcpkg 环境）：
+    /// `pwsh -NoProfile -File scripts/with-tectonic-lib.ps1 -Mode check` 之后
+    /// `cargo test -p latteset-tectonic --lib -- --ignored real_compile`
+    #[tokio::test]
+    #[ignore = "真编：需要本机 test_file/tectonic-bundle 夹具（gitignore；CI 用 bundle 缓存夹具）"]
+    async fn real_compile_with_local_bundle_fixture() {
+        let repo = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../..")
+            .canonicalize()
+            .expect("仓库根");
+        // Windows 的 `canonicalize()` 带 `\\?\` verbatim 前缀；拼 `file:///` URL 时必须剥掉
+        // （上游会把 `?` 当 URL 的一部分 ⇒ "failed to parse local path"）。
+        let repo_url = {
+            let s = repo.to_string_lossy().replace('\\', "/");
+            s.strip_prefix("//?/").map(str::to_owned).unwrap_or(s)
+        };
+        let bundle_dir = repo.join("test_file/tectonic-bundle");
+        if !bundle_dir.join("SHA256SUM").is_file() {
+            eprintln!("跳过真编：本机没有 {} 夹具（gitignore）", bundle_dir.display());
+            return;
+        }
+        let work = repo.join("test_file/tmp/tectonic-real-compile");
+        let _ = std::fs::remove_dir_all(&work);
+        let proj = work.join("proj");
+        std::fs::create_dir_all(&proj).expect("建项目目录");
+        let runner = TectonicLibRunner::new(Arc::new(LocalFs), Arc::new(NoProgress))
+            .with_bundle(BundleSource::Explicit(format!(
+                "file:///{repo_url}/test_file/tectonic-bundle"
+            )))
+            .with_cache_dir(work.join("cache"));
+
+        // ① 普通 1 页文档：成功 + 1 页 + 页进度产端真的被调用。
+        std::fs::write(
+            proj.join("main.tex"),
+            "\\documentclass{article}\n\\begin{document}\nHello Latteset.\n\\end{document}\n",
+        )
+        .expect("写夹具");
+        let progress = Arc::new(RecordingProgress::default());
+        // 反馈通道要在构造 runner 时注入（真编用例专用；产品装配点由 T4/T5 负责）。
+        let runner = TectonicLibRunner { progress: progress.clone(), ..runner };
+        let outcome = runner
+            .compile(
+                CompileRequest {
+                    root_file: proj.join("main.tex"),
+                    project_root: proj.clone(),
+                    timeout: Duration::from_secs(120),
+                    kind: CompileKind::Full,
+                },
+                CancellationToken::new(),
+            )
+            .await;
+        match outcome {
+            CompileOutcome::Success { pdf_path, page_hashes, .. } => {
+                assert!(pdf_path.is_file(), "PDF 必须落在项目根：{}", pdf_path.display());
+                assert_eq!(page_hashes.len(), 1, "1 页文档要出 1 个页哈希");
+                let pdf = std::fs::read(&pdf_path).expect("读 PDF");
+                assert!(pdf.starts_with(b"%PDF"), "产物必须是 PDF");
+            }
+            other => panic!("真编应当成功，实际：{other:?}"),
+        }
+        assert_eq!(
+            progress.pages.lock().unwrap_or_else(|e| e.into_inner()).last().copied(),
+            Some(1),
+            "D3③：趟边界应当上报页进度"
+        );
+
+        // ② 外部工具提示（D3①）的端到端接线：上一趟留下的 `.idx` 会被预热进捕获表
+        //    （`RERUN_EXTENSIONS` 含 `.idx`），成功路径必须据此发"索引不会自动生成"的 notice。
+        //    （本机最小 bundle 没有 makeidx.sty，所以用"上一趟的产物"造出同一判据，而不是再装宏包。）
+        std::fs::write(proj.join("tmp/main.idx"), "\\indexentry{foo}{1}\n").expect("写 .idx 夹具");
+        let outcome = runner
+            .compile(
+                CompileRequest {
+                    root_file: proj.join("main.tex"),
+                    project_root: proj.clone(),
+                    timeout: Duration::from_secs(120),
+                    kind: CompileKind::Full,
+                },
+                CancellationToken::new(),
+            )
+            .await;
+        assert!(
+            matches!(outcome, CompileOutcome::Success { .. }),
+            "带 `.idx` 的文档仍应编译成功（索引只是不会自动生成），实际：{outcome:?}"
+        );
+        let notices = progress.notices.lock().unwrap_or_else(|e| e.into_inner()).clone();
+        assert!(
+            notices.iter().any(|n| n.contains("makeindex")),
+            "D3①：检出 `.idx` 必须发 progress.notice，实际：{notices:?}"
+        );
+
+        // ③ 超时路径：极短超时 ⇒ Timeout，且证据化文案（协作式取消 + 诊断）在。
+        let outcome = runner
+            .compile(
+                CompileRequest {
+                    root_file: proj.join("main.tex"),
+                    project_root: proj.clone(),
+                    timeout: Duration::from_millis(1),
+                    kind: CompileKind::Full,
+                },
+                CancellationToken::new(),
+            )
+            .await;
+        match outcome {
+            CompileOutcome::Timeout { entry } => {
+                assert_eq!(entry.kind, ErrorKind::Timeout);
+                assert!(entry.message.contains("内嵌引擎编译超过"), "{}", entry.message);
+                assert!(entry.message.contains("没有子进程可树杀"), "{}", entry.message);
+                assert!(entry.diagnosis.is_some(), "超时必须带证据化诊断");
+            }
+            other => panic!("极短超时应当返回 Timeout，实际：{other:?}"),
+        }
+
+        let _ = std::fs::remove_dir_all(&work);
     }
 }
 

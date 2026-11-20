@@ -103,7 +103,7 @@ pub struct MathPreviewDto {
 ///
 /// 隔离（硬要求）：落点 `<项目>/tmp/snippet/<键>/`，**独立 project_root**、**不经调度器**
 /// （不产出 `compile-status`/`pdf-updated`，也不碰权威 `<stem>.pdf` 与主编译的 `tmp/main.*`）。
-/// 引擎：Tectonic 唯一（ADR-0015），形态跟随设置（子进程 / 库内嵌）。
+/// 引擎：内嵌 Tectonic 唯一（ADR-0015 决策 2），与主编译共用 [`build_compile_runner`] 的装配口径。
 #[tauri::command]
 #[specta::specta]
 pub async fn compile_math(
@@ -111,7 +111,7 @@ pub async fn compile_math(
     offset: u32,
     state: State<'_, AppState>,
 ) -> Result<MathPreviewDto, CmdError> {
-    use latteset_core::scheduler::{CompileRunner, NoProgress};
+    use latteset_core::scheduler::NoProgress;
     use latteset_core::types::{CompileKind, CompileOutcome};
 
     let project = state
@@ -151,7 +151,7 @@ pub async fn compile_math(
     let snippet_root = latteset_infra::snippet::prepare_snippet_dir(&project.root, &key, &document)?;
     let entry = snippet_root.join("main.tex");
 
-    let runner = crate::runner_switch::SwitchableRunner::new(
+    let runner = build_compile_runner(
         state.fs.clone(),
         Arc::new(NoProgress),
         state.settings.clone(),
@@ -589,6 +589,21 @@ pub fn new_file_skeleton(lang: DocLanguage, kind: DocKind, title: Option<String>
 
 // ---------------------------------------------------------------- 编译
 
+/// 装配一个编译 runner（**唯一形态 = 内嵌 Tectonic**，ADR-0015 决策 2）。
+///
+/// 主编译（`lib.rs` setup）与公式预览（[`compile_math`]）共用这一处，避免两处装配口径漂移。
+/// 为什么参数是组件而不是 `&AppState`：`lib.rs` 装配主编译 runner 时 `AppState` 还没构造
+/// （调度器必须先拿到 runner）。"每趟读设置重建 `TectonicLibRunner`"与 bundle/cache 的优先级
+/// 都在 [`crate::runner`] 里，这里只做转发。
+pub fn build_compile_runner(
+    fs: Arc<dyn FileSystem>,
+    progress: Arc<dyn latteset_core::scheduler::CompileProgress>,
+    settings: Arc<RwLock<Settings>>,
+    app_cache_dir: Option<PathBuf>,
+) -> Arc<dyn latteset_core::scheduler::CompileRunner> {
+    Arc::new(crate::runner::EmbeddedRunner::new(fs, progress, settings, app_cache_dir))
+}
+
 #[tauri::command]
 #[specta::specta]
 pub async fn compile_now(state: State<'_, AppState>) -> Result<(), CmdError> {
@@ -618,66 +633,6 @@ pub async fn compile_now(state: State<'_, AppState>) -> Result<(), CmdError> {
 pub async fn abort_compile(state: State<'_, AppState>) -> Result<(), CmdError> {
     state.scheduler.abort();
     Ok(())
-}
-
-/// 本次构建是否编入了 Tectonic **库形态**（`tectonic-lib` 特性）。
-///
-/// 设置面据此**禁用**该选项并说明原因，而不是让用户选了之后到编译时才炸 —— 那正是"功能开不出来"
-/// 的另一面。（选了但没编进来时 runner 会显式报错，D1：不静默回退到子进程。）
-#[tauri::command]
-#[specta::specta]
-pub fn lib_form_available() -> bool {
-    crate::runner_switch::LIB_FORM_COMPILED_IN
-}
-
-/// 引擎形态（库形态方案 §6 P7 的「状态栏可见形态位」）。
-#[derive(Debug, Clone, Serialize, Type)]
-#[serde(rename_all = "snake_case")]
-pub enum EngineForm {
-    /// 子进程档：外部 `tectonic` 可执行文件。
-    Subprocess,
-    /// Tectonic **库内嵌**。
-    Lib,
-    /// 形态位要库内嵌，但**本次构建没编入** `tectonic-lib` ⇒ 下一趟编译会显式失败（D1 不静默回退）。
-    LibUnavailable,
-}
-
-/// 状态栏用的「实际形态」载荷。
-#[derive(Debug, Clone, Serialize, Type)]
-pub struct EngineFormDto {
-    /// 引擎名（恒为 [`latteset_core::types::ENGINE_ID`]）：状态栏显示用，前端不写死字面量。
-    pub engine: String,
-    pub form: EngineForm,
-    /// 形态位是否由 `LATTESET_TECTONIC_LIB` 强制（**它压过设置**，所以设置面选子进程也可能是库形态）。
-    pub env_forced: bool,
-    /// 本次构建是否编入库形态。
-    pub lib_compiled_in: bool,
-}
-
-/// 当前**实际**会用的引擎形态。
-///
-/// **判定只做一次、就在后端**：这里直接调用 runner 用的那个纯函数
-/// （[`latteset_core::settings::TectonicSettings::use_library_form`]），所以状态栏不可能与编译实际
-/// 行为不一致。前端**不得**自己推形态 —— `LATTESET_TECTONIC_LIB` 能压过设置，只看设置会报出与
-/// 实际不符的形态。
-#[tauri::command]
-#[specta::specta]
-pub async fn engine_form(state: State<'_, AppState>) -> Result<EngineFormDto, CmdError> {
-    let s = state.settings.read().await;
-    let env_forced = crate::runner_switch::lib_form_forced_by_env();
-    let wants_lib = s.tectonic.use_library_form(env_forced);
-    Ok(EngineFormDto {
-        engine: latteset_core::types::ENGINE_ID.to_string(),
-        form: if !wants_lib {
-            EngineForm::Subprocess
-        } else if crate::runner_switch::LIB_FORM_COMPILED_IN {
-            EngineForm::Lib
-        } else {
-            EngineForm::LibUnavailable
-        },
-        env_forced,
-        lib_compiled_in: crate::runner_switch::LIB_FORM_COMPILED_IN,
-    })
 }
 
 // ---------------------------------------------------------------- 窗口外观

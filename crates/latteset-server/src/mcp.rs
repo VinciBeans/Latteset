@@ -49,12 +49,12 @@ pub fn tools() -> Vec<Tool> {
         },
         Tool {
             name: "compile",
-            description: "编译一次并等待结果（等价 GUI 的「编译」）。返回 {status, errors, pdf_path, elapsed_ms, kind}。status=success 才算通过；quick=true 时只跑两趟（快，但目录/引用页码可能落后一趟）。",
+            description: "编译一次并等待结果（等价 GUI 的「编译」）。返回 {status, errors, pdf_path, elapsed_ms, kind}。status=success 才算通过；quick=true 是草稿档（预算内追收敛，追不上就停在草稿态、引用/索引可能落后一趟）。",
             input_schema: json!({
                 "type": "object",
                 "properties": {
                     "project": { "type": "string", "description": "项目目录（省略则用当前目录；会先自动打开）" },
-                    "quick": { "type": "boolean", "description": "true = 两趟 `-r 1`（默认 false = 完整 Tectonic 收敛）" }
+                    "quick": { "type": "boolean", "description": "true = 草稿档（默认 false = 跑到中间产物稳定；内嵌引擎没有 `-r 1` 子进程参数）" }
                 },
                 "additionalProperties": false
             }),

@@ -10,7 +10,7 @@
 //! TeXstudio 只显示 `Process exited with error(s)`）。而 ⑲ 调研又证明**引擎自动推断没有必要**
 //! ——正确的替代是：**不猜，但猜错时明确告诉用户怎么改**。引擎统一为 Tectonic（ADR-0015）之后，
 //! 这一类诊断只剩"这份文档的构建需要外部工具"（[`DiagnosisKind::UnsupportedTool`]）：
-//! biber 会被引擎**调用**（要求本机可用且版本匹配），makeindex/glossaries 则不会被自动运行。
+//! 内嵌引擎**不运行外部工具** ⇒ biber 不会被调用、不产 `.bbl`；makeindex/glossaries 也不会被自动运行。
 
 use super::model::{LogMessage, MessageKind};
 use serde::{Deserialize, Serialize};
@@ -32,9 +32,9 @@ pub enum DiagnosisKind {
     MissingFontset,
     /// **构建需要外部工具**：biber / makeindex / glossaries（ADR-0015 第 4 条）。
     ///
-    /// 三者的实际形态不同（2026-11 复验）：**biber 会被引擎调用**（`note: Running external tool biber`），
-    /// 缺它或版本与 bundle 内 biblatex 不匹配时这一步失败；makeindex/glossaries **不会被自动运行**。
-    /// 检出即如实说明并给出可行动出路，**不静默降级、不自动切回别的工作流**。
+    /// 三者的实际形态不同（阶段② T9 真机实测）：**biber 是外部程序，而内嵌引擎不运行外部工具**
+    /// （不会调用 biber、不生成 `.bbl`）⇒ 引用/参考文献很可能未解析；makeindex/glossaries 同样
+    /// **不会被自动运行**。检出即如实说明并给出可行动出路，**不静默降级、不自动切回别的工作流**。
     UnsupportedTool,
     /// 未定义控制序列。
     UndefinedControlSequence,
@@ -358,14 +358,15 @@ pub fn diagnose(m: &LogMessage) -> Option<Diagnosis> {
     }
 
     // 2) 需要外部工具的文档（ADR-0015 第 4 条）：biber / makeindex / glossaries。
-    //    事实口径（2026-11 复验）：Tectonic 0.17 的**子进程形态会调用外部 biber**
-    //    （直跑日志 `note: Running external tool biber ...`，上游 `driver.rs` 的 `external_tool_pass`），
-    //    失败的真实原因是本机缺 biber 或它与 bundle 内 biblatex 版本不匹配；
-    //    makeindex / glossaries 才是不自动跑（只跳过那一步）。检出即给可行动出路，
-    //    不静默降级、也不建议"切回别的工具链再试一遍"当作无事发生。
+    //    事实口径（阶段② T9 真机实测）：引擎已统一为**内嵌 Tectonic**，它**不运行外部工具**
+    //    （没有上游子进程驱动的 `external_tool_pass`）⇒ biber 在 PATH 上也不会被调用、不产 `.bbl`，
+    //    引用/参考文献很可能未解析；makeindex / glossaries 同样只是跳过那一步。
+    //    检出即给可行动出路，不静默降级、也不建议"切回别的工具链再试一遍"当作无事发生。
     if let Some(tool) = unsupported_tool(text) {
         let cause = if tool == "biber" {
-            "该文档的参考文献需要外部 biber：引擎会调用它，但它要本机可用、且版本要与文档用的 biblatex 匹配（缺失或版本不匹配时这一步会失败，参考文献为空或编译中断）".to_string()
+            "该文档的参考文献需要外部 biber：内嵌引擎不运行外部工具（不会调用 biber、不会生成 `.bbl`）\
+             ⇒ 引用/参考文献很可能是未解析的"
+                .to_string()
         } else {
             format!("该文档的构建步骤需要外部工具 {tool}：本引擎不会自动运行它，只跳过那一步")
         };
@@ -373,10 +374,12 @@ pub fn diagnose(m: &LogMessage) -> Option<Diagnosis> {
             DiagnosisKind::UnsupportedTool,
             cause,
             "两条可行动出路：① 参考文献改用内建 bibtex——biblatex 写 `\\usepackage[backend=bibtex]{biblatex}`，\
-             或改用传统的 `\\bibliography{...}` + `\\bibliographystyle{...}`（引擎会跑内建 bibtex）；\
+             或改用传统的 `\\bibliography{...}` + `\\bibliographystyle{...}`（引擎会跑内建 bibtex，正常生成 `.bbl`）；\
              ② 索引/术语表暂时去掉 `\\makeindex` / `\\printindex` 或 `\\makeglossaries` / `\\printglossaries`——\
              这两类本引擎不会自动跑，静默跳过只会得到缺索引/术语表的 PDF，需要时先在命令行跑一次 \
-             makeindex / makeglossaries 再编译；留在 biber 上就把本机 biber 对齐到文档的 biblatex 版本",
+             makeindex / makeglossaries 再编译。留在 biber 上：先在本机命令行用 biber 生成 `.bbl` 再编译\
+             （引擎会读项目里的 `.bbl`；本机 biber 的版本要与文档用的 biblatex 匹配），或改用支持外部工具的\
+             其它构建流程",
         ));
     }
 

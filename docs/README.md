@@ -22,7 +22,7 @@ Latteset 的全部文档从这里进入。当前是 **Windows 首发 MVP 已落�
 | [dev/README.md](./dev/README.md) | 开发者 | 开发者导航：环境、构建、验证入口与代码结构 |
 | [dev/modules.md](./dev/modules.md) | 开发者 | 模块实现契约：拆分、接口、通信契约、已知债与验证入口 |
 | [dev/testing.md](./dev/testing.md) | 开发者 | 测试与验证：各层测试、真机验收、基准与确定性脚本 |
-| [dev/tectonic-library.md](./dev/tectonic-library.md) | 开发者 | Tectonic 库内嵌形态：构建变体、前置校验、环境变量与实测口径 |
+| [dev/tectonic-library.md](./dev/tectonic-library.md) | 开发者 | 内嵌 Tectonic（唯一形态）：构建入口、装配点、能力面与验证入口 |
 | [dev/tectonic-licensing.md](./dev/tectonic-licensing.md) | 开发者 / 分发 | 分发许可审计：Rust/C 依赖与宏包集的许可证、义务清单、G-L1..G-L9 门禁状态 |
 | [adr/](./adr/) | 开发者 | 决策记录 16 项：每个关键取舍的背景、决定与后果 |
 | [archive/](./archive/) | 追溯证据的人 | 归档：原文保留的旧方案与调研证据（[索引](./archive/README.md)、[调研证据状态表](./archive/research/README.md)） |
@@ -43,5 +43,5 @@ Latteset 的全部文档从这里进入。当前是 **Windows 首发 MVP 已落�
 - [0012 Tectonic 库形态引擎（路径 B + X-5 偏离 + 触发 ADR-0005 保留条款）](./adr/0012-tectonic-library-form-engine.md)
 - [0013 SyncTeX 改为进程内自解析（触发 ADR-0008 预留的替换路径）](./adr/0013-synctex-in-process-parser.md)
 - [0014 以 Tectonic 为准（Tectonic-first）：新功能的设计与验收基准](./adr/0014-tectonic-first.md)
-- [0015 Tectonic 唯一引擎：删除其它引擎与 latexmk 路径，只保留内嵌形态](./adr/0015-tectonic-only-embedded-engine.md)
+- [0015 Tectonic 唯一引擎：删除其它引擎与 latexmk 路径，只保留内嵌形态](./adr/0015-tectonic-only-embedded-engine.md)（**②段已执行，记录见文末**）
 - [0016 随包分发内置宏包集（离线开箱）](./adr/0016-ship-bundle-offline.md)

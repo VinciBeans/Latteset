@@ -87,22 +87,6 @@ export const commands = {
 	 */
 	updateSettings: (patch: SettingsPatch_Deserialize) => typedError<Settings_Serialize, CmdError>(__TAURI_INVOKE("update_settings", { patch })),
 	/**
-	 *  本次构建是否编入了 Tectonic **库形态**（`tectonic-lib` 特性）。
-	 * 
-	 *  设置面据此**禁用**该选项并说明原因，而不是让用户选了之后到编译时才炸 —— 那正是"功能开不出来"
-	 *  的另一面。（选了但没编进来时 runner 会显式报错，D1：不静默回退到子进程。）
-	 */
-	libFormAvailable: () => __TAURI_INVOKE<boolean>("lib_form_available"),
-	/**
-	 *  当前**实际**会用的引擎形态。
-	 * 
-	 *  **判定只做一次、就在后端**：这里直接调用 runner 用的那个纯函数
-	 *  （[`latteset_core::settings::TectonicSettings::use_library_form`]），所以状态栏不可能与编译实际
-	 *  行为不一致。前端**不得**自己推形态 —— `LATTESET_TECTONIC_LIB` 能压过设置，只看设置会报出与
-	 *  实际不符的形态。
-	 */
-	engineForm: () => typedError<EngineFormDto, CmdError>(__TAURI_INVOKE("engine_form")),
-	/**
 	 *  把**原生标题栏**也纳入主题（Windows 走 DWM 沉浸式深色，经 tao 的 `set_theme`）。
 	 * 
 	 *  传的是**设置值**（`light|dark|system`）而不是解析后的深浅：`system` 交给系统去跟
@@ -118,7 +102,7 @@ export const commands = {
 	 * 
 	 *  隔离（硬要求）：落点 `<项目>/tmp/snippet/<键>/`，**独立 project_root**、**不经调度器**
 	 *  （不产出 `compile-status`/`pdf-updated`，也不碰权威 `<stem>.pdf` 与主编译的 `tmp/main.*`）。
-	 *  引擎：Tectonic 唯一（ADR-0015），形态跟随设置（子进程 / 库内嵌）。
+	 *  引擎：内嵌 Tectonic 唯一（ADR-0015 决策 2），与主编译共用 [`build_compile_runner`] 的装配口径。
 	 */
 	compileMath: (text: string, offset: number) => typedError<MathPreviewDto, CmdError>(__TAURI_INVOKE("compile_math", { text, offset })),
 };
@@ -158,11 +142,14 @@ export type CompileMode = "continuous" | "on_save";
 /**
  *  编译**进行中**的提示（ADR-0015 决策 4：能力边界要**显式说明**，不静默降级）。
  * 
- *  典型来源：runner 检出文档的构建步骤需要外部工具——biber 由引擎**调用外部程序**（本机缺失/版本与
- *  bundle 内 biblatex 不匹配时这一步会失败），makeindex / glossaries 则**不会被自动运行**（那一步被跳过）。
+ *  典型来源：runner 检出文档的构建步骤需要外部工具 —— **biber** 是外部程序（不随本产品分发；
+ *  内嵌引擎**不运行外部工具** ⇒ 不会调用 biber、不生成 `.bbl`，引用/参考文献可能停在未解析；
+ *  `backend=bibtex` 的文档由内建 `BibtexEngine` 生成 `.bbl`，不受影响），
+ *  **makeindex / glossaries** 则不会被自动运行（那一步被跳过，索引/术语表为空）。
  *  经 `CompileProgress::notice` 上报一句话，前端按"提示"样式展示（状态栏/报告面板）。
  * 
- *  注意它**不是错误本身**：被跳过的步骤（索引/术语表）编译仍可能成功；biber 失败时另有内容错误入口。
+ *  注意它**不是错误本身**：被跳过的步骤（索引/术语表）编译仍可能成功；biber 请求未执行时
+ *  `.log` 会报 `Please (re)run Biber` 这类内容错误，另有错误入口。
  * 
  *  与 `compile-errors` 分开：那是致命错误的中间态，这是能力边界的告知。
  */
@@ -195,14 +182,17 @@ export type CompilePreviewDto = {
  *    原子替换成新内容，路径不变）；
  *  - `pages` **只增不减**（出图闸门要求页数有涨才发）⇒ 用它丢弃晚到的旧帧。
  * 
- *  只有**库形态**会发这个事件：子进程档不落 XDV、无从合成（能力位如实显示"不可用"，
- *  不静默不生效）。
+ *  只有**内嵌引擎**会有这个通道（XDV 在我们的捕获表里才能合成部分 PDF）；阶段②起它就是唯一形态
+ *  ⇒ 该事件恒可用（不再有"另一形态不发"的口径）。
  */
 export type CompilePreviewEvent = CompilePreviewDto;
 
 /**  进度载荷（**非权威**中间态；前端只在"排版中"时展示）。 */
 export type CompileProgressDto = {
-	/**  引擎已输出的最大页码（`[N]` 标记）。 */
+	/**
+	 *  已排版页数。内嵌引擎没有 stdout `[N]` 可扫，由 runner 在**每趟排版收尾**从捕获的
+	 *  `<stem>.xdv` 数完整页（`core::xdv::complete_pages`）—— 与终态页哈希同一份权威数据。
+	 */
 	pages: number,
 };
 
@@ -277,9 +267,9 @@ export type DiagnosisKind =
 /**
  *  **构建需要外部工具**：biber / makeindex / glossaries（ADR-0015 第 4 条）。
  * 
- *  三者的实际形态不同（2026-11 复验）：**biber 会被引擎调用**（`note: Running external tool biber`），
- *  缺它或版本与 bundle 内 biblatex 不匹配时这一步失败；makeindex/glossaries **不会被自动运行**。
- *  检出即如实说明并给出可行动出路，**不静默降级、不自动切回别的工作流**。
+ *  三者的实际形态不同（阶段② T9 真机实测）：**biber 是外部程序，而内嵌引擎不运行外部工具**
+ *  （不会调用 biber、不生成 `.bbl`）⇒ 引用/参考文献很可能未解析；makeindex/glossaries 同样
+ *  **不会被自动运行**。检出即如实说明并给出可行动出路，**不静默降级、不自动切回别的工作流**。
  */
 "unsupported_tool" | 
 /**  未定义控制序列。 */
@@ -342,26 +332,6 @@ export type DocLanguage =
 "chinese" | 
 /**  英文（标准类：`article` / `report` / `book` / `beamer`）。 */
 "english";
-
-/**  引擎形态（库形态方案 §6 P7 的「状态栏可见形态位」）。 */
-export type EngineForm = 
-/**  子进程档：外部 `tectonic` 可执行文件。 */
-"subprocess" | 
-/**  Tectonic **库内嵌**。 */
-"lib" | 
-/**  形态位要库内嵌，但**本次构建没编入** `tectonic-lib` ⇒ 下一趟编译会显式失败（D1 不静默回退）。 */
-"lib_unavailable";
-
-/**  状态栏用的「实际形态」载荷。 */
-export type EngineFormDto = {
-	/**  引擎名（恒为 [`latteset_core::types::ENGINE_ID`]）：状态栏显示用，前端不写死字面量。 */
-	engine: string,
-	form: EngineForm,
-	/**  形态位是否由 `LATTESET_TECTONIC_LIB` 强制（**它压过设置**，所以设置面选子进程也可能是库形态）。 */
-	env_forced: boolean,
-	/**  本次构建是否编入库形态。 */
-	lib_compiled_in: boolean,
-};
 
 /**  错误列表条目（modules.md §4 契约）。 */
 export type ErrorEntry = {
@@ -549,8 +519,6 @@ export type SettingsPatch_Deserialize = {
 	/**  关掉一条一次性提示（[`Notice::id`]）：`None` = 不动；空串 / 未知 id 无害。 */
 	dismiss_notice?: string | null,
 	root_file?: string | null,
-	/**  引擎形态（Tectonic 库内嵌）：`None` = 不动。 */
-	lib_form?: boolean | null,
 	/**
 	 *  bundle 来源：`None` = 不动；**空串 = 清除**（回到上游兜底）；其它 = 设置。
 	 * 
@@ -581,8 +549,6 @@ export type SettingsPatch_Serialize = {
 	/**  关掉一条一次性提示（[`Notice::id`]）：`None` = 不动；空串 / 未知 id 无害。 */
 	dismiss_notice?: string | null,
 	root_file?: string | null,
-	/**  引擎形态（Tectonic 库内嵌）：`None` = 不动。 */
-	lib_form?: boolean | null,
 	/**
 	 *  bundle 来源：`None` = 不动；**空串 = 清除**（回到上游兜底）；其它 = 设置。
 	 * 
@@ -654,21 +620,13 @@ export type SyncTexTarget = {
 };
 
 /**
- *  Tectonic 形态与资源设置（⑫ 里程碑的设置面收口项；方案 §3.5）。
+ *  Tectonic 资源配置（bundle / 缓存目录）；形态位在 v3 随子进程形态一并删除。
  * 
- *  **只在全局设置里**（不进 [`ProjectOverrides`]）：引擎形态由装配点的 runner 决定，而 GUI 侧
- *  的 runner **每趟编译读一次全局设置**（见 `src-tauri` 的 `SwitchableRunner`）；项目级覆盖要走
- *  "形态位随 `CompileRequest` 下发"那条路，属后续项 —— 现在放一个项目级字段只会是**看着能覆盖、
- *  实际不生效**的假开关。
+ *  **只在全局设置里**（不进 [`ProjectOverrides`]）：装配点**每趟编译读一次全局设置**（见
+ *  `src-tauri` 的 runner 装配）；项目级覆盖要走"资源随 `CompileRequest` 下发"那条路，属后续项
+ *  ——现在放一个项目级字段只会是**看着能覆盖、实际不生效**的假开关。
  */
 export type TectonicSettings = {
-	/**
-	 *  引擎形态：`false`（默认）= **子进程**（`tectonic.exe`）；`true` = **库内嵌**（路径 B，ADR-0012）。
-	 * 
-	 *  需要构建时打开 `tectonic-lib` 特性；没编进去而用户选了库形态时 runner **显式失败**
-	 *  （D1：不静默回退到子进程）。
-	 */
-	lib_form: boolean,
 	/**
 	 *  bundle 来源：`None`/空 = 上游兜底**网络地址**；否则 `file:///…` 或**相对路径**的目录 bundle。
 	 * 

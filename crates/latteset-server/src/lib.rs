@@ -5,8 +5,10 @@
 //! 设计要点（命令面与 [cli-mcp-plan.md] §1/§2 一致；落地时的三处偏差见该文 §4，旧编号对照见 §6）：
 //!
 //! 1. **一次性命令语义**：本进程不 spawn watcher、不跑 scheduler actor——`compile` 直接实例化
-//!    [`SubprocessRunner`] 跑一趟并**同步返回结果**。AI 要的是"跑一次、拿结果"，不需要合并队列/防抖；
-//!    代价是**没有超时重试/手动终止**（超时树杀仍在 runner 内生效），AI 场景可接受。
+//!    [`TectonicLibRunner`]（内嵌 Tectonic 是**唯一引擎形态**，ADR-0015 决策 2）跑一趟并**同步返回结果**。
+//!    AI 要的是"跑一次、拿结果"，不需要合并队列/防抖；代价是**没有超时重试/手动终止**——
+//!    超时与取消走**协作式取消**（置标志后引擎在下一个 I/O 回调处中止；内嵌形态没有子进程可树杀），
+//!    AI 场景可接受。
 //! 2. **状态是"会话内"的**：`status`/`errors` 返回**本进程最近一次**编译结果（MCP server 常驻时
 //!    就是本次会话）。*偏差*：原计划 P0-1 想让 GUI 侧也写一份快照，但 GUI 有事件流、且 CLI 是
 //!    独立进程读不到那份内存——所以快照只放在这里，GUI 与 core 均零改动。
@@ -30,15 +32,15 @@ use latteset_core::project::{
     FileSystem, ProjectState,
 };
 use latteset_core::scheduler::CompileRunner;
-use latteset_core::settings::Settings;
+use latteset_core::settings::{Settings, TectonicSettings};
 use latteset_core::synctex::{pdf_path_for_root, resolve_inverse, synctex_data_path, SourcePosition,
     SyncTexPosition, SyncTexProvider};
 use latteset_core::types::{
     CompileKind, CompileOutcome, CompileRequest, ErrorEntry, OutlineNode,
 };
 use latteset_infra::fs::TokioFs;
-use latteset_infra::runner::SubprocessRunner;
 use latteset_infra::storage::SettingsStorage;
+use latteset_tectonic::TectonicLibRunner;
 
 pub mod mcp;
 
@@ -97,10 +99,11 @@ pub struct CompileReport {
     /// 字段保留是为了既有 JSON 契约不破）。
     pub engine: String,
     pub root_file: String,
-    /// 本次实际强度：`full`（Tectonic 收敛）或 `quick`（两趟 `-r 1`，引用可能落后一趟）。
+    /// 本次实际强度：`full`（重跑循环跑到中间产物稳定）或 `quick`（草稿态：预算内没收敛，
+    /// 或文档需要 biber/makeindex/glossaries 这类本引擎不跑的外部工具 ⇒ 引用/索引可能落后）。
     pub kind: String,
-    /// 请求的是 `Quick`，但**实际**跑成了 Full ⇒ true。两种来源：① 首编无产物被 runner 自动升级；
-    /// ② 库形态下编辑触发档在收敛预算内跑到了稳定（见 `CONVERGENCE_SUPPORTED`）。
+    /// 请求的是 `Quick`，但**实际**跑成了 Full ⇒ true。内嵌 runner 的 `Quick` 请求也走收敛判定：
+    /// 在编辑触发档的预算内跑到稳定就按**实际结果**报 `Full`（前端据此不亮「引用待更新」）。
     /// 判据只有一条：`请求 Quick ∧ 上报 Full`（字段名沿用既有 JSON 契约，不改名）。
     pub upgraded_from_quick: bool,
 }
@@ -246,7 +249,11 @@ impl Session {
 
     /// 编译一次并**等待结果**（`compile --wait` 的实现）。
     ///
-    /// `quick = true` 走两趟（`-r 1`：快，但目录/引用页码可能落后一趟）；默认 Full（Tectonic 收敛）。
+    /// - `quick = true` 是**编辑触发强度**（草稿）：走同一个重跑循环，但多一道收敛预算闸门
+    ///   （跑得动就在预算内追到稳定、按实际结果报 `Full`；追不上就停在草稿态报 `Quick`）。
+    /// - 默认 `Full`：跑到中间产物稳定为止（上限 6 趟）。
+    ///
+    /// 超时/取消都是**协作式**（内嵌引擎没有子进程可树杀）：置标志后引擎在下一个 I/O 回调处中止。
     pub async fn compile(&mut self, quick: bool) -> Result<CompileReport, ServerError> {
         let project = self
             .project
@@ -267,9 +274,11 @@ impl Session {
         };
         // headless 不消费流式反馈（CLI 一条命令一个 JSON；MCP 暂无 notifications）：
         // 传 NoProgress，行为与接线前一致（引擎输出仍被读取，只是不产出事件）。
+        // D4：bundle/cache 取**生效设置**（显式设置 > 环境变量 > 宿主默认，见 `build_runner`）。
         let runner = build_runner(
             self.fs.clone(),
             std::sync::Arc::new(latteset_core::scheduler::NoProgress),
+            &self.settings.tectonic,
         );
         let started = Instant::now();
         let outcome = runner
@@ -394,9 +403,11 @@ impl Session {
             timeout: std::time::Duration::from_secs(30),
             kind: CompileKind::Quick,
         };
+        // 与主编译同一装配口径（含 D4 的设置优先级）。
         let runner = build_runner(
             self.fs.clone(),
             std::sync::Arc::new(latteset_core::scheduler::NoProgress),
+            &self.settings.tectonic,
         );
         let started = Instant::now();
         let outcome = runner
@@ -589,38 +600,60 @@ impl Session {
     }
 }
 
-/// 组装编译 runner（headless 的**装配点**，与 `src-tauri/src/lib.rs` 的 GUI 装配点同口径）。
+/// 组装编译 runner（headless 的**装配点**，与 `src-tauri/src/runner.rs` 的 GUI 薄壳同口径）。
 ///
-/// 引擎唯一 = Tectonic（ADR-0015）；这里只在**形态**上二选一：默认 **子进程形态**
-/// （[`SubprocessRunner`]，外部 `tectonic` 可执行文件），只有在构建时打开 `tectonic-lib` 特性**且**
-/// 运行期开关 `LATTESET_TECTONIC_LIB=1` 时才用 Tectonic 库形态（方案 §3.5：默认关闭）。
-/// **D1：失败不自动回退** —— 这里只决定装配哪个 runner，运行中失败就是失败。
+/// 引擎唯一 = Tectonic **内嵌**（ADR-0015 决策 2）：这里只构造 [`TectonicLibRunner`]，
+/// 不再有"子进程 / 库内嵌"二选一，也没有 feature 门槛。
 ///
-/// 库形态的两条配置走环境变量（headless 没有设置面）：
-/// - `LATTESET_TECTONIC_BUNDLE`：bundle 来源（本地目录 bundle 走 `file:///…` 或相对路径）；
-/// - `LATTESET_TECTONIC_CACHE`：产品缓存目录（`bundles/` + `formats/` 的父目录）。
+/// **资源优先级（R4 / D4）= 显式设置 > 环境变量 > 宿主默认**（与 GUI、`docs/dev/modules.md` 一致）：
+/// - **bundle**：`settings.tectonic.bundle` 非空 → `LATTESET_TECTONIC_BUNDLE` → 上游默认（网络兜底，
+///   `network-bundle` 由 manifest 打开）；
+/// - **缓存目录**：`settings.tectonic.cache_dir` 非空 → `LATTESET_TECTONIC_CACHE` →
+///   配置目录同级的 `cache`（`<config 父目录>/cache`）。
 ///
-/// 缓存目录不注入会把 ~24 MB 的 `.fmt` 扔进用户项目（方案 §5.2 / HL-11 硬约束），所以这里的
-/// 兜底也必须是**空的**缓存目录而不是项目目录：headless 用配置目录同级的 `cache`。
+/// 缓存目录不注入会把 ~24 MB 的 `.fmt` 扔进用户项目（方案 §5.2 / HL-11 硬约束），所以兜底必须是
+/// **产品缓存目录**而不是项目目录。
 fn build_runner(
     fs: Arc<dyn FileSystem>,
     progress: Arc<dyn latteset_core::scheduler::CompileProgress>,
+    tectonic: &TectonicSettings,
 ) -> Arc<dyn CompileRunner> {
-    #[cfg(feature = "tectonic-lib")]
-    {
-        if latteset_tectonic::lib_form_enabled() {
-            let mut lib = latteset_tectonic::TectonicLibRunner::new(fs.clone(), progress);
-            let cache = latteset_tectonic::cache_dir_from_env().or_else(|| {
-                let dir = default_config_dir().parent().map(|p| p.join("cache"));
-                dir
-            });
-            if let Some(cache) = cache {
-                lib = lib.with_cache_dir(cache);
-            }
-            return Arc::new(lib.with_bundle(latteset_tectonic::bundle_from_env()));
-        }
+    let mut lib = TectonicLibRunner::new(fs, progress);
+    let cache = pick_cache(
+        tectonic.cache_dir.clone(),
+        latteset_tectonic::cache_dir_from_env(),
+        host_cache_dir(),
+    );
+    if let Some(cache) = cache {
+        lib = lib.with_cache_dir(cache);
     }
-    Arc::new(SubprocessRunner::new(fs, progress))
+    let bundle = explicit_bundle(tectonic.bundle.as_deref())
+        .unwrap_or_else(latteset_tectonic::bundle_from_env);
+    Arc::new(lib.with_bundle(bundle))
+}
+
+/// 缓存目录优先级（纯函数，单测直接打）：显式设置 > 环境变量 > 宿主默认。
+fn pick_cache(
+    explicit: Option<PathBuf>,
+    env: Option<PathBuf>,
+    host: Option<PathBuf>,
+) -> Option<PathBuf> {
+    explicit.or(env).or(host)
+}
+
+/// 设置里的 bundle 源（空串/纯空白按"未设置"处理 ⇒ 回落到环境变量/上游默认）。
+fn explicit_bundle(raw: Option<&str>) -> Option<latteset_tectonic::BundleSource> {
+    raw.map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(|s| latteset_tectonic::BundleSource::Explicit(s.to_owned()))
+}
+
+/// 宿主默认缓存目录：配置目录（`<…>/com.latteset.app`）的同级 `cache`。
+///
+/// 与 GUI 的 `app_cache_dir()` 是两条路径（headless 不引 tauri），但**语义相同**：产品缓存目录，
+/// 不落项目目录。取不到父目录时返回 `None`（runner 会显式报"未注入 format 缓存目录"）。
+fn host_cache_dir() -> Option<PathBuf> {
+    default_config_dir().parent().map(|p| p.join("cache"))
 }
 
 /// 引擎名 = core 的 [`latteset_core::types::ENGINE_ID`]（**唯一副本**；ADR-0015 之后只有一个引擎）。
