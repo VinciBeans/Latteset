@@ -20,7 +20,7 @@ Latteset 主界面：左侧文件树、中间编辑区、右侧 PDF 预览。
 
 依赖 **Windows 10/11**、Node.js ≥ 18、Rust（stable-x86_64-pc-windows-msvc，含 VS Build Tools C++ 工具链）、**vcpkg**（内嵌 Tectonic 的 C 依赖链：六个 `x64-windows-static-release` 端口，入口见下）。
 
-**TeX 环境**：唯一引擎是 **Tectonic**，以**内嵌**形态编进产品进程，**不需要预装 TeX Live / MiKTeX，也不要求 PATH 上有 `tectonic`**。安装包**自带精简宏包集**（517 文件 / 30.43 MiB zip，覆盖论文/幻灯片/中文/图表/参考文献等代表性文档）⇒ **打开即可离线首编**；它**不是完整 TeX Live**，用到覆盖外的宏包时给明确缺包提示，可在「设置 → 引擎 → 宏包集来源」**显式切到在线完整宏包集**或配本地目录 bundle（新版安装包：**NSIS 88.46 MiB / MSI 109.63 MiB**）。引擎不启动外部进程，biber / makeindex / glossaries 不会被自动运行（检出时给状态栏提示，见「实时编译」）；xelatex / lualatex / pdflatex 与 latexmk 驱动已从产品中删除（[ADR-0015](./docs/adr/0015-tectonic-only-embedded-engine.md)）。
+**TeX 环境**：唯一引擎是 **Tectonic**，以**内嵌**形态编进产品进程，**不需要预装 TeX Live / MiKTeX，也不要求 PATH 上有 `tectonic`**。安装包**自带内置精简宏包集**（517 文件 / 30.43 MiB zip，覆盖论文/幻灯片/中文/图表/参考文献等代表性文档）⇒ **打开即可离线首编**；它**不是完整 TeX Live**，用到覆盖外的宏包时给明确缺包提示，可在「设置 → 引擎 → 宏包集来源」**显式切到在线完整宏包集**或配本地目录宏包集（新版安装包：**NSIS 88.46 MiB / MSI 109.63 MiB**）。引擎不启动外部进程，biber / makeindex / glossaries 不会被自动运行（检出时给状态栏提示，见「实时编译」）；xelatex / lualatex / pdflatex 与 latexmk 驱动已从产品中删除（[ADR-0015](./docs/adr/0015-tectonic-only-embedded-engine.md)）。
 
 构建前置统一由 `scripts/with-tectonic-lib.ps1` 校验（缺项给可执行修复命令）：
 
@@ -28,6 +28,13 @@ Latteset 主界面：左侧文件树、中间编辑区、右侧 PDF 预览。
 npm run lib:check                  # 校验 vcpkg / triplet / 六端口 / 工具链
 npm install && npm run tauri dev   # 开发构建；发布打包用 npm run tauri build
 ```
+
+**使用入口（普通用户不需要构建）**：
+
+- **安装版（推荐）**：运行安装包（`Latteset_<版本>_x64-setup.exe`）后，从开始菜单「Latteset」启动（默认装到 `%LOCALAPPDATA%\Latteset`）。
+- **免安装**：直接运行已构建的 `src-tauri\target\release\latteset.exe`——前端已内嵌，**不依赖 vite / dev server / 任何本地端口**。
+- ⚠ **不要直接双击 `src-tauri\target\debug\latteset.exe`**：它是开发产物，只连 `http://localhost:1420` 的 vite dev server；vite 没跑时窗口会显示「localhost 拒绝连接 / `ERR_CONNECTION_REFUSED`」。开发请回**仓库根**跑 `npm run tauri dev`（保持 vite 运行）；排障见 [docs/troubleshooting.md](./docs/troubleshooting.md)「窗口显示 localhost 拒绝连接」。
+- **改了前端要交付时**：`npm run tauri build` 重新打包——release exe / 安装包内嵌的是打包那一刻的 `dist/`，否则用户装到的是旧前端。
 
 首次启动要编译 Rust（内嵌引擎的 C 链会拉长首编，约几分钟），随后自动打开应用窗口。⚠ 本机若在受限沙箱里跑（工作区带 Low 完整性标签、报 `cl D8050` / `LNK1104`），需先把 `TMP`/`TEMP` 指到工作区内目录——见 [docs/troubleshooting.md](./docs/troubleshooting.md)。
 
@@ -42,11 +49,11 @@ npm install && npm run tauri dev   # 开发构建；发布打包用 npm run taur
 
 ## 实时编译
 
-- **双模式触发**：**连续编译**（默认，输入停顿约 500ms 即编译，无需保存）+ **保存触发编译**，随时切换；另有手动「编译」按钮。
+- **双模式触发**：**连续编译**（默认，输入停顿约 500ms 即编译，无需保存）+ **保存时编译**，随时切换；另有手动「编译」按钮。
 - **编辑期快速出图**：编辑触发的计算同样走引擎重跑循环，**预算内**收敛就按实际结果报完整档（不亮「引用待更新」）；超出预算才停在草稿态，停手 2s 自动补一次完整收敛把目录/引用页码追上。⚠ 旧的"比完整 latexmk 快约 40%"是 latexmk 时代的读数，那条驱动已删除，**不是** Tectonic 的收益。
-- **编译中就有反馈**：状态栏显示「已排版 N 页」——内嵌引擎在**每趟排版收尾**从捕获的 XDV 数完整页，不是子进程 stdout 的 `[N]`；失败后在错误列表给出结构化条目（含诊断；`Overfull` 这类警告留到最终清单）。⚠「错误在编译结束前就出现」的真实提前量未重测。
-- **调度与失败语义**：合并队列（待编译只保留最新一条）、超时自动终止（默认 120s、上限 1800s）、手动终止；超时与内容错误都**不自动重试**，超时进错误列表给证据化诊断 + 一键「提高到 Ns 并重试」。取消/超时是**协作式**的（内嵌引擎没有进程可强杀，引擎在下一个 I/O 回调处中止）。
-- **错误列表**：解析 `.log`，把原始报错翻译成「原因 + 怎么改」（匹配不到就退回原文 + 行号）；同源去重/截断（错误雪崩不刷屏），点击跳转源码行。
+- **编译中就有反馈**：状态栏显示「已排版 N 页」——内嵌引擎在**每趟排版收尾**从捕获的 XDV 数完整页，不是子进程 stdout 的 `[N]`；失败后在问题面板给出结构化条目（含诊断；`Overfull` 这类警告留到最终清单）。⚠「错误在编译结束前就出现」的真实提前量未重测。
+- **调度与失败语义**：合并队列（待编译只保留最新一条）、超时自动终止（默认 120s、上限 1800s）、手动终止；超时与内容错误都**不自动重试**，超时进问题面板给证据化诊断 + 一键「提高到 Ns 并重试」。取消/超时是**协作式**的（内嵌引擎没有进程可强杀，引擎在下一个 I/O 回调处中止）。
+- **问题面板**：解析 `.log`，把原始报错翻译成「原因 + 怎么改」（匹配不到就退回原文 + 行号）；同源去重/截断（错误雪崩不刷屏），点击跳转源码行。
 
 > 说明：驱动层与其它引擎已按 [ADR-0015](./docs/adr/0015-tectonic-only-embedded-engine.md) 删除；历史上 latexmk 的「增量」是对整份文档重跑一遍 xelatex 单遍（不跳过未改动文件）——那条结论保留在 [ADR-0005](./docs/adr/0005-latexmk-first-incremental-next.md)。Tectonic 的收敛由引擎自己完成。外部工具：**内嵌形态不会调用外部 biber**（biber 不随产品分发；需要参考文献时用 `backend=bibtex` 走内建 BibtexEngine，或先在本机自行处理），**makeindex / glossaries 不会自动跑**（索引/术语表为空）；三类都会在检出时给状态栏提示与替代做法，不会静默失败。
 
@@ -61,7 +68,7 @@ npm install && npm run tauri dev   # 开发构建；发布打包用 npm run taur
 - **文件夹即项目**：打开文件夹 → 文件树 → 多标签页；自动保存（防抖）+ 外部修改检测与冲突提示。
 - **在软件内管理文档**：文件树支持新建文件/目录、删除（二次确认 + 目录递归）、改名、搜索；空项目里建第一份 `.tex` 时会问一次「文档语言 / 类型 / 标题」（中文 ctex 类或标准类，短文/报告/书/幻灯片），直接生成一份**能编译的最小骨架**，不想要这一步可在「设置 → 编译」里关掉。
 - **根文件**：正则启发式自动探测（含 `\documentclass` 的顶层 .tex），可手动覆盖；**还没有根文档**时状态栏给出可点提示，并且每次保存都会静默重探一次——补上 `\documentclass` 保存即成主文件并自动出图。
-- **设置**：引擎**固定为内嵌 Tectonic**（不再有引擎下拉/形态选项，`LATTESET_TEX_ENGINES` / `LATTESET_TECTONIC_LIB` 均已删除；旧配置里的 `compile.engine` / `tectonic.lib_form` 会在迁移时被忽略并在状态栏给一次提示，原文件留 `.v1.bak` / `.v2.bak`）、编译模式、防抖、超时、根文件覆盖；全局 + 项目（`.latteset/settings.json`）两层，改即生效。引擎页只剩 **宏包集来源**（内置精简集 / 在线完整 / 本地目录三档）与**缓存目录**两项资源。
+- **设置**：引擎**固定为内嵌 Tectonic**（不再有引擎下拉/形态选项，`LATTESET_TEX_ENGINES` / `LATTESET_TECTONIC_LIB` 均已删除；旧配置里的 `compile.engine` / `tectonic.lib_form` 会在迁移时被忽略并在状态栏给一次提示，原文件留 `.v1.bak` / `.v2.bak`）、编译模式、防抖、超时、根文件覆盖；全局 + 项目（`.latteset/settings.json`）两层，改即生效。引擎页只剩 **宏包集来源**（内置精简宏包集 / 在线完整宏包集 / 本地目录宏包集三档）与**缓存目录**两项资源。
 
 ## 命令行与 MCP（无 GUI，面向自动化）
 

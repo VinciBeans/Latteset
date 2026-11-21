@@ -29,6 +29,7 @@
 | 精简 bundle 不含 `beamer.cls` / 配本地 bundle | 实验室 bundle 缺 beamer（历史；③段随包集已覆盖） |
 | 编译报缺宏包 / 内置宏包集缺失或损坏 / 缓存变大（③段） | 缺包切在线 / 内置集缺失 / 缓存 GC |
 | 启动日志 `failed to parse local path`（随包宏包集打不开） | Windows verbatim 路径（T19 已修） |
+| 窗口显示「localhost 拒绝连接」/ `ERR_CONNECTION_REFUSED`（启动的是 debug 构建） | 窗口显示 localhost 拒绝连接 / ERR_CONNECTION_REFUSED |
 | 看性能数字：为什么 `multifile`/`large` 超线？ | 预算/基线口径（按实测页数分类；large cold 已知硬缺口） |
 
 ## 无 GPU 虚拟机白屏：首帧呈现竞态
@@ -617,3 +618,27 @@ WARN startup 分段：format 预热失败（静默：首编会自行生成） pr
 **已知硬缺口**：`large`（125 页）**cold 6.41 s**（含税 6.63 s）超 5 s（引擎排版上限量级；T18 预热后 GUI 首编仍 ≈5.4 s）——**保留 5 s 线、不放宽阈值**，只作回归对照，不是可修的配置问题。
 
 **读数的正确用法**：① 现行基线入口 = `node scripts/bench-embedded.mjs`（release CLI，六档 × cold-format/cold-project/noop/noop2/edit/edit2，n=3 中位），**必须与 `test_file/phase3/BASELINE.md` §0.1 同口径**（最小 fontconfig 配置 + 可写缓存，否则每进程多付 ~244 ms 字体扫描税）；数字见 [design.md](./design.md) §2.8；② **跨版本别直接比绝对值**——T14→T19 的 **+200–240 ms/进程**差已归因：**fontconfig 宿主字体扫描环境税（2026-11-21）**（T19 绝对值含税、不能与无税数字比；相对收益与分项字段仍有效：`convert_ms=0`、`preview_ms` 减半）；③ GUI 首编已由 T18 后台预热移出 format 生成（首编 `format_ms=0`），冷编数字里仍含 format 成本，别把它当"排版变慢"。
+
+## 窗口显示「localhost 拒绝连接」/ `ERR_CONNECTION_REFUSED`（启动的是 debug 构建且 vite 未运行）
+
+**现象**：打开 Latteset 后窗口只显示 WebView2 错误页「嗯… 无法访问此页面 / **localhost 拒绝连接** / `ERR_CONNECTION_REFUSED`」，没有文件树 / 编辑区 / PDF 预览。用户截图与本机复现证据见 `test_file/diag-launch/REPORT.md` §1（工作区证据，未提交）。
+
+**原因**：启动的是**开发构建（debug 二进制）**，而 vite dev server（`http://localhost:1420`）没有运行。`src-tauri/tauri.conf.json` 的 `build.devUrl = http://localhost:1420` **只在 `cfg(dev)`（debug 构建）加载**；release 构建把 `../dist` 内嵌进 exe、经 Tauri 自定义协议加载，安装版同理——**它们根本不会访问 1420**。因此这不是发布构建 / 安装包缺陷。T44 复现矩阵（vite 全程未启动）：debug × {`src-tauri` cwd、`target\debug` cwd（模拟 Explorer 双击）} → 同一错误页；`target\release\latteset.exe` 与 NSIS 静默安装后的 `latteset.exe` → **正常 UI**。
+
+**快速判定（怀疑跑错二进制）**：
+
+```powershell
+netstat -ano | findstr 9223
+```
+
+出现 `0.0.0.0:9223` / `LISTENING` ⇒ 当前进程是 **debug 构建**：MCP Bridge 插件只在 `#[cfg(debug_assertions)]` 注册（`src-tauri/src/lib.rs`），debug stdout 也有 `MCP Bridge plugin initialized ... 0.0.0.0:9223` / `WebSocket server listening on: 0.0.0.0:9223`；release / 安装版没有这一行、不监听该端口。另两个旁证（仅开发机）：debug 构建启动时会重导出 `src/bindings.ts`，cwd=仓库根直接跑会 panic `Failed to create directory '../src'`、cwd=`target\debug` 会误建 `target\src\bindings.ts`。
+
+**正确处理（按用途二选一）**：
+
+- **普通使用**：运行安装包安装后从开始菜单「Latteset」启动（T44 实测默认装到 `%LOCALAPPDATA%\Latteset`）；不打包安装时直接运行 `src-tauri\target\release\latteset.exe`（前端已内嵌，**不需要 vite / dev server / 任何本地端口**）。
+- **开发调试**：在**仓库根**跑 `npm run tauri dev`（先校验 vcpkg 前置，再由 `beforeDevCommand` 起 vite、构建 debug 并打开窗口），**保持 vite 运行**；停止 dev 后再让窗口刷新/重建，就会回到这个错误页。
+- ❌ **不要直接双击 `src-tauri\target\debug\latteset.exe`**，也不要用 `npm run dev`（只起 vite）后手动拉 debug exe——两者都缺 vite 这个前端来源。
+
+**何时需要 `npm run tauri build` 重打包**：release exe / 安装包里内嵌的是**打包那一刻**的 `dist/`。改了前端（`src/`、`npm run build` 的产物）之后，要交付或被安装的版本必须重新 `npm run tauri build`（并重新生成安装包）；否则用户装到的是旧前端。T44 实测：`dist/index.html` 19:26 比 release exe / NSIS 安装包 13:27 新约 6 小时，内嵌 chunk 名也不同 ⇒ 发布前应重打包。这**与本次 `ERR_CONNECTION_REFUSED` 无关**（错误页与前端内容无关），但同属"跑错产物"的坑。
+
+**不要**把这条当发布缺陷去改 `tauri.conf.json`：`devUrl` 本身正确，debug 构建按设计连 dev server。若希望从源头避免误认，可考虑 dev 构建窗口标题加 `[DEV]` 后缀或 devUrl 加载失败时显示自有提示页——**属可选产品改动，本次未做**。
