@@ -29,13 +29,13 @@
     },
     {
       "path": "LICENSES/c-deps/freetype.txt",
-      "bytes": 27420,
-      "sha256": "eb017f4c45e70b0b4a083109ff262dc9ee001bb433a057574e50416338f152bc"
+      "bytes": 26853,
+      "sha256": "57e6b185071cbb481589e17b654752d03d731600db0faf3cd07ae9ad8ea435b3"
     },
     {
       "path": "LICENSES/c-deps/graphite2.txt",
-      "bytes": 28330,
-      "sha256": "26386619310f2404a731bf48731ec66624ad6e8ee4983020aa3efdb4f4136b6f"
+      "bytes": 27786,
+      "sha256": "06efcedb9ce07473956b72b8669f03ced9f39ca19f3c1216e328b796a36ea6a8"
     },
     {
       "path": "LICENSES/c-deps/harfbuzz.txt",
@@ -344,8 +344,8 @@
     },
     {
       "path": "LICENSES/rust/284465860407-LICENSE",
-      "bytes": 1157,
-      "sha256": "284465860407420254e39be4e1bdcaaf2e7f2d18e06f9bab75bc75341a5d8501"
+      "bytes": 1135,
+      "sha256": "cfdb7491dfa8800a1d561957d6a072ad63a6305ffa48386d04eae8eac8d65e8a"
     },
     {
       "path": "LICENSES/rust/29e9fe5074bd-LICENSE-MIT",
@@ -544,8 +544,8 @@
     },
     {
       "path": "LICENSES/rust/5b2c207dcf57-LICENSE-MIT.md",
-      "bytes": 1105,
-      "sha256": "5b2c207dcf571267ebe0bbdd5bf321f561ddc22ff597e7b363e96f4539507a29"
+      "bytes": 1082,
+      "sha256": "f0cf9b1c62bbe3bd3a69f5f79c7158f513f612b4940a0a812d1db39d605318bc"
     },
     {
       "path": "LICENSES/rust/5b698ca13897-LICENSE",
@@ -734,8 +734,8 @@
     },
     {
       "path": "LICENSES/rust/816f6b910d8e-LICENSE-MIT",
-      "bytes": 1074,
-      "sha256": "816f6b910d8e4ef211bd135b113fac1031a7b7a9541688cb69ad7bf891493679"
+      "bytes": 1050,
+      "sha256": "9912a774b2a73d20ae303b6977793ce295dff729d54b5b97b68a9e435dbefea3"
     },
     {
       "path": "LICENSES/rust/8173d5c29b4f-LICENSE-APACHE",
@@ -754,8 +754,8 @@
     },
     {
       "path": "LICENSES/rust/83b3fac32bfd-LICENSE-APACHE",
-      "bytes": 11032,
-      "sha256": "83b3fac32bfd97ed857b9dff3e94e1eab1aa796062daecf10c7f2efa19d4544a"
+      "bytes": 10832,
+      "sha256": "14812c1b59679f63a77ed770f5b9aff1534f40d0a6f59aa93bdb60c532c4cf6e"
     },
     {
       "path": "LICENSES/rust/83c1763356e8-LICENSE-BSD",
@@ -1044,8 +1044,8 @@
     },
     {
       "path": "LICENSES/rust/c09aae9d3c77-LICENSE",
-      "bytes": 1107,
-      "sha256": "c09aae9d3c77b531f56351a9947bc7446511d6b025b3255312d3e3442a9a7583"
+      "bytes": 1087,
+      "sha256": "ad4fcfaf8d5b12b97409c137a03d4a4e4b21024c65c54f976cc3b609c1bd5b0f"
     },
     {
       "path": "LICENSES/rust/c0c56f26d9c0-LICENSE",
@@ -1544,5 +1544,5 @@
     }
   ],
   "totalFiles": 308,
-  "totalBytes": 51331630
+  "totalBytes": 51330230
 }

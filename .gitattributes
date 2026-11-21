@@ -1,0 +1,6 @@
+# 许可资产（THIRD-PARTY-NOTICES / manifest.json / LICENSES / sources / patches / data）
+# 按**字节**参与 `scripts/make-notices.mjs --check`（NOTICE 内嵌许可原文、manifest 逐文件 sha256）。
+# Git 的 core.autocrlf（Windows runner / Git for Windows 默认 true）会在 checkout 时把文本行尾
+# 改成 CRLF，使生成物与入库件逐字节不一致 ⇒ CI 干净 checkout 上 --check 必红。这里固定为
+# `-text`（不做行尾转换、按仓库内原样检出），保证 Windows / Linux / 本地一致。
+src-tauri/resources/licenses/** -text
