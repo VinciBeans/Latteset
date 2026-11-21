@@ -39,7 +39,7 @@ async function draw() {
   const canvas = canvasRef.value;
   // 显式报错而不是静默 return —— A 当年就是因为静默 return 留了一张空白卡
   if (!canvas) {
-    renderError.value = "画布未挂载（内部错误）";
+    renderError.value = "预览加载失败（内部错误）";
     throw new Error(renderError.value);
   }
   let pdf: pdfjsLib.PDFDocumentProxy;
@@ -70,7 +70,7 @@ async function draw() {
   off.height = Math.max(1, Math.floor(base.height * SCALE));
   const octx = off.getContext("2d", { willReadFrequently: true });
   if (!octx) {
-    renderError.value = "拿不到离屏 2D 上下文";
+    renderError.value = "预览加载失败（内部错误）";
     return;
   }
   octx.fillStyle = "#ffffff";
@@ -103,7 +103,7 @@ async function draw() {
     }
   }
   if (maxX < 0 || maxY < 0) {
-    renderError.value = "片段页是空白的（没有排出版式）";
+    renderError.value = "公式没有排出内容（空白页）";
     return;
   }
   const cx = Math.max(0, minX - PAD);
@@ -121,7 +121,7 @@ async function draw() {
   canvas.style.height = `${cssH}px`;
   const ctx = canvas.getContext("2d");
   if (!ctx) {
-    renderError.value = "拿不到 2D 上下文";
+    renderError.value = "预览加载失败（内部错误）";
     return;
   }
   ctx.fillStyle = "#ffffff";

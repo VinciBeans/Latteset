@@ -267,7 +267,7 @@ async function applyBundle() {
     return;
   }
   if (/^https?:\/\//i.test(raw)) {
-    resourceError.value = "网络地址请用「在线完整」选项（会写入默认在线地址），不要填在本地目录里";
+    resourceError.value = "网络地址请用「在线完整」选项，不要填在本地目录里";
     return;
   }
   if (raw === bundleDisplay(tectonic.value.bundle)) return;
@@ -497,7 +497,7 @@ async function openLicenses(kind: "notices" | "sources") {
               <button
                 class="seg-btn"
                 :class="{ on: bundleMode === 'local' }"
-                title="指向本地目录 bundle：离线/内网部署或自备宏包集（目录需自带 SHA256SUM）"
+                title="使用本地目录中的宏包集：离线/内网部署或自备（需是本产品可识别的宏包集目录）"
                 @click="setBundleMode('local')"
               >本地目录</button>
             </div>
@@ -523,7 +523,7 @@ async function openLicenses(kind: "notices" | "sources") {
           </div>
 
           <div class="field">
-            <label class="field-label" for="set-cache">缓存目录（format / bundle）</label>
+            <label class="field-label" for="set-cache">缓存目录（引擎与宏包集缓存）</label>
             <div class="root-row">
               <input
                 id="set-cache"
@@ -543,7 +543,7 @@ async function openLicenses(kind: "notices" | "sources") {
               >清除</button>
             </div>
             <p class="field-hint">
-              可留空（用应用缓存目录）；填写时必须是绝对路径。格式文件（约 24 MB）<b>不会</b>落进你的项目目录。
+              可留空（用应用缓存目录）；填写时必须是绝对路径。缓存文件（约 24 MB）<b>不会</b>落进你的项目目录。
             </p>
           </div>
 
@@ -569,7 +569,7 @@ async function openLicenses(kind: "notices" | "sources") {
             <p class="field-hint">
               内嵌引擎<b>不运行外部工具</b>：文档请求 biber 时参考文献可能未解析（biblatex 请用
               <code>backend=bibtex</code>，或先自行生成 <code>.bbl</code>）；makeindex / glossaries 也不会自动运行。
-              检出时状态栏会给出提示，不静默降级。
+              出现这类情况时，状态栏会给出提示，不会静默降级。
             </p>
             <p class="field-hint">
               GPL 字体的 Corresponding Source（Fandol 6 套 + zapfding AFM）随安装包分发在

@@ -135,7 +135,7 @@ async function toggleMode() {
       v-for="(text, i) in runtimeNotices"
       :key="`${i}-${text}`"
       class="notice info runtime"
-      :title="`${text}（点击清空运行时提示）`"
+      :title="`${text}（点击清空提示）`"
       @click="notices.clear()"
     >
       {{ text }}

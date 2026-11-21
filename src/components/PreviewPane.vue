@@ -925,7 +925,7 @@ onBeforeUnmount(() => clearTimeout(draftTimer));
       <span
         class="live-preview"
         v-if="preview.livePreview"
-        title="编译中：这是由已完成页面拼成的部分 PDF（目录/引用可能还没更新），编译结束后会被最终 PDF 取代"
+        title="编译中：这是临时预览（目录/引用可能还没更新），编译结束后会被最终 PDF 取代"
       >编译中预览 · {{ preview.livePreview.pages }} 页</span>
     </div>
     <div ref="container" class="preview-pane" @scroll.passive="onScroll" @wheel="onWheel">

@@ -159,7 +159,7 @@ async function switchToOnlineBundleAndRetry() {
         </div>
       </div>
       <div class="more" v-if="grouped.hidden > 0">
-        另有 {{ grouped.hidden }} 组错误未显示（仅展示前 {{ MAX_DISPLAY }} 组去重结果）
+        另有 {{ grouped.hidden }} 组错误未显示（仅展示前 {{ MAX_DISPLAY }} 组）
       </div>
     </div>
   </div>

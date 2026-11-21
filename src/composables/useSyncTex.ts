@@ -23,7 +23,7 @@ export function useSyncTex() {
     } catch (e) {
       // 常见原因：还没编译过（无 .synctex.gz）或正在编译（数据被重写，已由后端重试兜过）
       console.error("SyncTeX 正向定位失败：", e);
-      preview.setSyncNote("正向定位失败：先编译一次再试（同步数据来自上一次编译）");
+      preview.setSyncNote("正向定位失败：先编译一次再试");
     }
   }
 
