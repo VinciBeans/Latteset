@@ -228,8 +228,7 @@ impl SyncTexProvider for SyncTexSelf {
             let doc = Self::load(pdf)?;
             let tag = doc.tag_for_file(&src.file).ok_or_else(|| {
                 SyncTexError::Parse(format!(
-                    "同步数据里没有这个源文件（{}）—— 库形态产出的文件可能只有空 Input（见 \
-                     core::synctex::parse 的模块文档），此时后台定位不可用",
+                    "同步数据里没有这个源文件（{}）：本次编译没有记录该文件的定位信息，无法从 PDF 跳回这里",
                     src.file.display()
                 ))
             })?;

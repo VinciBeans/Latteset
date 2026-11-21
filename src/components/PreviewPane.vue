@@ -925,14 +925,14 @@ onBeforeUnmount(() => clearTimeout(draftTimer));
       <span
         class="live-preview"
         v-if="preview.livePreview"
-        title="编译中：这是已完成页缝出来的部分 PDF（目录/引用可能还没更新）。编译结束后会被最终 PDF 取代"
+        title="编译中：这是由已完成页面拼成的部分 PDF（目录/引用可能还没更新），编译结束后会被最终 PDF 取代"
       >编译中预览 · {{ preview.livePreview.pages }} 页</span>
     </div>
     <div ref="container" class="preview-pane" @scroll.passive="onScroll" @wheel="onWheel">
       <div v-if="!preview.displayPath" class="empty">
         <span class="empty-icon">📕</span>
         <span class="empty-title">PDF 在这里等你</span>
-        <span class="empty-hint">写好 main.tex，点「编译」就能提前看到成品</span>
+        <span class="empty-hint">打开项目并编译后，PDF 会显示在这里</span>
       </div>
       <div class="pages" v-if="numPages > 0">
         <!-- 顶部占位：撑住窗口之前页面的高度（滚动条稳定） -->

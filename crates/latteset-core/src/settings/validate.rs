@@ -15,7 +15,7 @@ pub fn validate(s: &Settings) -> Result<(), Vec<String>> {
     let mut errs = Vec::new();
     if !TIMEOUT_SECS_RANGE.contains(&s.compile.timeout_secs) {
         errs.push(format!(
-            "compile.timeout_secs 必须在 {}..={} 之间（当前 {}）",
+            "编译超时必须在 {}..={} 秒之间（当前 {}）",
             TIMEOUT_SECS_RANGE.start(),
             TIMEOUT_SECS_RANGE.end(),
             s.compile.timeout_secs
@@ -23,7 +23,7 @@ pub fn validate(s: &Settings) -> Result<(), Vec<String>> {
     }
     if !DEBOUNCE_MS_RANGE.contains(&s.compile.debounce_ms) {
         errs.push(format!(
-            "compile.debounce_ms 必须在 {}..={} 之间（当前 {}）",
+            "自动编译防抖必须在 {}..={} 毫秒之间（当前 {}）",
             DEBOUNCE_MS_RANGE.start(),
             DEBOUNCE_MS_RANGE.end(),
             s.compile.debounce_ms
@@ -53,8 +53,7 @@ pub fn validate_tectonic(t: &super::model::TectonicSettings) -> Vec<String> {
         let looks_absolute_windows = raw.len() > 2 && raw.as_bytes().get(1) == Some(&b':');
         if looks_absolute_windows && !raw.starts_with("file://") {
             errs.push(format!(
-                "bundle 不能写绝对 Windows 路径（{raw}）：上游会把它当 URL scheme 解析、判为「不是 bundle」\
-                 ⇒ 请写 `file:///{}` 或相对路径",
+                "bundle 不能写绝对 Windows 路径（{raw}）：请写成 file:///{}（正斜杠）或相对路径",
                 raw.replace('\\', "/")
             ));
         }
@@ -64,8 +63,8 @@ pub fn validate_tectonic(t: &super::model::TectonicSettings) -> Vec<String> {
         let s = p.trim();
         if !s.is_empty() && !Path::new(s).is_absolute() {
             errs.push(format!(
-                "缓存目录必须是绝对路径（当前 {s}）：相对路径以进程 cwd 为基准，\
-                 换宿主（GUI/headless）会指向不同目录，format 缓存会反复重建"
+                "缓存目录必须是绝对路径（当前 {s}）：相对路径会随启动方式指向不同目录，\
+                 导致排版格式缓存反复重建"
             ));
         }
     }
@@ -120,7 +119,7 @@ pub fn validate_overrides(o: &ProjectOverrides) -> Result<(), Vec<String>> {
         if let Some(v) = compile.timeout_secs {
             if !TIMEOUT_SECS_RANGE.contains(&v) {
                 errs.push(format!(
-                    "compile.timeout_secs 必须在 {}..={} 之间（当前 {}）",
+                    "编译超时必须在 {}..={} 秒之间（当前 {}）",
                     TIMEOUT_SECS_RANGE.start(),
                     TIMEOUT_SECS_RANGE.end(),
                     v
@@ -130,7 +129,7 @@ pub fn validate_overrides(o: &ProjectOverrides) -> Result<(), Vec<String>> {
         if let Some(v) = compile.debounce_ms {
             if !DEBOUNCE_MS_RANGE.contains(&v) {
                 errs.push(format!(
-                    "compile.debounce_ms 必须在 {}..={} 之间（当前 {}）",
+                    "自动编译防抖必须在 {}..={} 毫秒之间（当前 {}）",
                     DEBOUNCE_MS_RANGE.start(),
                     DEBOUNCE_MS_RANGE.end(),
                     v
@@ -204,8 +203,8 @@ mod tests {
         s.compile.debounce_ms = 1;
         let errs = validate(&s).unwrap_err();
         assert_eq!(errs.len(), 2); // 全部违规项都收集
-        assert!(errs[0].contains("timeout_secs"));
-        assert!(errs[1].contains("debounce_ms"));
+        assert!(errs[0].contains("编译超时"));
+        assert!(errs[1].contains("自动编译防抖"));
     }
 
     #[test]

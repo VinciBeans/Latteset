@@ -516,7 +516,7 @@ pub async fn rename_path(
         .map_err(|e| path_error(e, Path::new(&to), "新路径"))?;
     if dst.parent() != src.parent() {
         return Err(CmdError::Invalid(
-            "改名只能在本目录内（暂不支持跨目录移动）".into(),
+            "改名只能在本目录内（不支持跨目录移动）".into(),
         ));
     }
     if state.fs.exists(&dst).await.unwrap_or(false) {

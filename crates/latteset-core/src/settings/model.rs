@@ -45,14 +45,14 @@ pub const ENGINE_UNIFIED_NOTICE_ID: &str = "engine-unified-v2";
 
 /// v1 → v2 迁移时追加的提示文案（迁移与前端展示共用同一句）。
 pub const ENGINE_UNIFIED_NOTICE_MESSAGE: &str =
-    "引擎已统一为 Tectonic（v2 起不再有引擎设置），原设置已忽略。";
+    "引擎已固定为 Tectonic；原「引擎」设置已忽略。";
 
 /// 形态固定为内嵌 Tectonic 的迁移提示 id（v2 → v3 恒加）。
 pub const FORM_EMBEDDED_NOTICE_ID: &str = "form-embedded-v3";
 
 /// v2 → v3 迁移恒加的提示文案：形态设置位从这一版起不复存在。
 pub const FORM_EMBEDDED_NOTICE_MESSAGE: &str =
-    "引擎形态已固定为内嵌 Tectonic（v3 起不再有形态设置），原形态设置已忽略。";
+    "引擎形态已固定为内嵌 Tectonic；原「引擎形态」设置已忽略。";
 
 /// 子进程形态被删除的迁移提示 id（v2 → v3，**仅当**旧值表示"子进程档"时追加）。
 pub const SUBPROCESS_FORM_REMOVED_NOTICE_ID: &str = "subprocess-form-removed-v3";
@@ -62,8 +62,9 @@ pub const SUBPROCESS_FORM_REMOVED_NOTICE_ID: &str = "subprocess-form-removed-v3"
 /// 只对**显式选过子进程**的老用户追加：他们是唯一可能依赖"引擎调本机 biber"的人，必须
 /// 白纸黑字告知这条能力没了——而不是让编译行为悄悄变了。
 pub const SUBPROCESS_FORM_REMOVED_NOTICE_MESSAGE: &str =
-    "你原来使用子进程形态（tectonic.exe）。该形态已删除；从本版本起编译始终在内嵌引擎中进行——\
-     不再调用本机 biber，makeindex/glossaries 也不会自动运行。需要外部工具的文档请先确认替代做法。";
+    "你原来使用的子进程形态（tectonic.exe）已不可用：编译始终在内嵌引擎中进行，\
+     不调用本机 biber，makeindex/glossaries 也不会自动运行。\
+     依赖外部工具的文档请按编译诊断给出的替代做法处理。";
 
 /// Tectonic 资源配置（bundle / 缓存目录）；形态位在 v3 随子进程形态一并删除。
 ///

@@ -138,9 +138,8 @@ pub const BIBER_PASS_SUPPORTED: bool = false;
 
 /// 检出 biblatex/biber 但本引擎不运行 biber 时的警告文案（如实收窄声明，不静默）。
 pub const BIBER_PASS_MISSING_NOTE: &str =
-    "内嵌引擎不运行外部 biber（biblatex 检出信号 = `<stem>.run.xml` 里的 `<binary>biber</binary>`）\
-     ⇒ 该文档的引用/参考文献表**可能未解析**（不会生成 `.bbl`）；改用 \
-     `\\usepackage[backend=bibtex]{biblatex}` 或传统 `\\bibliography` + 内建 BibTeX 的文档不受影响";
+    "内嵌引擎不运行外部 biber ⇒ 该文档的引用/参考文献表可能未解析（不会生成 .bbl）；改用 \
+     \\usepackage[backend=bibtex]{biblatex} 或传统 \\bibliography + 内建 BibTeX 的文档不受影响";
 
 
 /// **收敛支持位**：**有条件支持**（2026-09-15）。

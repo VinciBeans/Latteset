@@ -137,14 +137,14 @@ pub fn source_release_hint(missing_file: &str, candidates: &[String]) -> Option<
         .or_else(|| if ins_files.len() == 1 { ins_files.first().copied() } else { None });
     if let Some(picked) = picked {
         return Some(format!(
-            "项目里有源码版模板文件 `{picked}`：先在项目目录执行 `xelatex {picked}` 生成缺失的 `{missing_file}`，再重新编译（这类模板只发布 .ins/.dtx，不直接带 .cls）"
+            "项目里有源码版模板文件 {picked}：需要先在本机装有 TeX 发行版的命令行里，在项目目录执行 xelatex {picked} 生成缺失的 {missing_file}，再重新编译（这类模板只发布 .ins/.dtx，不直接带 .cls）"
         ));
     }
 
     // 只有 .dtx：它是文档源码，不能直接生成 .cls——给出方向但不编造命令
     if let Some(dtx) = candidates.iter().find(|n| same_stem(n, ".dtx")) {
         return Some(format!(
-            "项目里有源码版模板源码 `{dtx}`（没有 .cls）：需要先跑模板自带的 docstrip 安装脚本生成 `{missing_file}`（通常是 `xelatex {stem}.ins`，但项目里没找到 .ins）——请按模板 README 的安装说明操作"
+            "项目里有模板源码 {dtx}（没有 .cls）：需要先跑模板自带的安装脚本生成 {missing_file}（通常命令是 xelatex {stem}.ins，但项目里没找到 .ins）——请按模板 README 的安装说明操作"
         ));
     }
     None
@@ -213,7 +213,7 @@ pub fn diagnose_timeout(evidence: &str, ev: &TimeoutEvidence) -> Diagnosis {
         return Diagnosis {
             kind: fatal.kind,
             cause: format!(
-                "本次编译在 {}s 内没跑完、已被终止；但引擎输出显示它其实**早已失败**——真正要修的是这条：{}",
+                "本次编译在 {}s 内没跑完、已被终止；但引擎输出显示它其实早已失败——真正要修的是这条：{}",
                 ev.timeout_secs, fatal.cause
             ),
             hint: fatal.hint.map(|h| format!("{h}（注意：这种情况提高编译超时救不了）")),
@@ -364,7 +364,7 @@ pub fn diagnose(m: &LogMessage) -> Option<Diagnosis> {
     //    检出即给可行动出路，不静默降级、也不建议"切回别的工具链再试一遍"当作无事发生。
     if let Some(tool) = unsupported_tool(text) {
         let cause = if tool == "biber" {
-            "该文档的参考文献需要外部 biber：内嵌引擎不运行外部工具（不会调用 biber、不会生成 `.bbl`）\
+            "该文档的参考文献需要外部 biber：内嵌引擎不运行外部工具（不会调用 biber、不会生成 .bbl）\
              ⇒ 引用/参考文献很可能是未解析的"
                 .to_string()
         } else {
@@ -373,12 +373,12 @@ pub fn diagnose(m: &LogMessage) -> Option<Diagnosis> {
         return Some(d(
             DiagnosisKind::UnsupportedTool,
             cause,
-            "两条可行动出路：① 参考文献改用内建 bibtex——biblatex 写 `\\usepackage[backend=bibtex]{biblatex}`，\
-             或改用传统的 `\\bibliography{...}` + `\\bibliographystyle{...}`（引擎会跑内建 bibtex，正常生成 `.bbl`）；\
-             ② 索引/术语表暂时去掉 `\\makeindex` / `\\printindex` 或 `\\makeglossaries` / `\\printglossaries`——\
+            "两条可行动出路：① 参考文献改用内建 bibtex——biblatex 写 \\usepackage[backend=bibtex]{biblatex}，\
+             或改用传统的 \\bibliography{...} + \\bibliographystyle{...}（引擎会跑内建 bibtex，正常生成 .bbl）；\
+             ② 索引/术语表暂时去掉 \\makeindex / \\printindex 或 \\makeglossaries / \\printglossaries——\
              这两类本引擎不会自动跑，静默跳过只会得到缺索引/术语表的 PDF，需要时先在命令行跑一次 \
-             makeindex / makeglossaries 再编译。留在 biber 上：先在本机命令行用 biber 生成 `.bbl` 再编译\
-             （引擎会读项目里的 `.bbl`；本机 biber 的版本要与文档用的 biblatex 匹配），或改用支持外部工具的\
+             makeindex / makeglossaries 再编译。留在 biber 上：先在本机命令行用 biber 生成 .bbl 再编译\
+             （引擎会读项目里的 .bbl；本机 biber 的版本要与文档用的 biblatex 匹配），或改用支持外部工具的\
              其它构建流程",
         ));
     }
@@ -388,7 +388,7 @@ pub fn diagnose(m: &LogMessage) -> Option<Diagnosis> {
         let name = capture_quoted(text).unwrap_or_else(|| "（未知）".into());
         return Some(d(
             DiagnosisKind::MissingFontset,
-            format!("ctex 字体集 `{name}` 不存在"),
+            format!("ctex 字体集 {name} 不存在"),
             "改用可用取值：fontset=windows（Windows 自带中易字体）或 fontset=fandol（TeX Live 自带，无需系统字体）",
         ));
     }
@@ -415,8 +415,8 @@ pub fn diagnose(m: &LogMessage) -> Option<Diagnosis> {
                     DiagnosisKind::MissingPackage,
                     format!("缺少宏包文件 {n}"),
                     format!(
-                        "本应用随包的是**精简宏包集**（覆盖常用文档，不是完整 TeX Live）⇒ 在「设置 → 引擎 → \
-                         宏包集来源」切到「在线完整宏包集」（需联网）后重新编译，或把 `{pkg}` 补进本地目录 \
+                        "本应用随包的是精简宏包集（覆盖常用文档，不是完整 TeX Live）⇒ 在「设置 → 引擎 → \
+                         宏包集来源」切到「在线完整宏包集」（需联网）后重新编译，或把 {pkg} 补进本地目录 \
                          bundle；若模板自带该文件（{n}），确认「打开项目」选的是模板根目录"
                     ),
                     n,
@@ -427,8 +427,8 @@ pub fn diagnose(m: &LogMessage) -> Option<Diagnosis> {
                     DiagnosisKind::MissingClass,
                     format!("缺少文档类文件 {n}"),
                     format!(
-                        "本应用随包的是**精简宏包集**（不是完整 TeX Live）⇒ 在「设置 → 引擎 → 宏包集来源」\
-                         切到「在线完整宏包集」（需联网）后重新编译，或把 `{n}` 补进本地目录 bundle；\
+                        "本应用随包的是精简宏包集（不是完整 TeX Live）⇒ 在「设置 → 引擎 → 宏包集来源」\
+                         切到「在线完整宏包集」（需联网）后重新编译，或把 {n} 补进本地目录 bundle；\
                          学位论文模板常自带 .cls（确认项目根目录是否正确），GitHub 源码版可能需先编译 \
                          .ins 生成 .cls"
                     ),
@@ -539,8 +539,8 @@ pub fn diagnose(m: &LogMessage) -> Option<Diagnosis> {
         let file = capture_quoted(text).unwrap_or_else(|| "（未知文件）".into());
         return Some(d(
             DiagnosisKind::AuxWriteFailed,
-            format!("写不出中间文件 `{file}`——`\\include{{子目录/文件}}` 要在中间文件目录里写同名 `.aux`，而那个子目录不存在"),
-            "把主文件里的 `\\include{子目录/文件}` 改成 `\\input{子目录/文件}`（\\input 不写子文件 .aux，实测可绕开）；根因是模板自带的构建约定与本产品「中间文件统一收纳 tmp/」的冲突（roadmap ㉖）",
+            format!("写不出中间文件 {file}——\\include{{子目录/文件}} 要在中间文件目录里写同名 .aux，而那个子目录不存在"),
+            "把根文件里的 \\include{子目录/文件} 改成 \\input{子目录/文件}（\\input 不写子文件 .aux，可绕开）；根因是模板的构建约定要求中间文件与源文件同目录，而本产品把中间文件统一收纳在 tmp/",
         ));
     }
 

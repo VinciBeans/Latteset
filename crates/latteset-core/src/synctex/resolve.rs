@@ -60,10 +60,9 @@ pub async fn resolve_inverse(
                 InverseTarget::Source(file) => {
                     let note = (i > 0).then(|| {
                         format!(
-                            "此处是自动生成的内容，已回落到最近的源码（{}:{}{}）",
+                            "此处是自动生成的内容，已回落到最近的源码（{}:{}）",
                             file.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default(),
-                            hit.line,
-                            if *dy < 0.0 { "，向上探测" } else { "，向下探测" }
+                            hit.line
                         )
                     });
                     return InverseResolution {

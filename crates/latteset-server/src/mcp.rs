@@ -54,7 +54,7 @@ pub fn tools() -> Vec<Tool> {
                 "type": "object",
                 "properties": {
                     "project": { "type": "string", "description": "项目目录（省略则用当前目录；会先自动打开）" },
-                    "quick": { "type": "boolean", "description": "true = 草稿档（默认 false = 跑到中间产物稳定；内嵌引擎没有 `-r 1` 子进程参数）" }
+                    "quick": { "type": "boolean", "description": "true = 草稿档（默认 false = 跑到中间产物稳定）" }
                 },
                 "additionalProperties": false
             }),

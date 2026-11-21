@@ -25,7 +25,7 @@ const tectonic = computed(
 );
 
 const MODES: { value: CompileMode; label: string; hint: string }[] = [
-  { value: "continuous", label: "连续编译", hint: "编辑后 500ms 自动编译" },
+  { value: "continuous", label: "连续编译", hint: "编辑停顿后自动编译（防抖时长见下）" },
   { value: "on_save", label: "保存触发", hint: "手动点「编译」或保存时触发" },
 ];
 
@@ -405,7 +405,7 @@ async function openLicenses(kind: "notices" | "sources") {
             </div>
             <p class="field-hint">
               {{ wizardOn
-                ? "仅在「项目里还没有根文件」时、新建第一个 .tex 时弹一次；已有主文件的项目不受影响"
+                ? "仅在「项目里还没有根文件」时、新建第一个 .tex 时弹一次；已有根文件的项目不受影响"
                 : "关闭：新建 .tex 得到空文件（需要自己写 \\documentclass）" }}
             </p>
           </div>
@@ -476,7 +476,7 @@ async function openLicenses(kind: "notices" | "sources") {
         <section class="sec" v-if="activeTab === 'engine'" id="tabpanel-engine" role="tabpanel">
           <h3 class="sec-title">编译引擎（Tectonic）</h3>
           <p class="field-hint">
-            引擎固定为 <b>Tectonic</b>（内嵌）：自带宏包集，不依赖本机 TeX Live / latexmk；不再提供其它引擎或驱动形态。
+            引擎固定为 <b>内嵌 Tectonic</b>：自带宏包集，不依赖本机 TeX Live / latexmk；不提供其它引擎或驱动形态。
           </p>
 
           <div class="field">
@@ -485,7 +485,7 @@ async function openLicenses(kind: "notices" | "sources") {
               <button
                 class="seg-btn"
                 :class="{ on: bundleMode === 'shipped' }"
-                title="随安装包分发的精简宏包集：离线可用、覆盖常用文档；缺包时再切在线完整集（ADR-0016 候选 A）"
+                title="随安装包分发的精简宏包集：离线可用、覆盖常用文档；缺包时再切在线完整集"
                 @click="setBundleMode('shipped')"
               >内置（默认）</button>
               <button
@@ -543,7 +543,7 @@ async function openLicenses(kind: "notices" | "sources") {
               >清除</button>
             </div>
             <p class="field-hint">
-              必填绝对路径：留空时用应用缓存目录。格式文件（约 24 MB）<b>不会</b>落进你的项目目录。
+              可留空（用应用缓存目录）；填写时必须是绝对路径。格式文件（约 24 MB）<b>不会</b>落进你的项目目录。
             </p>
           </div>
 

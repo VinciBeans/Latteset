@@ -217,8 +217,8 @@ pub fn prewarm_plan(source: &BundleSource, cache_dir: &Path) -> PrewarmPlan {
 /// （绝对 Windows 路径要写 `file:///…`，见 [`classify`]）。
 pub const DEFAULT_BUNDLE_HINT: &str =
     "默认 bundle 需要联网获取：① 检查网络/代理；② 或用本地目录 bundle —— 在「设置 → 引擎」把 \
-     bundle 源设为本地目录（目录需自带 SHA256SUM；写 `file:///E:/…` 或相对路径，不要写 `E:\\…`），\
-     或设置环境变量 `LATTESET_TECTONIC_BUNDLE=<相对路径 或 file:///绝对路径>`。";
+     bundle 源设为本地目录（目录需自带 SHA256SUM；写 file:///E:/… 或相对路径，不要写 E:\\…），\
+     或设置环境变量 LATTESET_TECTONIC_BUNDLE=<相对路径 或 file:///绝对路径>。";
 
 /// 随安装包分发的内置精简宏包集缺失/损坏时的**可行动出路**（ADR-0016 决策 2：不静默回退）。
 ///
@@ -237,7 +237,7 @@ pub const SHIPPED_BUNDLE_HINT: &str =
 /// 调用方（GUI/server）把它接到缺包诊断的 hint 上，不新造一套检测。
 pub fn missing_package_hint(missing: &str) -> String {
     format!(
-        "本应用随包的是**精简宏包集**（覆盖常用文档集），不是完整 TeX Live ⇒ 缺 `{missing}` 时：\
+        "本应用随包的是精简宏包集（覆盖常用文档集），不是完整 TeX Live ⇒ 缺 {missing} 时：\
          ① 在「设置 → 引擎 → 宏包集来源」切到「在线完整宏包集」（需联网）后重新编译；\
          ② 或把该宏包补进本地目录 bundle（目录需自带 SHA256SUM，改完把来源指到它）；\
          ③ 若是模板自带文件，确认「打开项目」选的是模板根目录。"
@@ -252,9 +252,9 @@ fn classify(source: &str) -> Option<String> {
     #[cfg(not(feature = "network-bundle"))]
     if source.starts_with("https://") || source.starts_with("http://") {
         return Some(format!(
-            "bundle 源 `{source}` 是网络地址，但本构建**未启用 `network-bundle` 特性**（方案 §4.2 X-2 选 (a)：\
-             默认关掉 HTTP）⇒ 请改用本地目录 bundle：在「设置 → 引擎」把 bundle 源设为本地目录\
-             （需自带 SHA256SUM），或设置环境变量 `{}=<相对路径 或 file:///绝对路径>`",
+            "bundle 源 {source} 是网络地址，但此版本不支持在线宏包集 ⇒ 请改用本地目录 bundle：\
+             在「设置 → 引擎」把宏包集来源设为「本地目录」（需自带 SHA256SUM），\
+             或设置环境变量 {}=<相对路径 或 file:///绝对路径>",
             crate::BUNDLE_ENV
         ));
     }
@@ -263,8 +263,7 @@ fn classify(source: &str) -> Option<String> {
     let is_abs_windows = source.len() > 2 && source.as_bytes().get(1) == Some(&b':');
     if is_abs_windows && !source.starts_with("file://") {
         return Some(format!(
-            "bundle 源 `{source}` 是绝对 Windows 路径：上游 `detect_bundle` 会把它当 URL scheme 解析、\
-             判为「不是 bundle」⇒ 请写 `file:///{}`（正斜杠）或相对路径（方案 §5.6 LB-1）",
+            "bundle 源 {source} 是绝对 Windows 路径：请写成 file:///{}（正斜杠）或相对路径",
             source.replace('\\', "/")
         ));
     }
@@ -279,14 +278,13 @@ fn classify(source: &str) -> Option<String> {
         let entries = std::fs::read_dir(&path).ok()?.count();
         if entries == 0 {
             return Some(format!(
-                "bundle 目录是空的：{}（上游会「静默 open 成功但 0 个文件」，编译期才炸成缺文件）",
+                "bundle 目录是空的：{}（请放入宏包文件与 SHA256SUM）",
                 path.display()
             ));
         }
         if !path.join("SHA256SUM").is_file() {
             return Some(format!(
-                "目录 bundle 缺少 SHA256SUM：{}（上游原文 `bundle does not provide needed SHA256SUM file`，\
-                 方案 §5.6 LB-2）",
+                "目录 bundle 缺少 SHA256SUM 文件：{}（目录形态的 bundle 必须自带 SHA256SUM）",
                 path.display()
             ));
         }
@@ -365,7 +363,7 @@ pub fn open_bundle(
         return match detect_bundle(path_to_file_url(path), only_cached, cache_dir) {
             Ok(Some(b)) => Ok(Some(b)),
             Ok(None) => Err(format!(
-                "内置宏包集无法识别：{}（安装包自带的 `.zip`/目录 bundle 形态不对）。{SHIPPED_BUNDLE_HINT}",
+                "内置宏包集无法识别：{}（安装包自带的 .zip/目录 bundle 形态不对）。{SHIPPED_BUNDLE_HINT}",
                 path.display()
             )),
             Err(e) => Err(format!(
@@ -388,8 +386,8 @@ pub fn open_bundle(
         Ok(Some(b)) => Ok(Some(b)),
         Ok(None) => {
             let mut msg = format!(
-                "bundle 源无法识别：`{src}`（上游 `detect_bundle` 返回 None）。\
-                 本地目录/文件请写成 `file:///…` 或相对路径；网络 bundle 需要 `network-bundle` 特性"
+                "bundle 源无法识别：{src}。本地目录或文件请写成 file:///… 或相对路径；\
+                 网络宏包集需要此版本支持在线 bundle"
             );
             if matches!(source, BundleSource::Default) {
                 msg.push('。');
@@ -419,7 +417,8 @@ pub fn open_bundle(
 pub fn bundle_digest(bundle: &mut dyn Bundle) -> Result<String, String> {
     bundle.get_digest().map(|d| d.to_string()).map_err(|e| {
         format!(
-            "取 bundle digest 失败（format 缓存键需要它；不做裸名回退，V-02）：{e:#}"
+            "取 bundle 摘要失败：{e:#}。请检查宏包集是否完整；\
+             或在「设置 → 引擎 → 宏包集来源」切到「在线完整宏包集」后重试"
         )
     })
 }
@@ -734,7 +733,7 @@ mod tests {
             .expect("detect_bundle 本身不该失败")
             .expect("目录 bundle 应当被识别为 DirBundle（LB-4）");
         let err = bundle_digest(&mut *bundle).expect_err("缺 SHA256SUM 必须报错");
-        assert!(err.contains("digest"), "{err}");
+        assert!(err.contains("摘要"), "{err}");
     }
 
     /// D2：默认（网络）bundle 失败时的出路必须**可操作**（指到设置面板 / 环境变量 / 目录格式要求），

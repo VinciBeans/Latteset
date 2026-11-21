@@ -57,11 +57,11 @@ function split(rel: string): { dir: string; name: string } {
       <div class="panel-body">
         <p class="lead" v-if="isMulti">
           检测到 <b>{{ items.length }}</b> 个可能的根文件（都含 <code>\documentclass</code>）。
-          请选择要编译的主文件——选定后写入项目设置 <code>.latteset/settings.json</code>。
+          请选择要编译的根文件——选定后写入项目设置 <code>.latteset/settings.json</code>。
         </p>
         <p class="lead" v-else>
           没有找到含 <code>\documentclass</code> 的文件。请从项目内的 <code>.tex</code>
-          中选择要编译的主文件（例如使用了自定义文档类的模板）。
+          中选择要编译的根文件（例如使用了自定义文档类的模板）。
         </p>
 
         <ul class="file-list" v-if="items.length">

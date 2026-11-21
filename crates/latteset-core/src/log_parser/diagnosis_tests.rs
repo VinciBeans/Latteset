@@ -406,7 +406,7 @@ fn missing_class_carries_machine_readable_file_name() {
 fn source_release_hint_prefers_same_stem() {
     let cands = vec!["README.md".to_string(), "thuthesis.ins".to_string(), "other.ins".to_string()];
     let hint = source_release_hint("thuthesis.cls", &cands).expect("同名 .ins 应命中");
-    assert!(hint.contains("`thuthesis.ins`"), "{hint}");
+    assert!(hint.contains("thuthesis.ins"), "{hint}");
     assert!(hint.contains("xelatex thuthesis.ins"), "要给可执行命令：{hint}");
     assert!(hint.contains("thuthesis.cls"), "{hint}");
 }

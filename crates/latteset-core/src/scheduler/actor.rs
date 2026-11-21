@@ -137,7 +137,7 @@ impl Scheduler {
                 out = &mut job.handle => Some(match out {
                     Ok(outcome) => SchedulerCommand::JobFinished(outcome),
                     Err(e) => SchedulerCommand::JobFinished(CompileOutcome::IoError {
-                        message: format!("编译任务异常终止：{e}"),
+                        message: format!("编译任务异常终止：{e}。请重试；若再次出现请附带此信息反馈"),
                     }),
                 }),
             }

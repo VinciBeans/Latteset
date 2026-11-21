@@ -78,7 +78,7 @@ async function toggleMode() {
       {{ phaseText }}{{ kindText }}
     </span>
     <!-- D3（2026-09-14）：当前引擎常驻可见。唯一引擎（ADR-0015）后名字是常量，但"用的是哪个引擎"仍要讲清楚 -->
-    <span class="engine" :title="`当前引擎：${ENGINE_NAME}${compile.draft ? '（本次为 Quick 草稿编译）' : ''}`">
+    <span class="engine" :title="`当前引擎：${ENGINE_NAME}${compile.draft ? '（当前 PDF 为草稿编译）' : ''}`">
       {{ ENGINE_NAME }}
     </span>
     <!-- 流式进度（阶段 2）：只在"排版中"且已有页输出时显示，避免闪烁 -->
@@ -88,14 +88,14 @@ async function toggleMode() {
     <span
       v-if="compile.draft"
       class="draft"
-      title="当前 PDF 由编辑态单趟编译产出：目录/交叉引用页码可能落后一趟，停手后会自动收敛"
+      title="当前 PDF 为草稿编译产出：目录/交叉引用页码可能落后，停手后会自动补一次完整编译"
     >
       引用待更新
     </span>
     <span
       v-if="needsRootFile"
       class="needs-root"
-      title="尚未确定根文件，点击选择要编译的主文件"
+      title="尚未确定根文件，点击选择要编译的 .tex 文件"
       @click="$emit('pick-root')"
     >
       未确定根文件 · 点击选择

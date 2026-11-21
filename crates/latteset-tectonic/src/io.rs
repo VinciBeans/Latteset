@@ -39,7 +39,7 @@ pub const OBSERVE_CHUNK: usize = 16 * 1024;
 
 /// 取消消息（V-06 / LIB-9）：置位后 I/O 入口立刻用它报错，引擎在**下一个回调**处中止。
 pub const CANCEL_MESSAGE: &str =
-    "Latteset：库形态编译已取消 —— 在 I/O 回调处协作式中止（库形态没有进程可树杀）";
+    "Latteset：编译已取消 —— 内嵌引擎在下一个 I/O 回调处中止（无法强制结束）";
 
 /// format 趟传给 `TexEngine::process` 的 **format 名占位串**（上游同值：`src/driver.rs:1802`）。
 ///

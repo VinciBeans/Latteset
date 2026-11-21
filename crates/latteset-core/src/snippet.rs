@@ -37,7 +37,7 @@ impl std::fmt::Display for SnippetError {
         match self {
             Self::NoBeginDocument => write!(
                 f,
-                "根文件里找不到 `\\begin{{document}}`：片段预览需要一份完整文档的导言区"
+                "根文件里找不到 \\begin{{document}}：片段预览需要一份完整文档的导言区"
             ),
             Self::EmptySnippet => write!(f, "片段是空的"),
         }

@@ -448,20 +448,19 @@ fn run_xml_binary_requests_biber(text: &str) -> bool {
 ///
 /// 文案只给**本产品内真实可行的出路**（Tectonic 自带 bundle、不依赖 TeX Live；"换用完整 TeX Live"
 /// 在产品里没有对应操作，等于没给出路）。
-const BIBER_NOTICE: &str = "检测到 biber 的构建请求（<stem>.run.xml 里 <binary>biber</binary>）：\
-     内嵌引擎**不会调用 biber**（本形态不运行外部工具）⇒ 该文档的引用/参考文献表\
-     **可能停在未解析状态**（不会生成 `.bbl`）。出路：① biblatex 写 \
-     \\usepackage[backend=bibtex]{biblatex}（走内建 BibtexEngine，正常生成 `.bbl`，改动最小）；\
-     ② 或改用传统的 \\bibliography{...} + \\bibliographystyle{...}（同样走内建 bibtex）；\
-     ③ 留在 biber 上，就在本机命令行先用 biber 生成 `.bbl` 再编译（引擎会读项目里的 `.bbl`；\
-     本机 biber 的版本要与文档用的 biblatex 匹配），或改用支持外部工具的其它构建流程；\
+const BIBER_NOTICE: &str = "检测到该文档需要外部 biber（biblatex）：内嵌引擎不运行外部工具，\
+     引用/参考文献可能停在未解析状态（不会生成 .bbl）。出路：① biblatex 写 \
+     \\usepackage[backend=bibtex]{biblatex}（走内建 BibTeX，正常生成 .bbl，改动最小）；\
+     ② 或改用传统 \\bibliography{...} + \\bibliographystyle{...}（同样走内建 BibTeX）；\
+     ③ 留在 biber 上：先在本机命令行用 biber 生成 .bbl 再编译（引擎会读项目里的 .bbl；\
+     本机 biber 的版本要与文档的 biblatex 匹配），或改用支持外部工具的其它构建流程；\
      ④ 先接受引用显示为空。";
 
-const MAKEINDEX_NOTICE: &str = "检测到 makeindex 的索引文件（<stem>.idx）：本引擎不会自动运行 makeindex，\
+const MAKEINDEX_NOTICE: &str = "检测到文档需要 makeindex（索引）：本引擎不会自动运行 makeindex，\
      生成的 PDF 里索引为空。出路：暂时去掉 \\makeindex/\\printindex（在正文里手工列出条目），或在命令行对 \
-     <stem>.idx 跑一次 makeindex 后再编译；也可以接受索引为空。";
+     tmp/<stem>.idx 跑一次 makeindex 后再编译；也可以接受索引为空。";
 
-const GLOSSARIES_NOTICE: &str = "检测到 glossaries 的术语表文件（<stem>.glo）：本引擎不会自动运行 \
+const GLOSSARIES_NOTICE: &str = "检测到文档需要 glossaries（术语表）：本引擎不会自动运行 \
      makeglossaries，术语表为空。出路：暂时去掉 \\makeglossaries/\\printglossaries，或在命令行跑一次 \
      makeglossaries 后再编译；也可以接受术语表为空。";
 
@@ -606,8 +605,8 @@ fn timeout_entry(
     };
     ErrorEntry {
         message: format!(
-            "内嵌引擎编译超过 {timeout_secs}s 上限：已置协作式取消标志（内嵌形态没有子进程可树杀），\
-             {stop}。证据（引擎输出显示）：{}",
+            "内嵌引擎编译超过 {timeout_secs}s 上限，已请求中止（引擎随应用进程运行、无法强制结束）：\
+             {stop}。证据（引擎输出）：{}",
             facts.join("，")
         ),
         file: None,
@@ -845,8 +844,8 @@ fn run_bibtex_pass(
             let blg = capture_text(shared, &blg_name);
             let tail: String = blg.lines().rev().take(8).collect::<Vec<_>>().into_iter().rev().collect::<Vec<_>>().join(" | ");
             Err(format!(
-                "bib 趟失败（BibTeX 处理 `{aux}`）：{e:#}{}",
-                if tail.trim().is_empty() { String::new() } else { format!("；`.blg` 尾部：{tail}") }
+                "参考文献处理失败（BibTeX 处理 {aux}）：{e:#}{}",
+                if tail.trim().is_empty() { String::new() } else { format!("；.blg 尾部：{tail}") }
             ))
         }
     }
@@ -1051,13 +1050,20 @@ fn run_engines(
                 // input_file_name 取名（实测 `texput.fmt`）⇒ 收集按 `*.fmt` 后缀，不按名字。
                 let outcome = init
                     .process(&mut launcher, crate::io::FORMAT_DUMP_PLACEHOLDER, "texput")
-                    .map_err(|e| format!("生成 format 失败（initex 趟）：{e:#}"))?;
+                    .map_err(|e| {
+                        format!(
+                            "首次编译初始化失败（生成排版格式缓存）：{e:#}。请重试；\
+                             若持续失败，检查「设置 → 引擎」的缓存目录是否可写"
+                        )
+                    })?;
                 // 上游 `driver.rs:1807-1819`：`Ok(Errors)` 也算失败 —— 先前忽略 `TexOutcome`
                 // 会把"initex 没产出 format"当成功，接着排版趟必然报一堆 Undefined control sequence。
                 if matches!(outcome, TexOutcome::Errors) {
                     let tail = log_tail(&log_ring);
                     return Err(format!(
-                        "生成 format 失败：initex 趟报 Errors（LaTeX 宏没建起来）{tail}"
+                        "首次编译初始化失败：生成排版格式缓存时 LaTeX 报错{tail}。\
+                         多为宏包集缺文件：请按错误列表处理，或在「设置 → 引擎 → 宏包集来源」\
+                         切换到「在线完整宏包集」后重试"
                     ));
                 }
                 // 排版趟要换回用户文档作为主输入。
@@ -1066,23 +1072,23 @@ fn run_engines(
                 let dumped = take_dumped_format(&shared);
                 let Some((dump_name, bytes)) = dumped else {
                     return Err(
-                        "initex 趟没有产出任何 `*.fmt` ⇒ 拒绝继续：没有 format 的排版趟只会报一堆 \
-                         Undefined control sequence（引擎无 dump 时会静默返回成功）"
+                        "排版格式缓存没有产出（引擎未生成 .fmt）⇒ 已停止编译：继续只会报一串 \
+                         Undefined control sequence"
                             .to_owned(),
                     );
                 };
                 let target = format_target.as_ref().ok_or_else(|| {
-                    "库形态需要生成 format，但算不出 format 缓存落点（未注入缓存目录，\
-                     或拿不到 bundle digest）⇒ 拒绝把 format 写进项目目录（方案 §5.2 硬约束）"
+                    "需要生成排版格式缓存，但缓存目录不可用（未注入缓存目录或读取宏包集摘要失败）\
+                     ⇒ 不会把格式文件写进项目目录——请检查「设置 → 引擎」的缓存目录"
                         .to_owned()
                 })?;
                 if let Some(parent) = target.parent() {
                     if let Err(e) = std::fs::create_dir_all(parent) {
-                        return Err(format!("创建 format 缓存目录失败（{}）：{e}", parent.display()));
+                        return Err(format!("创建排版格式缓存目录失败（{}）：{e}", parent.display()));
                     }
                 }
                 if let Err(e) = std::fs::write(target, &bytes) {
-                    return Err(format!("写 format 缓存失败（{}）：{e}", target.display()));
+                    return Err(format!("写排版格式缓存失败（{}）：{e}", target.display()));
                 }
                 info!(
                     dump = %dump_name,
@@ -1138,7 +1144,7 @@ fn run_engines(
                     // 否则错误会以"XDV→PDF 失败"的形式出现、指向错误的方向。
                     if capture_len(&shared, &xdv_name) == 0 {
                         return Err(format!(
-                            "排版趟没有产出 `{xdv_name}`（空文档或引擎提前停下）；I/O 层输入请求：{}",
+                            "排版没有产出中间文件 {xdv_name}（空文档或引擎提前停下）；引擎请求的输入：{}",
                             summarize(&requests.lock().unwrap_or_else(|e| e.into_inner()).clone())
                         ));
                     }
@@ -1344,7 +1350,7 @@ fn run_engines(
                 if pdf.is_empty() {
                     return CompileOutcome::IoError {
                         message: format!(
-                            "库形态编译成功但 I/O 层没拿到 `{pdf_name}`（输入请求：{}）",
+                            "编译成功但引擎没有产出 {pdf_name}（引擎请求的输入：{}）",
                             summarize(&requests)
                         ),
                     };
@@ -1359,8 +1365,7 @@ fn run_engines(
                     let _ = std::fs::remove_file(&pdf_tmp);
                     return CompileOutcome::IoError {
                         message: format!(
-                            "拷贝 PDF 到项目根失败（原子替换 {} → {}）：{e}",
-                            pdf_tmp.display(),
+                            "PDF 无法写入项目根（{}）：{e}（旧 PDF 未被破坏）",
                             pdf_dst.display()
                         ),
                     };
@@ -1458,7 +1463,7 @@ fn run_engines(
                 let tail: Vec<String> = ring.iter().rev().take(5).cloned().collect();
                 CompileOutcome::IoError {
                     message: format!(
-                        "{msg}；I/O 层输入请求：{}；引擎状态尾部：{}",
+                        "{msg}；引擎请求的输入：{}；引擎日志尾部：{}",
                         summarize(&requests),
                         if tail.is_empty() { "（无）".to_owned() } else { tail.join(" | ") }
                     ),
@@ -1551,7 +1556,7 @@ impl CompileRunner for TectonicLibRunner {
             joined = &mut blocking => match joined {
                 Ok(outcome) => outcome,
                 Err(e) => CompileOutcome::IoError {
-                    message: format!("库形态编译线程异常终止（panic）：{e}"),
+                    message: format!("编译线程异常终止：{e}。请重试；若再次出现请附带此信息反馈"),
                 },
             },
             _ = tokio::time::sleep(req.timeout) => {
@@ -1929,11 +1934,10 @@ mod tests {
     /// 反向断言守住 T9 实测口径：**不得**出现子进程形态的「引擎调用外部 biber、缺失或版本不匹配才失败」。
     #[test]
     fn biber_notice_states_external_tool_and_nonresolution() {
-        assert!(BIBER_NOTICE.contains("不会调用 biber"), "{}", BIBER_NOTICE);
         assert!(BIBER_NOTICE.contains("不运行外部工具"), "{}", BIBER_NOTICE);
         assert!(BIBER_NOTICE.contains("未解析"), "{}", BIBER_NOTICE);
         assert!(BIBER_NOTICE.contains("backend=bibtex"), "{}", BIBER_NOTICE);
-        assert!(BIBER_NOTICE.contains("`.bbl`"), "{}", BIBER_NOTICE);
+        assert!(BIBER_NOTICE.contains("不会生成 .bbl"), "{}", BIBER_NOTICE);
         // T13 反向断言：内嵌形态不运行外部工具，不得沿用子进程口径。
         // 字面量拆开拼，免得本文件自己命中验收对这两句旧话的零命中门禁。
         let old_claim = ["会", "调用外部 biber"].concat();
@@ -1947,7 +1951,7 @@ mod tests {
             crate::BIBER_PASS_MISSING_NOTE
         );
         assert!(
-            !crate::BIBER_PASS_MISSING_NOTE.contains("外部 `biber` 二进制"),
+            !crate::BIBER_PASS_MISSING_NOTE.contains("外部 biber 二进制"),
             "内嵌形态不需要外部 biber 二进制：{}",
             crate::BIBER_PASS_MISSING_NOTE
         );
@@ -1979,8 +1983,8 @@ mod tests {
         let entry = timeout_entry(Duration::from_secs(120), true, Some(3), "[1] [2]\n", true);
         assert_eq!(entry.kind, ErrorKind::Timeout);
         assert!(entry.message.contains("内嵌引擎编译超过 120s"), "{}", entry.message);
-        assert!(entry.message.contains("没有子进程可树杀"), "{}", entry.message);
-        assert!(entry.message.contains("证据（引擎输出显示）"), "{}", entry.message);
+        assert!(entry.message.contains("无法强制结束"), "{}", entry.message);
+        assert!(entry.message.contains("证据（引擎输出）"), "{}", entry.message);
         assert!(entry.message.contains("已排版到第 2 页"), "{}", entry.message);
         assert!(entry.message.contains("增量编译"), "{}", entry.message);
         let diag = entry.diagnosis.expect("超时必须有诊断");
@@ -2542,7 +2546,7 @@ mod tests {
             CompileOutcome::Timeout { entry } => {
                 assert_eq!(entry.kind, ErrorKind::Timeout);
                 assert!(entry.message.contains("内嵌引擎编译超过"), "{}", entry.message);
-                assert!(entry.message.contains("没有子进程可树杀"), "{}", entry.message);
+                assert!(entry.message.contains("无法强制结束"), "{}", entry.message);
                 assert!(entry.diagnosis.is_some(), "超时必须带证据化诊断");
             }
             other => panic!("极短超时应当返回 Timeout，实际：{other:?}"),

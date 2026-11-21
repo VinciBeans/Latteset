@@ -155,7 +155,7 @@ describe("SettingsPanel：引擎页（唯一引擎，ADR-0015）", () => {
     const w = await mountPanel();
     expect(w.find("#tabpanel-engine .sec-title").text()).toBe("编译引擎（Tectonic）");
     expect(w.text()).toContain("引擎固定为");
-    expect(w.text()).toContain("（内嵌）");
+    expect(w.text()).toContain("内嵌 Tectonic");
     w.unmount();
   });
 

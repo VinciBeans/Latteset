@@ -261,7 +261,8 @@ impl Session {
             .ok_or_else(|| ServerError::Invalid("尚未打开项目：先执行 project_open".into()))?;
         let root_file = project.root_file.clone().ok_or_else(|| {
             ServerError::Invalid(format!(
-                "未确定根文件（候选中 {} 个）：请手工指定后再编译",
+                "未确定根文件（候选中 {} 个）：请在项目内 .latteset/settings.json 设置 root_file 后重新打开项目，\
+                 或用 GUI 的根文件选择器指定后再编译",
                 project.root.display()
             ))
         })?;
@@ -367,7 +368,8 @@ impl Session {
             .ok_or_else(|| ServerError::Invalid("尚未打开项目：先执行 project_open".into()))?;
         let root_file = project.root_file.clone().ok_or_else(|| {
             ServerError::Invalid(format!(
-                "未确定根文件（候选中 {} 个）：请手工指定后再做公式预览",
+                "未确定根文件（候选中 {} 个）：请在项目内 .latteset/settings.json 设置 root_file 后重新打开项目，\
+                 或用 GUI 的根文件选择器指定后再做公式预览",
                 project.root.display()
             ))
         })?;

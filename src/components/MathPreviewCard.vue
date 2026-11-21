@@ -145,7 +145,7 @@ onBeforeUnmount(() => {
       data-testid="math-preview-card"
     >
       <div class="head">
-        <span class="tag">{{ mode === "button" ? "公式预览（该项目已退让为按钮式）" : "公式预览" }}</span>
+        <span class="tag">公式预览</span>
         <button class="close" title="关闭" @click="emit('close')">×</button>
       </div>
       <canvas v-if="pdfPath" ref="canvasRef" class="canvas" />
