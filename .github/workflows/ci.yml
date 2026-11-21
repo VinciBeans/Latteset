@@ -141,6 +141,14 @@ jobs:
           restore-keys: |
             bench-bundle-v33-
 
+      # 代表集重建需要 11 个基准夹具（六档 + beamer + biblatex/biber + biblatex/bibtex，均 gitignore）。
+      # 干净 checkout 上它们不存在 ⇒ 必须先由入库脚本确定性生成；否则缓存未命中时重建必红（首跑即此因）。
+      - name: Generate bench fixtures (bundle regeneration prerequisite)
+        shell: pwsh
+        run: |
+          node scripts/gen-bench-projects.mjs
+          if ($LASTEXITCODE -ne 0) { throw "gen-bench-projects 失败" }
+
       - name: Restore or regenerate representative bundle
         shell: pwsh
         run: |

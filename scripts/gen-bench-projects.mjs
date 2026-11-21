@@ -1,4 +1,5 @@
-// 生成性能基准工程（roadmap ③）。fixture 不入库，入库的是本脚本——`test_file/projects/` 已 gitignore。
+// 生成性能基准工程（roadmap ③）与代表集 bundle 的辅助夹具。fixture 不入库，入库的是本脚本——
+// `test_file/projects/`、`test_file/acc/` 均 gitignore，干净 checkout 上必须靠本脚本重建。
 //
 // 六档全部**纯文本、无二进制资产**（图用 TikZ 画），保证任意机器可复现：
 //   tiny         article 15 行                     —— 小文档下限
@@ -8,13 +9,21 @@
 //   large       约 300 页纯文本                     —— 大文档主体
 //   thesis      ctexbook 学位论文（目录/公式/bibtex）—— ㉉5 关心的"首编总耗时"
 //
+// 另外生成 3 个 `gen-bench-bundle.mjs` 需要的夹具（纯文本、确定性；以前是工作区手工件，
+// 干净 checkout 上没有 ⇒ 代表集缓存未命中时无法重建 bundle，CI 曾因此红）：
+//   test_file/projects/beamer工程/{main.tex}      —— beamer / ctexbeamer
+//   test_file/acc/fixtures/biber工程/{main.tex,refs.bib}   —— biblatex backend=biber
+//   test_file/acc/fixtures/bibtex工程/{main.tex,refs.bib}  —— biblatex backend=bibtex
+//
 // 用法：
-//   node scripts/gen-bench-projects.mjs            # 已存在则跳过（幂等）
-//   node scripts/gen-bench-projects.mjs --force    # 强制重建
+//   node scripts/gen-bench-projects.mjs            # 已存在则跳过（幂等；辅助夹具总是按本文件重写）
+//   node scripts/gen-bench-projects.mjs --force    # 强制重建六档
 //
 // 产物：
 //   test_file/projects/bench/<tier>/**            工程本体
 //   test_file/projects/bench/bench-manifest.json  档位清单（bench.mjs 读它）
+//   test_file/projects/beamer工程/**              辅助夹具（gen-bench-bundle）
+//   test_file/acc/fixtures/{biber,bibtex}工程/**  辅助夹具（gen-bench-bundle）
 
 import { mkdirSync, writeFileSync, existsSync, rmSync, cpSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
@@ -22,6 +31,8 @@ import { fileURLToPath } from "node:url";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const BENCH_ROOT = resolve(HERE, "..", "test_file", "projects", "bench");
+const PROJECTS_ROOT = resolve(HERE, "..", "test_file", "projects");
+const ACC_FIXTURES = resolve(HERE, "..", "test_file", "acc", "fixtures");
 const force = process.argv.includes("--force");
 
 /** 确定性伪随机（线性同余）：保证每次生成的内容逐字节一致，测量才可回归。 */
@@ -299,6 +310,112 @@ function writeExternalTier(t, root) {
   return { ...t, dir, external: true, generated: true };
 }
 
+// ---------------------------------------------------------------- 辅助夹具（gen-bench-bundle 依赖）
+// 这三份以前是 `test_file/` 里的工作区手工件（gitignore）。代表集 bundle 的生成/校验都要用它们，
+// 所以必须在干净 checkout 上可从脚本确定性重建；内容与阶段③入库前的手工件逐字节一致。
+const BEAMER_MAIN = String.raw`% !TEX program = xelatex
+% =====================================================================
+% latteset beamer 测试工程（roadmap ⑤ SyncTeX 加固样本）
+%
+% 用于测试：
+%   - 正向/反向 SyncTeX 在 beamer 下的行为（帧、覆盖层 \pause/\only 会产生多个 PDF 页）
+%   - \section 与 \frametitle 的往返一致性
+%   - 中文幻灯片（ctex + xelatex）
+% =====================================================================
+\documentclass[aspectratio=169,UTF8]{ctexbeamer}
+\usetheme{Madrid}
+
+\title{Latteset beamer 同步测试}
+\author{测试用户}
+\date{\today}
+
+\begin{document}
+
+\frame{\titlepage}
+
+\section{第一组：基础帧}
+
+\begin{frame}{封面之后的第一个内容帧}
+  第一帧正文：SyncTeX 应能把这里的每一行映射到本文件对应的行号。
+  \begin{itemize}
+    \item 第一条：正向定位从这里出发。
+    \item 第二条：反向点击应回到同一帧。
+  \end{itemize}
+\end{frame}
+
+\begin{frame}{覆盖层与 \texttt{\textbackslash pause}}
+  第一段文字（第一层）。
+  \pause
+  第二段文字（第二层，\texttt{\textbackslash pause} 之后）——它会把这一帧拆成两页 PDF。
+  \pause
+  第三段文字（第三层）——同源三页。
+\end{frame}
+
+\begin{frame}{逐项显示 \texttt{\textbackslash only}}
+  \only<1>{只在第一层出现的文字}
+  \only<2>{只在第二层出现的文字}
+  \only<3>{只在第三层出现的文字}
+\end{frame}
+
+\section{第二组：列表与公式}
+
+\begin{frame}{公式帧}
+  行内公式 $E = mc^2$ 与行间公式：
+  \begin{equation}
+    \label{eq:energy}
+    E = \gamma m c^2
+  \end{equation}
+  公式 \eqref{eq:energy} 的标签也应可被反向定位到本帧。
+\end{frame}
+
+\begin{frame}{中文与英文混排}
+  Mixed Chinese and English text：SyncTeX 应保持行号映射正确。
+  第二行中文文本，用于验证反向定位的行号容差。
+\end{frame}
+
+\section{第三组：结尾}
+
+\begin{frame}{最后一帧}
+  最后一帧的内容——用于验证大页码文档中的反向定位。
+\end{frame}
+
+\end{document}
+`.replace(/\n$/, "\r\n"); // 历史件的末行是 CRLF，保持逐字节一致
+
+const BIBLATEX_MAIN = (backend) => String.raw`\documentclass{article}
+\usepackage[backend=${backend}]{biblatex}
+\addbibresource{refs.bib}
+\begin{document}
+Cite \cite{knuth}.
+\printbibliography
+\end{document}
+`;
+const REFS_BIB = String.raw`@book{knuth,
+  author = {Donald E. Knuth},
+  title = {The TeXbook},
+  year = {1984},
+  publisher = {Addison-Wesley}
+}
+`;
+
+const EXTRA_FIXTURES = [
+  { name: "beamer", dir: join(PROJECTS_ROOT, "beamer工程"), files: { "main.tex": BEAMER_MAIN } },
+  { name: "biber", dir: join(ACC_FIXTURES, "biber工程"), files: { "main.tex": BIBLATEX_MAIN("biber"), "refs.bib": REFS_BIB } },
+  { name: "bibtex", dir: join(ACC_FIXTURES, "bibtex工程"), files: { "main.tex": BIBLATEX_MAIN("bibtex"), "refs.bib": REFS_BIB } },
+];
+
+/** 辅助夹具总是按本文件重写（确定性、幂等）——保证干净 checkout 与开发机内容一致。 */
+function writeExtraFixtures() {
+  for (const fx of EXTRA_FIXTURES) {
+    for (const [file, content] of Object.entries(fx.files)) {
+      const p = join(fx.dir, file);
+      mkdirSync(dirname(p), { recursive: true });
+      writeFileSync(p, content, "utf8");
+    }
+    console.log(`辅助夹具: ${fx.name.padEnd(8)} ${Object.keys(fx.files).length} 文件 → ${fx.dir}`);
+  }
+}
+
 function main() {
   if (force && existsSync(BENCH_ROOT)) {
     rmSync(BENCH_ROOT, { recursive: true, force: true });
@@ -355,6 +472,9 @@ function main() {
   const manifestPath = join(BENCH_ROOT, "bench-manifest.json");
   writeFileSync(manifestPath, JSON.stringify({ generatedAt: new Date().toISOString(), tiers: full }, null, 2), "utf8");
   console.log(`\nmanifest: ${manifestPath}`);
+
+  // gen-bench-bundle 的 3 个辅助夹具（beamer / biblatex+biber / biblatex+bibtex）
+  writeExtraFixtures();
 }
 
 main();

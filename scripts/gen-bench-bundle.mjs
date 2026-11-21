@@ -6,6 +6,10 @@
 //       引擎以 HTTP Range 从该 tar 按需取文件（只取代表性文档集用到的，不下载 2.8 GB 全量），
 //       取到的文件落在 `<cache>/data/<digest>/`；本脚本把这些文件 + 旧夹具并集落成目录 bundle。
 //
+// 用 release CLI 从上游 bundle 按需取文件；**夹具先由 scripts/gen-bench-projects.mjs 生成**
+// （六档 + beamer + biblatex/biber + biblatex/bibtex；都 gitignore）。本脚本在夹具缺失时会
+// 自动先跑一次 gen-bench-projects，保证干净 checkout（CI 代表集缓存未命中）能自足重建。
+//
 // 用法（全部命令在仓库根执行；本机 DSH 沙箱需要 TMP 指向工作区，脚本自己设置）：
 //   node scripts/gen-bench-bundle.mjs --phase=gen       # 网络取文件 + 组装 staging（慢，首次 5–15 分钟）
 //   node scripts/gen-bench-bundle.mjs --phase=install   # 把 staging 合并进 test_file/tectonic-bundle
@@ -303,10 +307,28 @@ function pickCacheDataDir() {
   return { dir: dirs[0], digest: basename(dirs[0]) };
 }
 
+/** 夹具缺失（干净 checkout / CI 缓存未命中）⇒ 先由 scripts/gen-bench-projects.mjs 确定性生成。 */
+function ensureFixtures() {
+  const missing = FIXTURES.filter((fx) => fx.src && !existsSync(join(ROOT, fx.src)));
+  if (!missing.length) return;
+  log(`夹具缺失 ${missing.length} 个（${missing.map((f) => f.name).join(", ")}）⇒ 先跑 scripts/gen-bench-projects.mjs`);
+  const r = spawnSync(process.execPath, [join(ROOT, "scripts", "gen-bench-projects.mjs")], {
+    cwd: ROOT,
+    env: baseEnv(),
+    stdio: "inherit",
+  });
+  if (r.status !== 0) throw new Error(`gen-bench-projects 失败（exit ${r.status}）`);
+  for (const fx of missing) {
+    if (!existsSync(join(ROOT, fx.src))) throw new Error(`生成后仍缺夹具：${fx.src}`);
+  }
+  log("夹具已生成");
+}
+
 function gen() {
   if (!existsSync(CLI)) {
     throw new Error(`缺 release CLI：${CLI}（先跑 npm run lib:cli，入口 scripts/with-tectonic-lib.ps1）`);
   }
+  ensureFixtures();
   if (KEEP_STAGE) log("--keep-stage：保留 staging/cache");
   else rmrf(STAGE);
   for (const d of [CACHE, CONFIG, PROJECTS, LOGS, TMPDIR, STAGED_BUNDLE]) mkdirSync(d, { recursive: true });
@@ -448,6 +470,7 @@ function install() {
 // ---------------------------------------------------------------- validate
 function validate() {
   if (!existsSync(join(TARGET, "SHA256SUM"))) throw new Error(`目标 bundle 不完整：${TARGET}`);
+  ensureFixtures();
   rmrf(VALIDATE_CACHE);
   rmrf(VALIDATE_PROJ);
   mkdirSync(VALIDATE_CACHE, { recursive: true });
