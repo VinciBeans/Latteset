@@ -1,0 +1,249 @@
+{
+  "note": "GPL/LGPL 组件的 Corresponding Source（随安装包）。字体二进制 ↔ 源码映射见下。",
+  "fonts": [
+    {
+      "binary": "FandolSong-Regular.otf",
+      "sourceDir": "sources/fandol/FandolSong-Regular",
+      "files": [
+        {
+          "name": "AFM",
+          "bytes": 1244313
+        },
+        {
+          "name": "FontMenuNameDB",
+          "bytes": 52
+        },
+        {
+          "name": "cidfont.ps",
+          "bytes": 5761280
+        },
+        {
+          "name": "cidfontinfo",
+          "bytes": 377
+        },
+        {
+          "name": "features",
+          "bytes": 6456
+        }
+      ],
+      "buildTool": "AFDKO / makeotf（cidfont.ps + AFM + features + fontinfo → OTF）；AFM 头注明 FontForge 生成",
+      "package": "fandol",
+      "license": "GPL-3.0-or-later WITH font-exception",
+      "sourceRoot": "sources/fandol"
+    },
+    {
+      "binary": "FandolSong-Bold.otf",
+      "sourceDir": "sources/fandol/FandolSong-Bold",
+      "files": [
+        {
+          "name": "AFM",
+          "bytes": 1244226
+        },
+        {
+          "name": "FontMenuNameDB",
+          "bytes": 46
+        },
+        {
+          "name": "cidfont.ps",
+          "bytes": 6252137
+        },
+        {
+          "name": "cidfontinfo",
+          "bytes": 367
+        },
+        {
+          "name": "features",
+          "bytes": 5242
+        }
+      ],
+      "buildTool": "AFDKO / makeotf（cidfont.ps + AFM + features + fontinfo → OTF）；AFM 头注明 FontForge 生成",
+      "package": "fandol",
+      "license": "GPL-3.0-or-later WITH font-exception",
+      "sourceRoot": "sources/fandol"
+    },
+    {
+      "binary": "FandolKai-Regular.otf",
+      "sourceDir": "sources/fandol/FandolKai-Regular",
+      "files": [
+        {
+          "name": "AFM",
+          "bytes": 1243594
+        },
+        {
+          "name": "FontMenuNameDB",
+          "bytes": 50
+        },
+        {
+          "name": "cidfont.ps",
+          "bytes": 8883685
+        },
+        {
+          "name": "cidfontinfo",
+          "bytes": 374
+        },
+        {
+          "name": "features",
+          "bytes": 5242
+        }
+      ],
+      "buildTool": "AFDKO / makeotf（cidfont.ps + AFM + features + fontinfo → OTF）；AFM 头注明 FontForge 生成",
+      "package": "fandol",
+      "license": "GPL-3.0-or-later WITH font-exception",
+      "sourceRoot": "sources/fandol"
+    },
+    {
+      "binary": "FandolHei-Regular.otf",
+      "sourceDir": "sources/fandol/FandolHei-Regular",
+      "files": [
+        {
+          "name": "AFM",
+          "bytes": 1240756
+        },
+        {
+          "name": "FontMenuNameDB",
+          "bytes": 50
+        },
+        {
+          "name": "cidfont.ps",
+          "bytes": 7748255
+        },
+        {
+          "name": "cidfontinfo",
+          "bytes": 375
+        },
+        {
+          "name": "features",
+          "bytes": 5242
+        }
+      ],
+      "buildTool": "AFDKO / makeotf（cidfont.ps + AFM + features + fontinfo → OTF）；AFM 头注明 FontForge 生成",
+      "package": "fandol",
+      "license": "GPL-3.0-or-later WITH font-exception",
+      "sourceRoot": "sources/fandol"
+    },
+    {
+      "binary": "FandolHei-Bold.otf",
+      "sourceDir": "sources/fandol/FandolHei-Bold",
+      "files": [
+        {
+          "name": "AFM",
+          "bytes": 1247179
+        },
+        {
+          "name": "FontMenuNameDB",
+          "bytes": 44
+        },
+        {
+          "name": "cidfont.ps",
+          "bytes": 5306917
+        },
+        {
+          "name": "cidfontinfo",
+          "bytes": 365
+        },
+        {
+          "name": "features",
+          "bytes": 5241
+        }
+      ],
+      "buildTool": "AFDKO / makeotf（cidfont.ps + AFM + features + fontinfo → OTF）；AFM 头注明 FontForge 生成",
+      "package": "fandol",
+      "license": "GPL-3.0-or-later WITH font-exception",
+      "sourceRoot": "sources/fandol"
+    },
+    {
+      "binary": "FandolFang-Regular.otf",
+      "sourceDir": "sources/fandol/FandolFang-Regular",
+      "files": [
+        {
+          "name": "AFM",
+          "bytes": 1249898
+        },
+        {
+          "name": "FontMenuNameDB",
+          "bytes": 52
+        },
+        {
+          "name": "cidfont.ps",
+          "bytes": 8588860
+        },
+        {
+          "name": "cidfontinfo",
+          "bytes": 377
+        },
+        {
+          "name": "features",
+          "bytes": 5242
+        }
+      ],
+      "buildTool": "AFDKO / makeotf（cidfont.ps + AFM + features + fontinfo → OTF）；AFM 头注明 FontForge 生成",
+      "package": "fandol",
+      "license": "GPL-3.0-or-later WITH font-exception",
+      "sourceRoot": "sources/fandol"
+    },
+    {
+      "binary": "pzdr.tfm",
+      "package": "zapfding",
+      "license": "GPL (TL zapfding)",
+      "sourceDir": "sources/zapfding",
+      "files": [
+        {
+          "name": "pzdr.afm",
+          "bytes": 9467
+        }
+      ],
+      "buildTool": "dvips afm2tfm（GPL）"
+    }
+  ],
+  "selfSourced": [
+    {
+      "package": "cjk",
+      "files": [
+        "CJKfntef.sty"
+      ],
+      "note": "LaTeX 源文件即 preferred form（TL source/latex/cjk 有对应 dtx），随包文件本身可修改"
+    },
+    {
+      "package": "cslatex",
+      "files": [
+        "fonttext.cfg"
+      ],
+      "note": "配置数据文件；TL 2024-03-12 src cslatex.dtx 可再生成（上游 CTAN systems/cslatex）"
+    },
+    {
+      "package": "dvipdfmx",
+      "files": [
+        "ckx.map"
+      ],
+      "note": "map 数据文件；生成器 dvipdfmx 源码见 https://github.com/TeX-Live/texlive-source texk/dvipdfmx（GPL）"
+    },
+    {
+      "package": "hyphen-hungarian",
+      "files": [
+        "hyph-hu.tex",
+        "loadhyph-hu.tex"
+      ],
+      "note": "patterns 文本即对应源码（hyph-utf8，GPL）"
+    },
+    {
+      "package": "hyphen-serbian",
+      "files": [
+        "hyph-sh-cyrl.tex",
+        "hyph-sh-latn.tex",
+        "loadhyph-sr-cyrl.tex",
+        "loadhyph-sr-latn.tex"
+      ],
+      "note": "patterns 文本即对应源码（GPL）"
+    },
+    {
+      "package": "hyphen-italian",
+      "files": [
+        "hyph-it.tex",
+        "hyph-quote-it.tex",
+        "loadhyph-it.tex"
+      ],
+      "note": "patterns 文本即对应源码（LGPL）"
+    }
+  ],
+  "totalBytes": 50093132
+}

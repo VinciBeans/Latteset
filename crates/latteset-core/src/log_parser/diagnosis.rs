@@ -278,7 +278,7 @@ fn capture_option_clash_package(text: &str) -> Option<String> {
     re.captures(text).map(|c| c[1].to_string())
 }
 
-/// 取文件名（去掉 `../foo/bar.sty` 这类路径前缀，用于拼 `tlmgr install` 建议）。
+/// 取文件名（去掉 `../foo/bar.sty` 这类路径前缀，用于拼补包建议）。
 fn base_name(name: &str) -> &str {
     name.rsplit(['/', '\\']).next().unwrap_or(name)
 }
@@ -399,7 +399,8 @@ pub fn diagnose(m: &LogMessage) -> Option<Diagnosis> {
         return Some(d(
             DiagnosisKind::MissingFont,
             format!("系统里找不到字体 \"{name}\""),
-            "安装该字体，或改用 TeX Live 自带字体（ctex 的 fontset=fandol / 换成 SimSun 等已装字体）",
+            "安装该字体，或改用随包字体（中文用 ctex 的 fontset=fandol，无需系统字体；也可换成 SimSun 等已装字体）；\
+             若该字体文件来自宏包集，可在「设置 → 引擎 → 宏包集来源」切到「在线完整宏包集」后重编",
         ));
     }
 
@@ -414,18 +415,22 @@ pub fn diagnose(m: &LogMessage) -> Option<Diagnosis> {
                     DiagnosisKind::MissingPackage,
                     format!("缺少宏包文件 {n}"),
                     format!(
-                        "若模板自带该文件，确认「打开项目」选的是模板根目录；否则执行 `tlmgr install {pkg}` 安装"
+                        "本应用随包的是**精简宏包集**（覆盖常用文档，不是完整 TeX Live）⇒ 在「设置 → 引擎 → \
+                         宏包集来源」切到「在线完整宏包集」（需联网）后重新编译，或把 `{pkg}` 补进本地目录 \
+                         bundle；若模板自带该文件（{n}），确认「打开项目」选的是模板根目录"
                     ),
                     n,
                 ));
             }
             if lower.ends_with(".cls") {
-                let cls = base_name(&n).trim_end_matches(".cls").to_string();
                 return Some(d_missing(
                     DiagnosisKind::MissingClass,
                     format!("缺少文档类文件 {n}"),
                     format!(
-                        "学位论文模板常自带 .cls：确认项目根目录是否正确（或执行 `tlmgr install {cls}`）；若是 GitHub 源码版，可能需先编译 .ins 生成 .cls"
+                        "本应用随包的是**精简宏包集**（不是完整 TeX Live）⇒ 在「设置 → 引擎 → 宏包集来源」\
+                         切到「在线完整宏包集」（需联网）后重新编译，或把 `{n}` 补进本地目录 bundle；\
+                         学位论文模板常自带 .cls（确认项目根目录是否正确），GitHub 源码版可能需先编译 \
+                         .ins 生成 .cls"
                     ),
                     n,
                 ));
@@ -433,7 +438,8 @@ pub fn diagnose(m: &LogMessage) -> Option<Diagnosis> {
             return Some(d_missing(
                 DiagnosisKind::MissingFile,
                 format!("找不到文件 {n}"),
-                "确认该文件确实在项目内，且路径/大小写与 \\input、\\includegraphics 里写的一致",
+                "确认该文件确实在项目内，且路径/大小写与 \\input、\\includegraphics 里写的一致；\
+                 若它来自宏包集（如模板 logo），在「设置 → 引擎 → 宏包集来源」切到「在线完整宏包集」后重编",
                 n,
             ));
         }

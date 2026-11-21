@@ -28,7 +28,11 @@ pub mod runner;
 pub mod status;
 pub mod synctex;
 
-pub use bundle::{BundleSource, bundle_digest, open_bundle};
+pub use bundle::{
+    BundleSource, CACHE_KEEP_ENV, CacheGcReport, bundle_digest, cache_keep_from_env,
+    current_bundle_digest, gc_cache, missing_package_hint, online_bundle_cached_digest,
+    open_bundle, resolve_cache_dir, resolve_source,
+};
 pub use io::{CANCEL_MESSAGE, IoCapture, TectonicIo, format_file_name};
 pub use runner::TectonicLibRunner;
 pub use status::ProgressStatus;

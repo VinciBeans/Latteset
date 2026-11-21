@@ -156,6 +156,7 @@ pub async fn compile_math(
         Arc::new(NoProgress),
         state.settings.clone(),
         state.app.path().app_cache_dir().ok(),
+        shipped_bundle_path(&state.app),
     );
     let request = latteset_core::types::CompileRequest {
         root_file: entry,
@@ -600,8 +601,132 @@ pub fn build_compile_runner(
     progress: Arc<dyn latteset_core::scheduler::CompileProgress>,
     settings: Arc<RwLock<Settings>>,
     app_cache_dir: Option<PathBuf>,
+    shipped_bundle: Option<PathBuf>,
 ) -> Arc<dyn latteset_core::scheduler::CompileRunner> {
-    Arc::new(crate::runner::EmbeddedRunner::new(fs, progress, settings, app_cache_dir))
+    Arc::new(crate::runner::EmbeddedRunner::new(
+        fs,
+        progress,
+        settings,
+        app_cache_dir,
+        shipped_bundle,
+    ))
+}
+
+/// 随安装包分发的**内置精简宏包集**路径（ADR-0016 候选 A）。
+///
+/// `Some(path)` 的两种情形都按"必须用内置集"处理（缺失即显式报错、**不静默改用网络**）：
+/// - 安装形态：`<资源目录>/tectonic-bundle.zip` 存在；
+/// - release 构建：即使不存在也返回该**应有路径** ⇒ 编译时给"修复安装 / 显式切在线"的文案。
+///
+/// 开发构建（`tauri dev`）没有资源目录时，回退仓库内的产物/目录（`src-tauri/resources/tectonic-bundle.zip`
+/// 或 `test_file/tectonic-bundle`），方便离线验证；都没有 ⇒ `None`（在线兜底，开发逃生口）。
+pub fn shipped_bundle_path(app: &tauri::AppHandle) -> Option<PathBuf> {
+    use tauri::Manager;
+    let expected = app
+        .path()
+        .resource_dir()
+        .ok()
+        .map(|r| r.join("tectonic-bundle.zip"));
+    if let Some(p) = expected.as_ref().filter(|p| p.exists()) {
+        return Some(p.clone());
+    }
+    #[cfg(debug_assertions)]
+    {
+        let repo = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        let zip = repo.join("resources").join("tectonic-bundle.zip");
+        if zip.exists() {
+            return Some(zip);
+        }
+        let dir = repo.join("..").join("test_file").join("tectonic-bundle");
+        if dir.exists() {
+            return Some(dir);
+        }
+        let _ = expected;
+        return None;
+    }
+    #[cfg(not(debug_assertions))]
+    {
+        expected
+    }
+}
+
+/// 第三方许可材料的**安装包资源**根目录（`bundle.resources` 把 `src-tauri/resources/licenses`
+/// 映射到安装目录 `licenses/`，见 `tauri.conf.json` 与 `docs/dev/tectonic-licensing.md` §8.4）。
+///
+/// 前端**不硬编码路径**：目录由安装形态决定，由这条命令解析后交给系统打开。
+/// 开发构建（`tauri dev`）不铺 `bundle.resources` ⇒ 回退仓库内同名的资源树，
+/// 让 About 入口在真机上可点开验证；发布构建缺资源**显式报错**，不静默。
+fn licenses_root(app: &tauri::AppHandle) -> Result<PathBuf, CmdError> {
+    use tauri::Manager;
+    let installed = app
+        .path()
+        .resource_dir()
+        .ok()
+        .map(|r| r.join("licenses"));
+    if let Some(p) = installed.as_ref().filter(|p| p.is_dir()) {
+        return Ok(p.clone());
+    }
+    #[cfg(debug_assertions)]
+    {
+        let dev = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("resources")
+            .join("licenses");
+        if dev.is_dir() {
+            return Ok(dev);
+        }
+    }
+    Err(CmdError::NotFound(format!(
+        "找不到随安装包分发的许可材料目录（预期：{}）。安装包可能不完整或被清理；请重新安装 Latteset。",
+        installed
+            .map(|p| p.display().to_string())
+            .unwrap_or_else(|| "<资源目录>/licenses".into())
+    )))
+}
+
+/// `kind` → 许可材料落点（相对 `licenses/` 的**固定文件名**，只有这两种）。
+/// 纯映射：路径不来自前端，前端只传"看哪一个"。
+fn license_target(licenses_root: &Path, kind: &str) -> Result<(PathBuf, &'static str), CmdError> {
+    match kind {
+        "notices" => Ok((
+            licenses_root.join("THIRD-PARTY-NOTICES.md"),
+            "第三方许可声明",
+        )),
+        "sources" => Ok((licenses_root.join("sources"), "字体源码目录")),
+        other => Err(CmdError::Invalid(format!(
+            "未知的许可材料类型：{other}（可选 notices / sources）"
+        ))),
+    }
+}
+
+/// 打开随安装包分发的第三方许可材料（About 入口）：`Notices` 打开声明正文，
+/// `Sources` 打开 GPL 字体 Corresponding Source 目录。
+///
+/// **只读、不接受路径**：目标由安装资源目录 + 固定文件名算出（D8 的"能免则免用户输入路径"）。
+/// 缺失时给可行动错误（重装 / 手动路径），不静默失败。
+#[tauri::command]
+#[specta::specta]
+pub fn open_licenses(kind: String, state: State<'_, AppState>) -> Result<(), CmdError> {
+    let root = licenses_root(&state.app)?;
+    let (target, label) = license_target(&root, &kind)?;
+    if !target.exists() {
+        return Err(CmdError::NotFound(format!(
+            "找不到{label}：{}。安装包可能不完整或被清理；请重新安装 Latteset（许可材料随安装包分发，位于安装目录 licenses/ 下）。",
+            target.display()
+        )));
+    }
+    match tauri_plugin_opener::open_path(&target, None::<&str>) {
+        Ok(()) => Ok(()),
+        Err(open_err) => {
+            // `.md` 在部分 Windows 上没有关联程序：退回"在文件管理器中定位"（用户仍可双击打开），
+            // 只有连文件管理器都起不来才报错 —— 不把失败吞掉。
+            tauri_plugin_opener::reveal_item_in_dir(&target).map_err(|reveal_err| {
+                CmdError::Internal(format!(
+                    "无法打开{label}（{}）：{open_err}；在文件管理器中定位也失败（{reveal_err}）。请手动打开该路径。",
+                    target.display()
+                ))
+            })
+        }
+    }
 }
 
 #[tauri::command]
@@ -990,5 +1115,26 @@ mod tests {
             )),
             PathBuf::from(r"E:\项目\中文测试工程\第一章.pdf")
         );
+    }
+
+    /// 许可材料入口只接受两个固定 kind，且**不接受前端给路径**（未知 kind 显式 Invalid）。
+    #[test]
+    fn license_target_maps_known_kinds_only() {
+        let root = Path::new(r"C:\app\licenses");
+        assert_eq!(
+            license_target(root, "notices").unwrap().0,
+            root.join("THIRD-PARTY-NOTICES.md")
+        );
+        assert_eq!(
+            license_target(root, "sources").unwrap().0,
+            root.join("sources")
+        );
+        for kind in ["", "notices.md", r"C:\app\licenses\sources", "../sources"] {
+            let err = license_target(root, kind).unwrap_err();
+            assert!(
+                matches!(err, CmdError::Invalid(_)),
+                "未知 kind 必须是 Invalid（拒绝任意路径），实际：{err:?}"
+            );
+        }
     }
 }

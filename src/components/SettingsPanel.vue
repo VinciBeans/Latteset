@@ -1,11 +1,15 @@
 <!-- SettingsPanel（modules.md §6）：设置面板。
    编译三项（mode/debounce/timeout）→ 全局设置；root_file → 项目覆盖；
    引擎页只剩 Tectonic 的**资源**（bundle、cache）——引擎本身不可选，驱动形态也固定为内嵌
-   （ADR-0015：唯一引擎 = Tectonic；v3 起不再有形态设置）。
+   （ADR-0015：唯一引擎 = Tectonic；v3 起不再有形态设置）；
+   关于页放产品信息与**第三方许可材料**入口（T21b / G-L3：路径由后端解析，前端不硬编码）。
    即改即存：store.update(patch) 后端写盘 + 广播 settings-changed，面板从 store 同步回显。 -->
 <script setup lang="ts">
 import { computed, onMounted, ref } from "vue";
 import { useSettingsStore } from "../stores/settings";
+import { ipc } from "../services/ipc";
+import { bundleSourceKind, bundleSourceLabel, ONLINE_BUNDLE_URL } from "../services/bundleSource";
+import type { BundleSourceKind } from "../services/bundleSource";
 import type { CompileMode, UiTheme } from "../bindings";
 
 const emit = defineEmits<{ close: [] }>();
@@ -26,18 +30,20 @@ const MODES: { value: CompileMode; label: string; hint: string }[] = [
 ];
 
 /**
- * 设置分页（标签栏）。四类按"用户要解决的问题"分，而不是按字段所属模块：
+ * 设置分页（标签栏）。五类按"用户要解决的问题"分，而不是按字段所属模块：
  * - 外观：与文档无关的个人偏好；
  * - 编译：什么时候编、编多久（模式/防抖/超时）；
  * - 引擎（Tectonic）：**没有引擎可挑**（ADR-0015），驱动形态也固定为内嵌；这一页只放
  *   Tectonic 的资源（bundle、cache），字段即 `bundle` / `cache_dir`；
- * - 项目：只影响当前项目的覆盖项（根文件）。
+ * - 项目：只影响当前项目的覆盖项（根文件）；
+ * - 关于：产品信息 + 第三方许可声明/字体源码入口（G-L3；打开动作交给后端命令）。
  */
 const TABS = [
   { id: "appearance", label: "外观" },
   { id: "compile", label: "编译" },
   { id: "engine", label: "引擎（Tectonic）" },
   { id: "project", label: "项目" },
+  { id: "about", label: "关于" },
 ] as const;
 type TabId = (typeof TABS)[number]["id"];
 
@@ -196,46 +202,79 @@ function bundleDisplay(stored: string | null | undefined): string {
 }
 
 const bundleInput = ref("");
-/** 留空 = 用上游兜底网络地址（`None`）；`true` = 用本地目录 bundle。 */
-const bundleLocal = ref(false);
+/**
+ * 宏包集来源（ADR-0016 候选 A）：`shipped` 内置精简集（随安装包，默认、离线可用）/
+ * `online` 在线完整集（用户显式选择，需联网）/ `local` 本地目录（自备，需 SHA256SUM）。
+ * 存储口径见 `services/bundleSource.ts`：空值 = 内置；http(s) = 在线；其余 = 本地。
+ */
+const bundleMode = ref<BundleSourceKind>("shipped");
 const cacheInput = ref("");
 const resourceError = ref("");
+
+/** 当前生效来源的用户可读文案（模板展示；测试按它断言）。 */
+const currentBundleLabel = computed(() => {
+  const stored = tectonic.value.bundle;
+  const kind = bundleSourceKind(stored);
+  return kind === "local"
+    ? `当前：${bundleDisplay(stored)}（本地目录）`
+    : `当前：${bundleSourceLabel(kind)}`;
+});
 
 onMounted(() => {
   const t = tectonic.value;
   if (t) {
-    bundleLocal.value = !!t.bundle;
-    bundleInput.value = bundleDisplay(t.bundle);
+    bundleMode.value = bundleSourceKind(t.bundle);
+    bundleInput.value = t.bundle ? bundleDisplay(t.bundle) : "";
     cacheInput.value = t.cache_dir ?? "";
   }
 });
 
 /**
- * bundle 来源：留空 = 上游兜底（网络）。
+ * 切来源：内置 / 在线直接落盘（清空 = 内置；写在线 URL = **显式**在线，不做静默回退）；
+ * 本地目录要等用户填路径后点「应用」。
  *
  * 这里**不管路径形态**：`E:\…` 与 `file:///E:/…` 都照原样发出去，由 core 统一归一化成存储形态
  * （`TectonicSettings::normalize_bundle`，LB-1）。应用后回填**展示形态**，保证输入框与磁盘一致
  * ——否则用户粘一条 `E:\…`，输入框留着反斜杠、磁盘上却是 URL，看起来像"没生效"。
  */
+async function setBundleMode(mode: BundleSourceKind) {
+  resourceError.value = "";
+  if (mode === "local") {
+    bundleMode.value = "local";
+    return;
+  }
+  const next = mode === "online" ? ONLINE_BUNDLE_URL : "";
+  if ((tectonic.value.bundle ?? "") === next) {
+    bundleMode.value = mode;
+    return;
+  }
+  try {
+    await store.update({ bundle: next });
+    bundleMode.value = mode;
+    bundleInput.value = tectonic.value.bundle ? bundleDisplay(tectonic.value.bundle) : "";
+  } catch (e) {
+    resourceError.value = String((e as { message?: string })?.message ?? e);
+    bundleMode.value = bundleSourceKind(tectonic.value.bundle);
+  }
+}
+
+/** 应用本地目录 bundle（只对 `local` 生效；空值/网络地址给可行动提示）。 */
 async function applyBundle() {
   resourceError.value = "";
   const raw = bundleInput.value.trim();
-  if (!bundleLocal.value || raw === "") {
-    // 切回"上游兜底"：空串 = 清除
-    bundleInput.value = "";
-    if (tectonic.value.bundle) {
-      try {
-        await store.update({ bundle: "" });
-      } catch (e) {
-        resourceError.value = String((e as { message?: string })?.message ?? e);
-      }
-    }
+  if (raw === "") {
+    resourceError.value = "本地目录不能为空；想用内置宏包集请点「内置（默认）」";
+    return;
+  }
+  if (/^https?:\/\//i.test(raw)) {
+    resourceError.value = "网络地址请用「在线完整」选项（会写入默认在线地址），不要填在本地目录里";
     return;
   }
   if (raw === bundleDisplay(tectonic.value.bundle)) return;
   try {
     await store.update({ bundle: raw });
     bundleInput.value = bundleDisplay(tectonic.value.bundle);
+    bundleMode.value = bundleSourceKind(tectonic.value.bundle);
   } catch (e) {
     resourceError.value = String((e as { message?: string })?.message ?? e);
   }
@@ -251,6 +290,32 @@ async function applyCacheDir() {
     await store.update({ cache_dir: raw });
   } catch (e) {
     resourceError.value = String((e as { message?: string })?.message ?? e);
+  }
+}
+
+// ---------------------------------------------------------------- 关于 / 第三方许可（T21b）
+
+/**
+ * 第三方许可材料入口（G-L3；交付清单见 `docs/dev/tectonic-licensing.md` §8.4）：
+ * `licenses/THIRD-PARTY-NOTICES.md` 与 `licenses/sources/` 都随安装包分发。
+ *
+ * **路径由后端解析**（`open_licenses` 从安装资源目录找固定落点再交给系统打开），前端只传"看哪一个"：
+ * 安装形态决定路径，硬编码会在开发/安装两种形态下都错。失败必须显示 —— 缺资源 = 安装包不完整，
+ * 后端给"重装 / 手动路径"的可行动错误，不静默。
+ */
+const licenseError = ref("");
+const licenseOpening = ref<"notices" | "sources" | null>(null);
+
+async function openLicenses(kind: "notices" | "sources") {
+  licenseError.value = "";
+  licenseOpening.value = kind;
+  try {
+    await ipc.openLicenses(kind);
+  } catch (e) {
+    const msg = (e as { message?: string })?.message ?? String(e);
+    licenseError.value = `打开许可材料失败：${msg}`;
+  } finally {
+    licenseOpening.value = null;
   }
 }
 </script>
@@ -419,18 +484,24 @@ async function applyCacheDir() {
             <div class="mode-seg" id="set-bundle-source">
               <button
                 class="seg-btn"
-                :class="{ on: !bundleLocal }"
-                title="用上游兜底地址首次联网下载（约 60 MB），之后离线复用缓存"
-                @click="bundleLocal = false; bundleInput = ''; applyBundle()"
-              >自动（联网）</button>
+                :class="{ on: bundleMode === 'shipped' }"
+                title="随安装包分发的精简宏包集：离线可用、覆盖常用文档；缺包时再切在线完整集（ADR-0016 候选 A）"
+                @click="setBundleMode('shipped')"
+              >内置（默认）</button>
               <button
                 class="seg-btn"
-                :class="{ on: bundleLocal }"
-                title="指向本地目录 bundle：离线/内网部署必须用这个（目录需自带 SHA256SUM）"
-                @click="bundleLocal = true"
+                :class="{ on: bundleMode === 'online' }"
+                title="在线完整宏包集：需联网，覆盖全部常用 TeX 宏包；不会自动切换，需你显式选择"
+                @click="setBundleMode('online')"
+              >在线完整</button>
+              <button
+                class="seg-btn"
+                :class="{ on: bundleMode === 'local' }"
+                title="指向本地目录 bundle：离线/内网部署或自备宏包集（目录需自带 SHA256SUM）"
+                @click="setBundleMode('local')"
               >本地目录</button>
             </div>
-            <div class="root-row" v-if="bundleLocal" style="margin-top: 6px">
+            <div class="root-row" v-if="bundleMode === 'local'" style="margin-top: 6px">
               <input
                 id="set-bundle-path"
                 class="input"
@@ -442,10 +513,12 @@ async function applyCacheDir() {
               />
               <button class="btn small" @click="applyBundle">应用</button>
             </div>
-            <p class="field-hint">
-              {{ tectonic.bundle
-                ? `当前：${bundleDisplay(tectonic.bundle)}`
-                : "当前：上游兜底地址（首次编译需联网下载宏包集）" }}
+            <p class="field-hint" id="set-bundle-current">{{ currentBundleLabel }}</p>
+            <p class="field-hint" v-if="bundleMode === 'shipped'">
+              内置精简集不是完整 TeX Live：文档用到集合外的宏包时会报缺文件，届时可切「在线完整」或把宏包补进本地目录。
+            </p>
+            <p class="field-hint" v-else-if="bundleMode === 'online'">
+              在线完整集首次编译需联网（之后离线复用缓存）；换来源不会自动回退，失败会显式报错。
             </p>
           </div>
 
@@ -476,6 +549,54 @@ async function applyCacheDir() {
 
           <!-- 两项资源都是"改完下一趟编译就生效"（装配点每趟读设置）；保存失败要说得出来 -->
           <p class="field-hint err" v-if="resourceError">{{ resourceError }}</p>
+        </section>
+
+        <!-- 关于 / 第三方许可（T21b / G-L3）：声明与 GPL 字体源码随安装包分发，落点由后端解析后交系统打开。
+             文案如实：内嵌引擎不运行外部工具（biber/makeindex/glossaries），与状态栏的能力边界提示同口径。 -->
+        <section class="sec" v-if="activeTab === 'about'" id="tabpanel-about" role="tabpanel">
+          <h3 class="sec-title">关于</h3>
+          <p class="field-hint">
+            <b>Latteset</b>：LaTeX 编辑器。编译引擎固定为内嵌 <b>Tectonic</b>（MIT 许可，随产品静态链接），
+            不依赖本机 TeX Live / latexmk。
+          </p>
+
+          <div class="field">
+            <label class="field-label">第三方组件</label>
+            <p class="field-hint">
+              随安装包分发的精简宏包集以 LPPL 系许可为主，另含 OFL（amsfonts）、GFL（Latin Modern）、
+              Knuth（CM）与 GPL 字体（Fandol / zapfding）等；Rust / C 依赖与逐包清单见第三方声明。
+            </p>
+            <p class="field-hint">
+              内嵌引擎<b>不运行外部工具</b>：文档请求 biber 时参考文献可能未解析（biblatex 请用
+              <code>backend=bibtex</code>，或先自行生成 <code>.bbl</code>）；makeindex / glossaries 也不会自动运行。
+              检出时状态栏会给出提示，不静默降级。
+            </p>
+            <p class="field-hint">
+              GPL 字体的 Corresponding Source（Fandol 6 套 + zapfding AFM）随安装包分发在
+              <code>licenses/sources/</code> 下。
+            </p>
+          </div>
+
+          <div class="field">
+            <label class="field-label">许可材料</label>
+            <div class="root-row">
+              <button
+                class="btn small"
+                id="open-notices"
+                :disabled="licenseOpening !== null"
+                title="用系统默认程序打开随安装包分发的 THIRD-PARTY-NOTICES.md"
+                @click="openLicenses('notices')"
+              >打开第三方声明</button>
+              <button
+                class="btn small"
+                id="open-sources"
+                :disabled="licenseOpening !== null"
+                title="在文件管理器中打开随包分发的 GPL 字体源码目录"
+                @click="openLicenses('sources')"
+              >打开字体源码目录</button>
+            </div>
+            <p class="field-hint err" v-if="licenseError">{{ licenseError }}</p>
+          </div>
         </section>
       </div>
 

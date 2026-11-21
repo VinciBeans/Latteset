@@ -1,0 +1,638 @@
+{
+  "note": "TL 2026 tlpdb 按 basename 映射随包代表集（517 文件）；license 取 catalogue-license。同名文件可能命中多个包 ⇒ 全部列出（audit 脚本口径）；10 个无归属文件见 unmatched-files.json。",
+  "mappedAt": "2026-11-20T15:29:34.707Z",
+  "bundleDigest": "9e8c63ca5624438fba4bf4587afbfe3ddcfb82745769970ca2fe1f3ea392fde6",
+  "packageCount": 126,
+  "packages": [
+    {
+      "name": "amscls",
+      "license": "lppl1.3c",
+      "files": 1
+    },
+    {
+      "name": "amsfonts",
+      "license": "ofl",
+      "files": 21
+    },
+    {
+      "name": "amsmath",
+      "license": "lppl1.3c",
+      "files": 5
+    },
+    {
+      "name": "antomega",
+      "license": "lppl",
+      "files": 1
+    },
+    {
+      "name": "atbegshi",
+      "license": "lppl1.3",
+      "files": 1
+    },
+    {
+      "name": "atveryend",
+      "license": "lppl1.3c",
+      "files": 1
+    },
+    {
+      "name": "auxhook",
+      "license": "lppl1.3",
+      "files": 1
+    },
+    {
+      "name": "babel",
+      "license": "lppl1.3",
+      "files": 1
+    },
+    {
+      "name": "beamer",
+      "license": "lppl1.3c gpl2+ fdl",
+      "files": 43
+    },
+    {
+      "name": "biblatex",
+      "license": "lppl1.3",
+      "files": 13
+    },
+    {
+      "name": "bibtex",
+      "license": "knuth",
+      "files": 1
+    },
+    {
+      "name": "bigintcalc",
+      "license": "lppl1.3",
+      "files": 1
+    },
+    {
+      "name": "bitset",
+      "license": "lppl1.3",
+      "files": 1
+    },
+    {
+      "name": "booktabs",
+      "license": "lppl1.3c",
+      "files": 1
+    },
+    {
+      "name": "cjk",
+      "license": "gpl2",
+      "files": 1
+    },
+    {
+      "name": "cm",
+      "license": "knuth",
+      "files": 18
+    },
+    {
+      "name": "cslatex",
+      "license": "gpl",
+      "files": 1
+    },
+    {
+      "name": "ctex",
+      "license": "lppl1.3c",
+      "files": 16
+    },
+    {
+      "name": "dvipdfmx",
+      "license": "gpl",
+      "files": 1
+    },
+    {
+      "name": "etexcmds",
+      "license": "lppl1.3",
+      "files": 1
+    },
+    {
+      "name": "etoolbox",
+      "license": "lppl1.3c",
+      "files": 1
+    },
+    {
+      "name": "fandol",
+      "license": "gpl",
+      "files": 6
+    },
+    {
+      "name": "firstaid",
+      "license": "lppl1.3c",
+      "files": 1
+    },
+    {
+      "name": "fontspec",
+      "license": "lppl1.3c",
+      "files": 3
+    },
+    {
+      "name": "geometry",
+      "license": "lppl1.3c",
+      "files": 1
+    },
+    {
+      "name": "gettitlestring",
+      "license": "lppl1.3",
+      "files": 1
+    },
+    {
+      "name": "glyphlist",
+      "license": null,
+      "files": 3
+    },
+    {
+      "name": "graphics",
+      "license": "lppl1.3c",
+      "files": 4
+    },
+    {
+      "name": "graphics-cfg",
+      "license": "pd",
+      "files": 2
+    },
+    {
+      "name": "graphics-def",
+      "license": "lppl1.3c",
+      "files": 1
+    },
+    {
+      "name": "hycolor",
+      "license": "lppl1.3",
+      "files": 1
+    },
+    {
+      "name": "hyperref",
+      "license": "lppl1.3",
+      "files": 5
+    },
+    {
+      "name": "hyphen-afrikaans",
+      "license": null,
+      "files": 3
+    },
+    {
+      "name": "hyphen-ancientgreek",
+      "license": null,
+      "files": 3
+    },
+    {
+      "name": "hyphen-armenian",
+      "license": null,
+      "files": 2
+    },
+    {
+      "name": "hyphen-base",
+      "license": null,
+      "files": 4
+    },
+    {
+      "name": "hyphen-basque",
+      "license": "other-free",
+      "files": 2
+    },
+    {
+      "name": "hyphen-belarusian",
+      "license": null,
+      "files": 3
+    },
+    {
+      "name": "hyphen-bulgarian",
+      "license": null,
+      "files": 2
+    },
+    {
+      "name": "hyphen-catalan",
+      "license": null,
+      "files": 2
+    },
+    {
+      "name": "hyphen-chinese",
+      "license": null,
+      "files": 2
+    },
+    {
+      "name": "hyphen-churchslavonic",
+      "license": null,
+      "files": 2
+    },
+    {
+      "name": "hyphen-coptic",
+      "license": null,
+      "files": 2
+    },
+    {
+      "name": "hyphen-croatian",
+      "license": "lppl1.3",
+      "files": 2
+    },
+    {
+      "name": "hyphen-czech",
+      "license": null,
+      "files": 2
+    },
+    {
+      "name": "hyphen-danish",
+      "license": "lppl",
+      "files": 2
+    },
+    {
+      "name": "hyphen-dutch",
+      "license": "lppl",
+      "files": 2
+    },
+    {
+      "name": "hyphen-english",
+      "license": null,
+      "files": 4
+    },
+    {
+      "name": "hyphen-esperanto",
+      "license": null,
+      "files": 2
+    },
+    {
+      "name": "hyphen-estonian",
+      "license": null,
+      "files": 2
+    },
+    {
+      "name": "hyphen-ethiopic",
+      "license": null,
+      "files": 2
+    },
+    {
+      "name": "hyphen-finnish",
+      "license": "pd",
+      "files": 4
+    },
+    {
+      "name": "hyphen-french",
+      "license": null,
+      "files": 3
+    },
+    {
+      "name": "hyphen-friulan",
+      "license": null,
+      "files": 3
+    },
+    {
+      "name": "hyphen-galician",
+      "license": null,
+      "files": 2
+    },
+    {
+      "name": "hyphen-georgian",
+      "license": null,
+      "files": 2
+    },
+    {
+      "name": "hyphen-german",
+      "license": null,
+      "files": 6
+    },
+    {
+      "name": "hyphen-greek",
+      "license": "other-free",
+      "files": 4
+    },
+    {
+      "name": "hyphen-hungarian",
+      "license": "gpl",
+      "files": 2
+    },
+    {
+      "name": "hyphen-icelandic",
+      "license": "lppl",
+      "files": 2
+    },
+    {
+      "name": "hyphen-indic",
+      "license": null,
+      "files": 24
+    },
+    {
+      "name": "hyphen-indonesian",
+      "license": null,
+      "files": 2
+    },
+    {
+      "name": "hyphen-interlingua",
+      "license": null,
+      "files": 2
+    },
+    {
+      "name": "hyphen-irish",
+      "license": null,
+      "files": 2
+    },
+    {
+      "name": "hyphen-italian",
+      "license": "lgpl",
+      "files": 3
+    },
+    {
+      "name": "hyphen-kurmanji",
+      "license": null,
+      "files": 2
+    },
+    {
+      "name": "hyphen-latin",
+      "license": "lppl",
+      "files": 6
+    },
+    {
+      "name": "hyphen-latvian",
+      "license": null,
+      "files": 2
+    },
+    {
+      "name": "hyphen-lithuanian",
+      "license": null,
+      "files": 2
+    },
+    {
+      "name": "hyphen-macedonian",
+      "license": null,
+      "files": 2
+    },
+    {
+      "name": "hyphen-mongolian",
+      "license": null,
+      "files": 4
+    },
+    {
+      "name": "hyphen-norwegian",
+      "license": null,
+      "files": 5
+    },
+    {
+      "name": "hyphen-occitan",
+      "license": null,
+      "files": 3
+    },
+    {
+      "name": "hyphen-piedmontese",
+      "license": null,
+      "files": 3
+    },
+    {
+      "name": "hyphen-polish",
+      "license": "knuth",
+      "files": 2
+    },
+    {
+      "name": "hyphen-portuguese",
+      "license": null,
+      "files": 2
+    },
+    {
+      "name": "hyphen-romanian",
+      "license": null,
+      "files": 2
+    },
+    {
+      "name": "hyphen-romansh",
+      "license": null,
+      "files": 2
+    },
+    {
+      "name": "hyphen-russian",
+      "license": null,
+      "files": 2
+    },
+    {
+      "name": "hyphen-sanskrit",
+      "license": null,
+      "files": 2
+    },
+    {
+      "name": "hyphen-serbian",
+      "license": "gpl",
+      "files": 4
+    },
+    {
+      "name": "hyphen-slovak",
+      "license": null,
+      "files": 2
+    },
+    {
+      "name": "hyphen-slovenian",
+      "license": null,
+      "files": 2
+    },
+    {
+      "name": "hyphen-spanish",
+      "license": "mit",
+      "files": 2
+    },
+    {
+      "name": "hyphen-swedish",
+      "license": null,
+      "files": 2
+    },
+    {
+      "name": "hyphen-thai",
+      "license": null,
+      "files": 2
+    },
+    {
+      "name": "hyphen-turkish",
+      "license": "other-free",
+      "files": 2
+    },
+    {
+      "name": "hyphen-turkmen",
+      "license": null,
+      "files": 2
+    },
+    {
+      "name": "hyphen-ukrainian",
+      "license": null,
+      "files": 3
+    },
+    {
+      "name": "hyphen-uppersorbian",
+      "license": null,
+      "files": 2
+    },
+    {
+      "name": "hyphen-welsh",
+      "license": null,
+      "files": 2
+    },
+    {
+      "name": "iftex",
+      "license": "lppl1.3c",
+      "files": 2
+    },
+    {
+      "name": "infwarerr",
+      "license": "lppl1.3",
+      "files": 1
+    },
+    {
+      "name": "intcalc",
+      "license": "lppl1.3",
+      "files": 1
+    },
+    {
+      "name": "koma-script",
+      "license": "lppl1.3c",
+      "files": 3
+    },
+    {
+      "name": "kvdefinekeys",
+      "license": "lppl1.3c",
+      "files": 1
+    },
+    {
+      "name": "kvoptions",
+      "license": "lppl1.3",
+      "files": 1
+    },
+    {
+      "name": "kvsetkeys",
+      "license": "lppl1.3",
+      "files": 1
+    },
+    {
+      "name": "l3backend",
+      "license": "lppl1.3c",
+      "files": 1
+    },
+    {
+      "name": "l3kernel",
+      "license": "lppl1.3c",
+      "files": 3
+    },
+    {
+      "name": "l3packages",
+      "license": "lppl1.3c",
+      "files": 3
+    },
+    {
+      "name": "latex",
+      "license": "lppl1.3c",
+      "files": 36
+    },
+    {
+      "name": "latex-fonts",
+      "license": "lppl",
+      "files": 4
+    },
+    {
+      "name": "latex-tools-dev",
+      "license": "lppl1.3c",
+      "files": 1
+    },
+    {
+      "name": "letltxmacro",
+      "license": "lppl1.3",
+      "files": 1
+    },
+    {
+      "name": "lm",
+      "license": "gfl",
+      "files": 23
+    },
+    {
+      "name": "logreq",
+      "license": "lppl1.3",
+      "files": 2
+    },
+    {
+      "name": "ltxcmds",
+      "license": "lppl1.3c",
+      "files": 1
+    },
+    {
+      "name": "pdfescape",
+      "license": "lppl1.3",
+      "files": 1
+    },
+    {
+      "name": "pdftexcmds",
+      "license": "lppl1.3c",
+      "files": 1
+    },
+    {
+      "name": "pgf",
+      "license": "lppl1.3c gpl2 fdl",
+      "files": 64
+    },
+    {
+      "name": "refcount",
+      "license": "lppl1.3",
+      "files": 1
+    },
+    {
+      "name": "rerunfilecheck",
+      "license": "lppl1.3c",
+      "files": 1
+    },
+    {
+      "name": "sansmathaccent",
+      "license": "lppl1.3",
+      "files": 1
+    },
+    {
+      "name": "stringenc",
+      "license": "lppl1.3",
+      "files": 1
+    },
+    {
+      "name": "tex-ini-files",
+      "license": "pd",
+      "files": 1
+    },
+    {
+      "name": "tlperl.windows",
+      "license": null,
+      "files": 1
+    },
+    {
+      "name": "translator",
+      "license": "lppl gpl",
+      "files": 7
+    },
+    {
+      "name": "unicode-data",
+      "license": "lppl1.3c other-free",
+      "files": 3
+    },
+    {
+      "name": "uniquecounter",
+      "license": "lppl1.3",
+      "files": 1
+    },
+    {
+      "name": "url",
+      "license": "lppl",
+      "files": 1
+    },
+    {
+      "name": "xcolor",
+      "license": "lppl1.3c",
+      "files": 1
+    },
+    {
+      "name": "xecjk",
+      "license": "lppl1.3c",
+      "files": 3
+    },
+    {
+      "name": "xetex",
+      "license": "x11",
+      "files": 1
+    },
+    {
+      "name": "zapfding",
+      "license": "gpl",
+      "files": 1
+    },
+    {
+      "name": "zhnumber",
+      "license": "lppl1.3c",
+      "files": 2
+    }
+  ]
+}

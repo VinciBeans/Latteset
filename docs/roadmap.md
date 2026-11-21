@@ -47,7 +47,8 @@
 ## 2. 待办与批次
 
 **评分模型**：W 痛点权重 / D 差异化 / C 实现成本 / V 验证难度，四项 1–5 分；`P = (W + D) / (C + V)`；分档 P0 = `P ≥ 1.3 且 W ≥ 4`、P1 = `P ≥ 0.9`、P2 = `P ≥ 0.6`，`P < 0.6` 或定位冲突/已证伪 = 不做。
-**引擎口径**（[ADR-0015](./adr/0015-tectonic-only-embedded-engine.md)）：产品**只有 Tectonic 一个引擎、只有内嵌一种形态**——②段已完成（子进程路径、`tectonic.lib_form`、`LATTESET_TECTONIC_LIB` 与 UI 形态位全部删除，设置迁移到 v3，构建/CI 统一走 vcpkg 入口；证据 `test_file/phase2/REPORT-gates.md`）。xelatex / lualatex / pdflatex 与 latexmk 驱动已从产品中删除。新功能的设计与验收基准 = **内嵌 Tectonic**。**宏包集分发方案待定**：[ADR-0016](./adr/0016-ship-bundle-offline.md) 原决定"随包**完整**宏包集"，但 2026-11-16 实测完整 bundle ≈ **2.88 GB**（`test_file/acc/REPORT-acceptance.md:61`）⇒ 随包不可行，**方案待③段前重定**（候选 A 随包精简集 / B 首次联网 + 可选本地 bundle / C 混合，见 ADR-0016「实测修正」；G-L1..G-L9 门禁对最终随包物照旧）。当前默认**首次联网取包**（`network-bundle` 已打开）、用户可配本地 bundle。兼容性边界（内嵌不跑外部 biber、makeindex / glossaries 不自动跑、模板 `latexmkrc` 约定失效）按 ADR-0015 第 4 条如实标注，**不静默降级**。
+**引擎口径**（[ADR-0015](./adr/0015-tectonic-only-embedded-engine.md)）：产品**只有 Tectonic 一个引擎、只有内嵌一种形态**——②段已完成（子进程路径、`tectonic.lib_form`、`LATTESET_TECTONIC_LIB` 与 UI 形态位全部删除，设置迁移到 v3，构建/CI 统一走 vcpkg 入口；证据 `test_file/phase2/REPORT-gates.md`）。xelatex / lualatex / pdflatex 与 latexmk 驱动已从产品中删除。新功能的设计与验收基准 = **内嵌 Tectonic**。**宏包集分发方案已在③段落地（ADR-0016 候选 A）**：安装包**自带精简宏包集**（517 文件 / 30.43 MiB zip / digest `9e8c63ca…`）⇒ **离线开箱**；完整 bundle ≈2.88 GB 不随包；缺包走「设置 → 引擎 → 宏包集来源」显式切**在线完整集**或本地目录 bundle（**不自动换源**）。G-L1..G-L9 已全绿（残余风险 R-L10 登记）；T19 终版安装包 NSIS **88.46 MiB** / MSI **109.63 MiB** ≤200 MB。兼容性边界（内嵌不跑外部 biber、makeindex / glossaries 不自动跑、模板 `latexmkrc` 约定失效）按 ADR-0015 第 4 条如实标注，**不静默降级**。
+**预算口径**（2026-11-21 产品负责人已采纳）：按**实测页数**分类——≤8 页 = 小文档（1 s 优秀 / 2 s 及格）、>8 页 = 大文档（3 s 优秀 / 5 s 及格）；`large`（125 页）cold **6.41 s**（T22 清零版；含税 6.63 s）保留 5 s 线、登记为**已知硬缺口（引擎排版上限量级）**，不放宽阈值；`multifile`（74 页）归大文档后 cold **2.94 s** / e2e 2.01 s 达标（cold 距 3 s 仅 64 ms，临界）。T19 绝对值含 ~244 ms/进程 fontconfig 税，跨版本绝对比较作废。
 **快速通道**：成本 ≤2 且独立可交付的小项随时可插队（不占批次位次）。当前通道为空；㉝（精确失效，P2）仍可随时插队。
 
 ### 2.1 待办总表（档内按 P 降序）
@@ -89,7 +90,17 @@
 | **库形态 SyncTeX 修复** | ㊷ | 库形态 `.synctex.gz` 的 `Input:1` 是真实路径；单文件与分章两夹具两形态 `forward`/`inverse` 逐字段一致；排版结果/日志/错误行归属零变化 | 已完成 |
 | **候选（未排期）** | ㊸ 悬停公式即时预览 / ㊹ 导言区 format / ㊺ 软件内新建目录 | ㊸：公式扫描器单测通过、首次出图 p50 ≤400ms、主编译墙钟增量 ≤5%、权威产物与关功能时逐字节相同 | ㊸㊺ 主体完成（余新建目录与右键入口）；㊹ 待测一条变体 |
 | **文件管理补齐** | ㊼㊽㊾ 删 / 改名 / 搜索 | 删除必须确认、取消零副作用；改名只改本目录；收口编辑器状态与根文件重探；搜索命中保留祖先 | 已完成 |
-| **Tectonic 唯一引擎重构**（[ADR-0015](./adr/0015-tectonic-only-embedded-engine.md) / [ADR-0016](./adr/0016-ship-bundle-offline.md)） | ① 摘除 XeLaTeX/LuaLaTeX/pdfLaTeX + latexmk（**先保留两形态**）→ ② 收成内嵌唯一（构建/CI/设置/UI/状态栏/CLI/MCP/文档）→ ③ release 基线、性能优化与**按 ADR-0016「实测修正」重定 bundle 分发方案**（完整 bundle ≈2.88 GB，随包不可行） | ① 非 Tectonic 引擎分支 `grep` 为零、按语义改写的集成用例全绿；② 所有构建统一走 vcpkg 入口（缺项给修复命令）、旧 `settings.json` 迁移有一次提示、U-14（子目录 `\include`）跑绿、CLI/MCP 引擎开关收口；③ 六档 cold/noop/edit 基线进 `design.md`、编辑→出图不劣于 1 页暖编 372–642ms、**bundle 分发方案定稿**（候选 A/B/C 择一，给出安装包体积上限与离线验收判据）；发包前 G-L1..G-L9 绿（[审计](./dev/tectonic-licensing.md)） | **① 已完成**；**② 已完成（待提交/推送）**：门禁全 PASS（core 268 / infra 40 / tectonic 44+1 / server 24+4 / mcp 6+1 / vitest 151 / bindings 13/13），headless 真编 5 子项 PASS，启动 5.78s（热）/ 12.96s（强制重编），真机窗口因会话环境限制 `[未测]`——证据 `test_file/phase2/REPORT-gates.md`；**③ 未开始** |
+| **Tectonic 唯一引擎重构**（[ADR-0015](./adr/0015-tectonic-only-embedded-engine.md) / [ADR-0016](./adr/0016-ship-bundle-offline.md)） | ① 摘除 XeLaTeX/LuaLaTeX/pdfLaTeX + latexmk（**先保留两形态**）→ ② 收成内嵌唯一（构建/CI/设置/UI/状态栏/CLI/MCP/文档）→ ③ release 基线、性能优化与**按 ADR-0016「实测修正」重定 bundle 分发方案**（完整 bundle ≈2.88 GB，随包不可行） | ① 非 Tectonic 引擎分支 `grep` 为零、按语义改写的集成用例全绿；② 所有构建统一走 vcpkg 入口（缺项给修复命令）、旧 `settings.json` 迁移有一次提示、U-14（子目录 `\include`）跑绿、CLI/MCP 引擎开关收口；③ 六档 cold/noop/edit 基线进 `design.md`、编辑→出图不劣于 1 页暖编 372–642ms、**bundle 分发方案定稿**（候选 A/B/C 择一，给出安装包体积上限与离线验收判据）；发包前 G-L1..G-L9 绿（[审计](./dev/tectonic-licensing.md)） | **① 已完成**；**② 已完成（待提交/推送）**（证据 `test_file/phase2/REPORT-gates.md`）；**③ 已完成（待提交/推送）**：六档基线进 `design.md` §2.8（两轮可复现 ≤6%）、编辑→出图全部达标、**bundle 分发落定候选 A**（随包精简集 30.43 MiB + 缺包补全，离线首编 exit 0）、预算分类按页数采纳（large cold 硬缺口登记）、G-L1..L9 全绿（R-L10 登记）、安装包 NSIS **88.46 MiB** / MSI **109.63 MiB** ≤200 MB；真机窗口/安装版启动 `[未测-会话环境限制]`——证据 `test_file/phase3/REPORT-gates.md` |
+
+**③ 出口条件逐条核对**（T19/T16/T21，2026-11-21）：
+
+- [x] 六档 cold/noop/edit 基线进 `design.md`（§2.8：两轮独立运行、同档中位差 ≤6%）
+- [x] 编辑→出图不劣于 1 页暖编 372–642 ms（T22 清零版：tiny e2e 0.75 s，其中编译段 ≈0.15 s、含 500 ms 防抖；其余档 e2e 0.87–2.47 s，均 < 对应预算线）
+- [x] bundle 分发方案定稿 = **候选 A 随包精简集 + 缺包补全通道**；安装包体积上限 **≤200 MB**（实测 NSIS 88.46 / MSI 109.63 MiB）
+- [x] 离线验收判据 = 随包 zip + 空缓存 + 不可用代理首编 exit 0 + `validate-pdf` PASS（T19 §6.1）；二次编译 1.2 s
+- [x] 缺包补全通道验证：`enumitem` 缺失 ⇒ `missing_package` + 可行动 hint；显式切在线后 exit 0（T19 §6.2）
+- [x] G-L1..G-L9 全绿（G-L3/L4/L5/L6 由 T21 闭合；残余风险 R-L10 如实登记）
+- [ ] 安装版冷启动与窗口内可编辑验收 `[未测-会话环境限制]`（受限会话 WebView2/安装器不可用；需正常权限会话补做，不阻断文档收口）
 
 ## 3. 外部方案评估结论
 

@@ -105,6 +105,14 @@ export const commands = {
 	 *  引擎：内嵌 Tectonic 唯一（ADR-0015 决策 2），与主编译共用 [`build_compile_runner`] 的装配口径。
 	 */
 	compileMath: (text: string, offset: number) => typedError<MathPreviewDto, CmdError>(__TAURI_INVOKE("compile_math", { text, offset })),
+	/**
+	 *  打开随安装包分发的第三方许可材料（About 入口）：`Notices` 打开声明正文，
+	 *  `Sources` 打开 GPL 字体 Corresponding Source 目录。
+	 * 
+	 *  **只读、不接受路径**：目标由安装资源目录 + 固定文件名算出（D8 的"能免则免用户输入路径"）。
+	 *  缺失时给可行动错误（重装 / 手动路径），不静默失败。
+	 */
+	openLicenses: (kind: string) => typedError<null, CmdError>(__TAURI_INVOKE("open_licenses", { kind })),
 };
 
 /** Events */
@@ -573,7 +581,7 @@ export type Settings_Deserialize = {
 	 */
 	schema_version?: number,
 	compile: CompileSettings,
-	/**  Tectonic 形态与资源（全局；见 [`TectonicSettings`] 的说明）。 */
+	/**  Tectonic **资源**（全局：bundle 源 / 缓存目录；形态自 v3 起唯一 = 内嵌，见 [`TectonicSettings`]）。 */
 	tectonic?: TectonicSettings,
 	/**  界面（全局；`#[serde(default)]` ⇒ 旧 settings.json 没有 `ui` 也能读）。 */
 	ui?: UiSettings,
@@ -594,7 +602,7 @@ export type Settings_Serialize = {
 	 */
 	schema_version: number,
 	compile: CompileSettings,
-	/**  Tectonic 形态与资源（全局；见 [`TectonicSettings`] 的说明）。 */
+	/**  Tectonic **资源**（全局：bundle 源 / 缓存目录；形态自 v3 起唯一 = 内嵌，见 [`TectonicSettings`]）。 */
 	tectonic: TectonicSettings,
 	/**  界面（全局；`#[serde(default)]` ⇒ 旧 settings.json 没有 `ui` 也能读）。 */
 	ui: UiSettings,

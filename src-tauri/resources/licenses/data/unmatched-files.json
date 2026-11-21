@@ -1,0 +1,45 @@
+{
+  "note": "按 basename 映射不到 TL 包的文件（生成物/产品文件），人工归属如下。",
+  "files": [
+    {
+      "name": "SHA256SUM",
+      "attribution": "本产品目录 bundle 的 digest 文件（非 TL 内容）"
+    },
+    {
+      "name": "dehyphn-x-2022-03-16.pat",
+      "attribution": "TL hyph-utf8 生成物（TeX Live 构建期由 dehyphn-x 生成）；来源 TL 2024-03-12，许可见 hyph-utf8（LPPL/GPL 组合，逐文件头声明）"
+    },
+    {
+      "name": "dehyphn-x-2022-03-16.tex",
+      "attribution": "同上"
+    },
+    {
+      "name": "dehypht-x-2022-03-16.pat",
+      "attribution": "同上"
+    },
+    {
+      "name": "dehypht-x-2022-03-16.tex",
+      "attribution": "同上"
+    },
+    {
+      "name": "hyph-quote-rm.tex",
+      "attribution": "TL hyph-utf8（文件头声明，见 LICENSES/gpl-2.0.txt / knuth 相关声明）"
+    },
+    {
+      "name": "kanjix.map",
+      "attribution": "TL uptex-base 生成物（map 数据，来源 TL 2024-03-12；许可随 uptex-base）"
+    },
+    {
+      "name": "pdftex.map",
+      "attribution": "TL pdftex 生成物（由 updmap 汇聚各 fontmap；逐包许可见表内各字体/包）"
+    },
+    {
+      "name": "pgfkeysfiltered.code.tex",
+      "attribution": "TL pgf 生成物（pgf 许可 LPPL1.3c + GPL2 + FDL）"
+    },
+    {
+      "name": "tectonic-format-latex.tex",
+      "attribution": "Tectonic 自带（MIT，Tectonic 项目）"
+    }
+  ]
+}

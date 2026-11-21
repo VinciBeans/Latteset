@@ -139,6 +139,30 @@ if ($dotSourced -or $Mode -eq 'check') { return }
 switch ($Mode) {
     'tauri' {
         # `npm run tauri dev` ⇒ RemainingArgs=@('dev')；`npm run tauri build` ⇒ @('build')。
+        # **发布构建必须先把产品精简宏包集打进 resources**（T16 / ADR-0016 候选 A）：
+        #   test_file/tectonic-bundle（DirBundle，代表集，gitignore）
+        #     --scripts/make-bundle.mjs-->  src-tauri/resources/tectonic-bundle.zip（随安装包）
+        # 目录 bundle 不存在时给可执行修复命令（不在构建中途联网瞎猜）。
+        if ($RemainingArgs -contains 'build') {
+            $bundleDir = Join-Path $repo 'test_file/tectonic-bundle'
+            $productZip = Join-Path $repo 'src-tauri/resources/tectonic-bundle.zip'
+            if (-not (Test-Path (Join-Path $bundleDir 'SHA256SUM'))) {
+                throw @"
+缺产品精简宏包集的源（$bundleDir/SHA256SUM）：发布构建要把宏包集随安装包分发。
+    修（生成代表集；需联网，本机已有 vcpkg/CLI 前置）：
+      npm run lib:cli                                    # 先出 release CLI
+      node scripts/gen-bench-bundle.mjs --phase=gen      # 从上游 bundle 按需取文件（5–15 分钟）
+      node scripts/gen-bench-bundle.mjs --phase=install  # 落成 test_file/tectonic-bundle
+      node scripts/make-bundle.mjs                       # 打成 src-tauri/resources/tectonic-bundle.zip
+    或复用已有缓存：--seed-cache test_file/.bundle-gen/cache
+"@
+            }
+            Write-Host "→ 生成产品精简宏包集（scripts/make-bundle.mjs）" -ForegroundColor Cyan
+            & node (Join-Path $repo 'scripts/make-bundle.mjs')
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+            & node (Join-Path $repo 'scripts/make-bundle.mjs') --verify
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+        }
         $program = 'npx'
         $argv = @('tauri') + $RemainingArgs
     }

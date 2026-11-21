@@ -17,7 +17,8 @@
 //! 代价有界的两条闸门（roadmap §6.6）：
 //! 1. **只在还会再跑一趟时才出图**（调用点就在 `break` 之后），且第 1 趟墙钟要够长
 //!    （[`MIN_FIRST_PASS`]）—— 短编译（一趟就收敛、或快得没必要）一次都不跑，零代价；
-//! 2. **页数没涨就不重做**、**总共最多 [`MAX_UPDATES`] 次**：一条编译通常只出 1 帧。
+//! 2. **页数没涨就不重做**、**总共最多 [`MAX_UPDATES_DEFAULT`] 帧**（默认 1 帧：T17 实测每帧
+//!    135–160 ms，第 2 帧增量信息极少 ⇒ 纯开销；env 可覆盖）。
 //!
 //! 产物落在 `tmp/<stem>.preview.pdf`（原子替换）。**它不是最终产物**：终态仍由
 //! `CompileOutcome::Success.pdf_path` 给出；`tmp/` 又是忽略路径 ⇒ 写它不会反过来触发编译。
@@ -41,8 +42,27 @@ use crate::io::{SharedCapture, TectonicIo, new_capture};
 /// 第 1 趟至少跑这么久才值得出图：它是后面几趟的时长预测量，太短说明整体很快就完、
 /// 用户并不会等，那 0.1 s 的转换就是纯开销。
 const MIN_FIRST_PASS: Duration = Duration::from_millis(500);
-/// 单次编译最多出几帧（总开销上限）。
-const MAX_UPDATES: usize = 8;
+/// 单次编译最多出几帧（总开销上限）。**默认 1**（T17 / L5 实测）：每帧 = 一次完整的
+/// XDV→PDF（本机实测 **135–160 ms**），而第 2 帧相对第 1 帧的增量信息极少（页数通常只多几页）
+/// ⇒ 多帧是纯开销。`LATTESET_PREVIEW_MAX_UPDATES` 可覆盖（A/B 复核；旧行为 = 8）。
+const MAX_UPDATES_DEFAULT: usize = 1;
+/// 覆盖档的上限（防止 env 填个巨大值把编译拖死）。
+const MAX_UPDATES_CEILING: usize = 8;
+
+/// 解析 `LATTESET_PREVIEW_MAX_UPDATES`（`None`/非法 ⇒ 默认；超过上限 ⇒ 上限）。
+fn parse_max_updates(raw: Option<&str>) -> usize {
+    raw.and_then(|s| s.trim().parse::<usize>().ok())
+        .map(|n| n.clamp(1, MAX_UPDATES_CEILING))
+        .unwrap_or(MAX_UPDATES_DEFAULT)
+}
+
+/// 本次编译的帧数上限（见 [`MAX_UPDATES_DEFAULT`]）。
+///
+/// 为什么留 env：出图是"编译期额外干活"的通道，A/B 复核（对比 1 帧 vs 旧 8 帧）需要
+/// 不重新编译二进制的对照手段；与 `LATTESET_PREVIEW_STREAM` / `LATTESET_A_FULL` 同一层。
+fn max_updates() -> usize {
+    parse_max_updates(std::env::var("LATTESET_PREVIEW_MAX_UPDATES").ok().as_deref())
+}
 
 /// 流式出图开关。默认**开**；`LATTESET_PREVIEW_STREAM=0|false|off|no` 关掉。
 ///
@@ -74,23 +94,25 @@ pub struct PreviewContext {
     pub cancel: Arc<AtomicBool>,
 }
 
-/// 趟边界出图器（状态只有"上次出了几页"和"出过几次"）。
+/// 趟边界出图器（状态只有"上次出了几页"、"出过几次"和"本次上限"）。
 pub struct PartialPainter {
     ctx: PreviewContext,
     last_pages: usize,
     updates: usize,
+    /// 本次编译的帧数上限（默认 1；env 可覆盖，见 [`max_updates`]）。
+    max_updates: usize,
 }
 
 impl PartialPainter {
     pub fn new(ctx: PreviewContext) -> Self {
-        Self { ctx, last_pages: 0, updates: 0 }
+        Self { ctx, last_pages: 0, updates: 0, max_updates: max_updates() }
     }
 
     /// 在**确定还会再跑下一趟**的趟边界调一次；不值得/出不了就安静返回。
     ///
     /// `first_pass` 是第 1 趟的墙钟（成本闸门，见 [`MIN_FIRST_PASS`]）。
     pub fn paint(&mut self, first_pass: Duration) {
-        if self.updates >= MAX_UPDATES || first_pass < MIN_FIRST_PASS {
+        if self.updates >= self.max_updates || first_pass < MIN_FIRST_PASS {
             return;
         }
         if self.ctx.cancel.load(Ordering::Relaxed) {
@@ -117,7 +139,7 @@ impl PartialPainter {
         let Some(pdf) = self.convert(partial.bytes) else {
             // 打不开 bundle / 转换失败：中间态是尽力而为的通道，说一声就放弃
             warn!("流式出图：部分 PDF 生成失败，本条通道放弃（编译本身不受影响）");
-            self.updates = MAX_UPDATES;
+            self.updates = self.max_updates;
             return;
         };
 
@@ -141,7 +163,7 @@ impl PartialPainter {
     /// 把（已补过 postamble 的）XDV 转成 PDF —— 与产品库形态同一个引擎、同一层 I/O。
     ///
     /// **每次出图现开一份 bundle**：`TectonicIo` 按值收走 bundle（不可共享），而出图次数被
-    /// [`MAX_UPDATES`] 与页数闸门限得很死（实测 `open_ms=0`），多付的几十毫秒可以接受；
+    /// [`MAX_UPDATES_DEFAULT`] 与页数闸门限得很死（实测 `open_ms=0`），多付的几十毫秒可以接受；
     /// 换来的是这里不需要任何"bundle 池"之类的机制。
     fn convert(&self, xdv: Vec<u8>) -> Option<Vec<u8>> {
         let t_open = Instant::now();
@@ -200,4 +222,22 @@ fn write_atomic(path: &std::path::Path, bytes: &[u8]) -> std::io::Result<()> {
     let tmp = path.with_extension("pdf.tmp");
     std::fs::write(&tmp, bytes)?;
     std::fs::rename(&tmp, path)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// 帧数上限：默认 **1**（T17 / L5 实测：每帧 135–160 ms，第 2 帧增量信息极少）；
+    /// env 可覆盖（A/B）但被 `[1, MAX_UPDATES_CEILING]` 夹住，非法/0 值回落默认。
+    #[test]
+    fn max_updates_defaults_to_one_and_is_clamped() {
+        assert_eq!(parse_max_updates(None), 1, "默认 1 帧");
+        assert_eq!(parse_max_updates(Some(" 3 ")), 3, "A/B 可覆盖");
+        assert_eq!(parse_max_updates(Some("8")), 8);
+        assert_eq!(parse_max_updates(Some("99")), MAX_UPDATES_CEILING, "必须被上限夹住");
+        for junk in ["", "0", "-1", "abc"] {
+            assert_eq!(parse_max_updates(Some(junk)), MAX_UPDATES_DEFAULT, "{junk:?} 应回落默认");
+        }
+    }
 }

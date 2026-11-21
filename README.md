@@ -20,7 +20,7 @@ Latteset 主界面：左侧文件树、中间编辑区、右侧 PDF 预览。
 
 依赖 **Windows 10/11**、Node.js ≥ 18、Rust（stable-x86_64-pc-windows-msvc，含 VS Build Tools C++ 工具链）、**vcpkg**（内嵌 Tectonic 的 C 依赖链：六个 `x64-windows-static-release` 端口，入口见下）。
 
-**TeX 环境**：唯一引擎是 **Tectonic**，以**内嵌**形态编进产品进程，**不需要预装 TeX Live / MiKTeX，也不要求 PATH 上有 `tectonic`**。引擎不启动外部进程，biber / makeindex / glossaries 不会被自动运行（检出时给状态栏提示，见「实时编译」）。宏包集默认**首次编译联网按需取包**（本机缓存约 60–63 MB，之后离线复用；**完整 bundle 约 2.88 GB**，随包分发方案**待重定**，见 [ADR-0016](./docs/adr/0016-ship-bundle-offline.md) 与 [roadmap](./docs/roadmap.md)），也可在设置里配本地 bundle。xelatex / lualatex / pdflatex 与 latexmk 驱动已从产品中删除（[ADR-0015](./docs/adr/0015-tectonic-only-embedded-engine.md)）。
+**TeX 环境**：唯一引擎是 **Tectonic**，以**内嵌**形态编进产品进程，**不需要预装 TeX Live / MiKTeX，也不要求 PATH 上有 `tectonic`**。安装包**自带精简宏包集**（517 文件 / 30.43 MiB zip，覆盖论文/幻灯片/中文/图表/参考文献等代表性文档）⇒ **打开即可离线首编**；它**不是完整 TeX Live**，用到覆盖外的宏包时给明确缺包提示，可在「设置 → 引擎 → 宏包集来源」**显式切到在线完整宏包集**或配本地目录 bundle（新版安装包：**NSIS 88.46 MiB / MSI 109.63 MiB**）。引擎不启动外部进程，biber / makeindex / glossaries 不会被自动运行（检出时给状态栏提示，见「实时编译」）；xelatex / lualatex / pdflatex 与 latexmk 驱动已从产品中删除（[ADR-0015](./docs/adr/0015-tectonic-only-embedded-engine.md)）。
 
 构建前置统一由 `scripts/with-tectonic-lib.ps1` 校验（缺项给可执行修复命令）：
 
@@ -61,7 +61,7 @@ npm install && npm run tauri dev   # 开发构建；发布打包用 npm run taur
 - **文件夹即项目**：打开文件夹 → 文件树 → 多标签页；自动保存（防抖）+ 外部修改检测与冲突提示。
 - **在软件内管理文档**：文件树支持新建文件/目录、删除（二次确认 + 目录递归）、改名、搜索；空项目里建第一份 `.tex` 时会问一次「文档语言 / 类型 / 标题」（中文 ctex 类或标准类，短文/报告/书/幻灯片），直接生成一份**能编译的最小骨架**，不想要这一步可在「设置 → 编译」里关掉。
 - **根文件**：正则启发式自动探测（含 `\documentclass` 的顶层 .tex），可手动覆盖；**还没有根文档**时状态栏给出可点提示，并且每次保存都会静默重探一次——补上 `\documentclass` 保存即成主文件并自动出图。
-- **设置**：引擎**固定为内嵌 Tectonic**（不再有引擎下拉/形态选项，`LATTESET_TEX_ENGINES` / `LATTESET_TECTONIC_LIB` 均已删除；旧配置里的 `compile.engine` / `tectonic.lib_form` 会在迁移时被忽略并在状态栏给一次提示，原文件留 `.v1.bak` / `.v2.bak`）、编译模式、防抖、超时、根文件覆盖；全局 + 项目（`.latteset/settings.json`）两层，改即生效。引擎页只剩 **宏包集来源**与**缓存目录**两项资源。
+- **设置**：引擎**固定为内嵌 Tectonic**（不再有引擎下拉/形态选项，`LATTESET_TEX_ENGINES` / `LATTESET_TECTONIC_LIB` 均已删除；旧配置里的 `compile.engine` / `tectonic.lib_form` 会在迁移时被忽略并在状态栏给一次提示，原文件留 `.v1.bak` / `.v2.bak`）、编译模式、防抖、超时、根文件覆盖；全局 + 项目（`.latteset/settings.json`）两层，改即生效。引擎页只剩 **宏包集来源**（内置精简集 / 在线完整 / 本地目录三档）与**缓存目录**两项资源。
 
 ## 命令行与 MCP（无 GUI，面向自动化）
 

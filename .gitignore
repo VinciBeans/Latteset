@@ -150,6 +150,16 @@ test_file/tools/
 *.tmpdir/
 __logo_preview*.html
 
+# ============ 阶段③ 本地测试 bundle 与生成脚手架（可重生成，不入库；见 test_file/phase3/BUNDLE.md） ============
+test_file/tectonic-bundle/
+test_file/.bundle-gen/
+test_file/bundle-gen/
+test_file/phase3/
+
+# 阶段③ T16：产品精简宏包集（scripts/make-bundle.mjs 从 test_file/tectonic-bundle 生成；
+# 随安装包分发，构建产物不入库。CI 用 `node scripts/make-bundle.mjs` 现生成。）
+src-tauri/resources/tectonic-bundle.zip
+
 # ============ 真机验证截图（agent 在仓库根目录另存的 PNG/JPG，勿上传） ============
 /zoom-*.png
 /zoom-*.jpg

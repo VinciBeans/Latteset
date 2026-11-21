@@ -446,3 +446,26 @@ fn source_release_hint_declines_when_ambiguous_or_absent() {
     assert_eq!(source_release_hint("c.cls", &["main.tex".to_string()]), None);
     assert_eq!(source_release_hint("c.cls", &[]), None);
 }
+
+/// T16 缺包补全通道（ADR-0016 候选 A）：缺 `.sty`/`.cls` 的建议必须指向**产品内**出路
+/// （切在线完整宏包集 / 补进本地 bundle），不能再说 `tlmgr install`（本产品不依赖本机 TeX Live）。
+#[test]
+fn missing_package_hints_point_to_product_bundle_channels() {
+    let cases = [
+        ("! LaTeX Error: File `slashbox.sty' not found.", "slashbox.sty"),
+        ("! LaTeX Error: File `seuthesis.cls' not found.", "seuthesis.cls"),
+    ];
+    for (log, missing) in cases {
+        let messages = parse_log(log);
+        let err = messages
+            .iter()
+            .find(|m| matches!(m.kind, super::MessageKind::Error))
+            .unwrap_or_else(|| panic!("没解析出错误：{log}"));
+        let diag = diagnose(err).unwrap_or_else(|| panic!("没给出诊断：{log}"));
+        let hint = diag.hint.as_deref().unwrap_or_default();
+        assert!(hint.contains(missing), "建议要点名缺失文件：{hint}");
+        assert!(hint.contains("在线完整宏包集"), "要给出补包通道：{hint}");
+        assert!(hint.contains("设置"), "要指到设置面：{hint}");
+        assert!(!hint.contains("tlmgr"), "不得建议本机 TeX Live 的 tlmgr（内嵌形态零预装）：{hint}");
+    }
+}

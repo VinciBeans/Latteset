@@ -1,0 +1,62 @@
+{
+  "note": "清单 B：vcpkg x64-windows-static-release 静态链接的 C/C++ 依赖（11 个直接 port；传递依赖已并入各 port 的 copyright 文本）。",
+  "triplet": "x64-windows-static-release",
+  "pinRev": "a62ce77d56ee07513b4b67de1ec2daeaebfae51a",
+  "ports": [
+    {
+      "port": "freetype",
+      "copyright": "LICENSES/c-deps/freetype.txt",
+      "bytes": 27420
+    },
+    {
+      "port": "harfbuzz",
+      "copyright": "LICENSES/c-deps/harfbuzz.txt",
+      "bytes": 1971
+    },
+    {
+      "port": "graphite2",
+      "copyright": "LICENSES/c-deps/graphite2.txt",
+      "bytes": 28330
+    },
+    {
+      "port": "icu",
+      "copyright": "LICENSES/c-deps/icu.txt",
+      "bytes": 25185
+    },
+    {
+      "port": "fontconfig",
+      "copyright": "LICENSES/c-deps/fontconfig.txt",
+      "bytes": 8616
+    },
+    {
+      "port": "libpng",
+      "copyright": "LICENSES/c-deps/libpng.txt",
+      "bytes": 5345
+    },
+    {
+      "port": "brotli",
+      "copyright": "LICENSES/c-deps/brotli.txt",
+      "bytes": 1084
+    },
+    {
+      "port": "bzip2",
+      "copyright": "LICENSES/c-deps/bzip2.txt",
+      "bytes": 1896
+    },
+    {
+      "port": "dirent",
+      "copyright": "LICENSES/c-deps/dirent.txt",
+      "bytes": 1083
+    },
+    {
+      "port": "expat",
+      "copyright": "LICENSES/c-deps/expat.txt",
+      "bytes": 1144
+    },
+    {
+      "port": "zlib",
+      "copyright": "LICENSES/c-deps/zlib.txt",
+      "bytes": 1002
+    }
+  ]
+}

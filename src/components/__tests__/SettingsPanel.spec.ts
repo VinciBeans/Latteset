@@ -1,14 +1,16 @@
-// SettingsPanel 单测：锁三条**只在界面上成立**的契约——
-// ① 设置分页（标签栏把外观/编译/引擎/项目分开，别混成一长条）；
+// SettingsPanel 单测：锁四条**只在界面上成立**的契约——
+// ① 设置分页（标签栏把外观/编译/引擎/项目/关于分开，别混成一长条）；
 // ② 引擎页只剩 Tectonic 的资源（ADR-0015：引擎不可选、形态固定为内嵌——没有下拉、没有清单、
 //    没有"存了但不生效"的形态开关，只剩 bundle / cache 两项资源）；
-// ③ bundle 在磁盘上存的是上游认的 `file:///…`，界面上要显示成普通目录路径（用户不该看 URL 前缀）。
+// ③ bundle 在磁盘上存的是上游认的 `file:///…`，界面上要显示成普通目录路径（用户不该看 URL 前缀）；
+// ④ 关于页的第三方许可入口：点击只调后端命令（路径由后端解析，前端不硬编码），失败必须显示（不静默）。
 // 路径的**归一化**（`E:\…` → `file:///E:/…`）在 core，由 `latteset-core` 的单测覆盖，不在这里重复。
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { mount, flushPromises } from "@vue/test-utils";
 import { createPinia, setActivePinia } from "pinia";
 import SettingsPanel from "../SettingsPanel.vue";
 import { useSettingsStore } from "../../stores/settings";
+import { ipc } from "../../services/ipc";
 import type { Settings } from "../../bindings";
 
 /** 后端 settings.json 的当前值（mock 自己的状态；每个用例前重置）。
@@ -45,11 +47,14 @@ vi.mock("../../services/ipc", () => ({
       }
       return structuredClone(stored);
     }),
+    // 许可入口：默认成功；失败路径的用例自己 mockRejectedValueOnce（不静默的断言靠它）
+    openLicenses: vi.fn(async () => {}),
   },
 }));
 
 beforeEach(() => {
   lastPatch = null;
+  vi.mocked(ipc.openLicenses).mockReset().mockResolvedValue(null);
 });
 
 /** 点某个标签（标签栏是唯一入口，测试也走这条路，不直接改内部状态）。 */
@@ -77,19 +82,21 @@ async function mountPanel(bundle: string | null = null, tab = "引擎（Tectonic
 }
 
 describe("SettingsPanel：标签栏分页", () => {
-  it("四个标签都在（引擎页点名 Tectonic），且第一页是「外观」", async () => {
+  it("五个标签都在（引擎页点名 Tectonic、末页是「关于」），且第一页是「外观」", async () => {
     const w = await mountPanel(null, "外观");
     expect(w.findAll(".tab-btn").map((b) => b.text())).toEqual([
       "外观",
       "编译",
       "引擎（Tectonic）",
       "项目",
+      "关于",
     ]);
     expect(w.find(".tab-btn.on").text()).toBe("外观");
     // 分页生效：别的页的字段**不在 DOM 里**（不是藏起来）
     expect(w.find("#set-theme").exists()).toBe(true);
     expect(w.find("#set-bundle-source").exists()).toBe(false);
     expect(w.find("#set-root").exists()).toBe(false);
+    expect(w.find("#open-notices").exists()).toBe(false);
     // 引擎页不再有"存了但不生效"的提示点（ADR-0015：没有别的引擎可选了）
     expect(w.find(".tab-dot").exists()).toBe(false);
     w.unmount();
@@ -100,6 +107,7 @@ describe("SettingsPanel：标签栏分页", () => {
       ["编译", "#set-mode", "#set-bundle-source"],
       ["引擎（Tectonic）", "#set-bundle-source", "#set-mode"],
       ["项目", "#set-root", "#set-bundle-source"],
+      ["关于", "#open-notices", "#set-mode"],
     ];
     for (const [tab, present, absent] of cases) {
       const w = await mountPanel(null, tab);
@@ -118,7 +126,7 @@ describe("SettingsPanel：标签栏分页", () => {
     await w.find(".settings-tabs").trigger("keydown", { key: "ArrowLeft" });
     expect(w.find(".tab-btn.on").text()).toBe("编译");
     await w.find(".settings-tabs").trigger("keydown", { key: "End" });
-    expect(w.find(".tab-btn.on").text()).toBe("项目");
+    expect(w.find(".tab-btn.on").text()).toBe("关于");
     w.unmount();
   });
 
@@ -206,14 +214,131 @@ describe("SettingsPanel：bundle 路径的展示形态", () => {
   });
 
   it("输入框回填的也是无前缀形态（与「当前：」一致）", async () => {
-    // 输入框要在 bundle 区可见时才有值：先选「本地目录」
+    // 输入框要在 bundle 区可见时才有值：先选「本地目录」（三档来源：内置 / 在线 / 本地）
     const w = await mountPanel("file:///E:/Works/bundle");
-    const localBtn = w.findAll("#set-bundle-source .seg-btn")[1];
+    const localBtn = w.findAll("#set-bundle-source .seg-btn")[2];
     await localBtn.trigger("click");
     await flushPromises();
     const input = w.find<HTMLInputElement>("#set-bundle-path");
     expect(input.exists()).toBe(true);
     expect(input.element.value).toBe("E:/Works/bundle");
+    w.unmount();
+  });
+});
+
+// T16 / ADR-0016 候选 A：宏包集来源三档（内置精简集默认 / 在线完整集显式 / 本地目录），
+// 且**不静默回退**——只有用户点「在线完整」才把来源写成在线地址。
+describe("SettingsPanel：宏包集来源三档（ADR-0016 候选 A）", () => {
+  it("默认（未设置）显示「内置精简宏包集」，且不出现本地路径输入框", async () => {
+    const w = await mountPanel(null);
+    const label = w.find("#set-bundle-current").text();
+    expect(label).toContain("内置精简宏包集");
+    expect(w.find("#set-bundle-path").exists()).toBe(false);
+    // 三档按钮都在
+    expect(w.findAll("#set-bundle-source .seg-btn").map((b) => b.text())).toEqual([
+      "内置（默认）",
+      "在线完整",
+      "本地目录",
+    ]);
+    w.unmount();
+  });
+
+  it("点「在线完整」才把默认在线地址显式写进设置（不静默改网络）", async () => {
+    const w = await mountPanel(null);
+    const onlineBtn = w.findAll("#set-bundle-source .seg-btn")[1];
+    await onlineBtn.trigger("click");
+    await flushPromises();
+    expect(lastPatch).toMatchObject({ bundle: expect.stringMatching(/^https:\/\//) });
+    expect(w.find("#set-bundle-current").text()).toContain("在线完整宏包集");
+    w.unmount();
+  });
+
+  it("从在线切回「内置（默认）」写空串 = 清除（不保留在线地址）", async () => {
+    const w = await mountPanel("https://relay.fullyjustified.net/default_bundle_v33.tar");
+    const shippedBtn = w.findAll("#set-bundle-source .seg-btn")[0];
+    await shippedBtn.trigger("click");
+    await flushPromises();
+    expect(lastPatch).toMatchObject({ bundle: "" });
+    expect(w.find("#set-bundle-current").text()).toContain("内置精简宏包集");
+    w.unmount();
+  });
+
+  it("本地目录为空时给可行动提示（不写设置）", async () => {
+    const w = await mountPanel("file:///E:/Works/bundle");
+    const input = w.find<HTMLInputElement>("#set-bundle-path");
+    await input.setValue("   ");
+    const apply = w.findAll("button").find((b) => b.text() === "应用")!;
+    await apply.trigger("click");
+    await flushPromises();
+    expect(lastPatch, "空输入不得写设置").toBeNull();
+    expect(w.text()).toContain("本地目录不能为空");
+    w.unmount();
+  });
+});
+
+// T21b / G-L3：第三方许可材料（NOTICE + GPL 字体源码）随安装包分发。
+// 前端**不硬编码路径**：入口只调后端 `open_licenses`（后端解析资源目录并交系统打开），
+// 缺资源时显示可行动错误 —— 不静默。
+describe("SettingsPanel：关于页 / 第三方许可入口（G-L3）", () => {
+  it("关于页有许可入口，文案如实（Tectonic MIT / 宏包集许可 / biber 边界 / 源码位置）", async () => {
+    const w = await mountPanel(null, "关于");
+    expect(w.find("#open-notices").exists()).toBe(true);
+    expect(w.find("#open-sources").exists()).toBe(true);
+    const text = w.text();
+    expect(text).toContain("Tectonic");
+    expect(text).toContain("MIT");
+    expect(text).toContain("LPPL");
+    expect(text).toContain("biber"); // 能力边界要写清：不运行外部工具
+    expect(text).toContain("licenses/sources/"); // GPL 字体源码随包位置
+    w.unmount();
+  });
+
+  it("点「打开第三方声明」只调后端命令（notices），前端不传路径", async () => {
+    const w = await mountPanel(null, "关于");
+    await w.find("#open-notices").trigger("click");
+    await flushPromises();
+    expect(ipc.openLicenses).toHaveBeenCalledTimes(1);
+    expect(ipc.openLicenses).toHaveBeenCalledWith("notices");
+    expect(w.find(".field-hint.err").exists()).toBe(false);
+    w.unmount();
+  });
+
+  it("点「打开字体源码目录」调 sources", async () => {
+    const w = await mountPanel(null, "关于");
+    await w.find("#open-sources").trigger("click");
+    await flushPromises();
+    expect(ipc.openLicenses).toHaveBeenCalledWith("sources");
+    w.unmount();
+  });
+
+  it("缺资源时不静默：后端错误原文可见（含重装/手动路径的行动指引）", async () => {
+    vi.mocked(ipc.openLicenses).mockRejectedValueOnce({
+      code: "NotFound",
+      message:
+        "找不到第三方许可声明：C:\\app\\licenses\\THIRD-PARTY-NOTICES.md。安装包可能不完整或被清理；请重新安装 Latteset。",
+    });
+    const w = await mountPanel(null, "关于");
+    await w.find("#open-notices").trigger("click");
+    await flushPromises();
+    const err = w.find(".field-hint.err");
+    expect(err.exists()).toBe(true);
+    expect(err.text()).toContain("打开许可材料失败");
+    expect(err.text()).toContain("找不到第三方许可声明");
+    expect(err.text()).toContain("重新安装");
+    w.unmount();
+  });
+
+  it("打开成功不留错误（点击前先清掉上一次的失败提示）", async () => {
+    vi.mocked(ipc.openLicenses).mockRejectedValueOnce({ code: "Internal", message: "系统未关联程序" });
+    const w = await mountPanel(null, "关于");
+    await w.find("#open-notices").trigger("click");
+    await flushPromises();
+    expect(w.find(".field-hint.err").exists()).toBe(true);
+
+    await w.find("#open-sources").trigger("click");
+    await flushPromises();
+    expect(ipc.openLicenses).toHaveBeenCalledWith("sources");
+    expect(w.find(".field-hint.err").exists()).toBe(false);
     w.unmount();
   });
 });

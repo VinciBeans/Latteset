@@ -6,11 +6,12 @@
 //! `tectonic.cache_dir`，据此重建 [`TectonicLibRunner`]。形态分支已**归零**——不再有形态设置位、
 //! 环境变量强制档或子进程回退（ADR-0015 决策 2：引擎唯一 = 内嵌）。
 //!
-//! ## 优先级（显式设置 > 环境变量 > 宿主默认）
+//! ## 优先级（显式设置 > 环境变量 > **内置精简集** > 在线兜底）
 //!
-//! 与 `docs/dev/modules.md` §2.7 的"运行期配置"同一口径（headless 侧同序，见 `latteset-server`）：
-//! - **bundle**：设置里的非空值 → `LATTESET_TECTONIC_BUNDLE` → 上游兜底地址（联网取包，
-//!   `network-bundle` 特性由 manifest 打开）；
+//! 与 `docs/dev/modules.md` §2.7 的"运行期配置"同一口径（headless 侧无资源目录，故无内置集这一档）：
+//! - **bundle**：设置里的非空值 → `LATTESET_TECTONIC_BUNDLE` → **随安装包分发的内置精简集**
+//!   （`<资源目录>/tectonic-bundle.zip`，ADR-0016 候选 A：产品默认 = 离线可用）→ 上游兜底地址
+//!   （联网；仅开发构建没有资源目录时出现）；
 //! - **缓存目录**：设置里的非空值 → `LATTESET_TECTONIC_CACHE` → 宿主应用缓存目录。
 //!   ⚠ 缓存**必须**有落点：上游 format 默认落**项目目录**，不注入会把 ~24 MB 的 `.fmt`
 //!   扔进用户项目（方案 §5.2 硬约束）。
@@ -19,6 +20,7 @@
 //!
 //! 内嵌唯一后没有"另一个形态"可回退：建不来 bundle / 缺缓存目录都走 runner 的显式失败文案
 //! （`latteset-tectonic` 的 `bundle.rs` / `io.rs` 已经把"缺什么、怎么配"说清），不悄悄降级。
+//! 尤其：**内置精简集缺失/损坏时不会改用网络**（ADR-0016 决策 2），只给"修复安装 / 显式切在线"。**
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -40,6 +42,12 @@ pub struct EmbeddedRunner {
     settings: Arc<RwLock<Settings>>,
     /// 宿主应用缓存目录（format 缓存的默认落点）。
     app_cache_dir: Option<PathBuf>,
+    /// 随安装包分发的**内置精简宏包集**（`<资源目录>/tectonic-bundle.zip`，ADR-0016 候选 A）。
+    ///
+    /// `Some(path)` 时**即使文件不存在**也用它：release 构建里"该有却没有"必须显式报错
+    /// （修复安装 / 显式切在线），不得静默改用网络（ADR-0016 决策 2）；`None` = 本环境没有内置集
+    /// （headless、或开发构建且仓库里没有产物）⇒ 回落到在线兜底。
+    shipped_bundle: Option<PathBuf>,
 }
 
 impl EmbeddedRunner {
@@ -48,12 +56,14 @@ impl EmbeddedRunner {
         progress: Arc<dyn CompileProgress>,
         settings: Arc<RwLock<Settings>>,
         app_cache_dir: Option<PathBuf>,
+        shipped_bundle: Option<PathBuf>,
     ) -> Self {
         Self {
             fs,
             progress,
             settings,
             app_cache_dir,
+            shipped_bundle,
         }
     }
 
@@ -61,29 +71,26 @@ impl EmbeddedRunner {
     async fn build(&self) -> TectonicLibRunner {
         let t = self.settings.read().await.tectonic.clone();
         let mut lib = TectonicLibRunner::new(self.fs.clone(), self.progress.clone());
-        if let Some(cache) = pick_cache(
+        // 缓存目录口径与首启预热 / 缓存 GC **共用同一函数**（T22 B3：显式设置 > 环境变量 > 宿主默认）。
+        if let Some(cache) = latteset_tectonic::resolve_cache_dir(
             t.cache_dir.clone(),
             latteset_tectonic::cache_dir_from_env(),
             self.app_cache_dir.clone(),
         ) {
             lib = lib.with_cache_dir(cache);
         }
-        let bundle = explicit_bundle(t.bundle.as_deref())
-            .unwrap_or_else(latteset_tectonic::bundle_from_env);
+        let env_bundle = std::env::var_os(latteset_tectonic::BUNDLE_ENV)
+            .map(|_| latteset_tectonic::bundle_from_env());
+        let bundle = latteset_tectonic::resolve_source(
+            explicit_bundle(t.bundle.as_deref()),
+            env_bundle,
+            self.shipped_bundle.as_deref(),
+        );
         lib.with_bundle(bundle)
     }
 }
 
-/// 缓存目录的优先级：显式设置 > 环境变量 > 宿主默认（纯函数，单测直接打）。
-fn pick_cache(
-    explicit: Option<PathBuf>,
-    env: Option<PathBuf>,
-    host: Option<PathBuf>,
-) -> Option<PathBuf> {
-    explicit.or(env).or(host)
-}
-
-/// 设置里的 bundle 源（空串/纯空白按"未设置"处理 ⇒ 回落到环境变量/上游默认）。
+/// 设置里的 bundle 源（空串/纯空白按"未设置"处理 ⇒ 回落到环境变量/内置集/在线兜底）。
 fn explicit_bundle(raw: Option<&str>) -> Option<BundleSource> {
     raw.map(str::trim)
         .filter(|s| !s.is_empty())
@@ -101,28 +108,11 @@ impl CompileRunner for EmbeddedRunner {
 mod tests {
     use super::*;
 
-    /// 资源设置热生效的判据：显式设置压过环境变量与宿主默认（改完即生效、无需重启）。
-    #[test]
-    fn cache_priority_is_explicit_then_env_then_host() {
-        let explicit = PathBuf::from(r"E:\cache-explicit");
-        let env = PathBuf::from(r"E:\cache-env");
-        let host = PathBuf::from(r"E:\cache-host");
-
-        assert_eq!(
-            pick_cache(Some(explicit.clone()), Some(env.clone()), Some(host.clone())),
-            Some(explicit.clone()),
-            "设置里的缓存目录必须压过环境变量/宿主默认"
-        );
-        assert_eq!(
-            pick_cache(None, Some(env.clone()), Some(host.clone())),
-            Some(env),
-            "设置未填 ⇒ 环境变量次之"
-        );
-        assert_eq!(pick_cache(None, None, Some(host.clone())), Some(host), "最后才用宿主默认");
-        assert_eq!(pick_cache(None, None, None), None, "三者都没有 ⇒ 交给 runner 显式报错");
-    }
-
-    /// bundle 源：空串/纯空白 = 未设置（回落环境变量/上游默认）；非空即显式来源。
+    /// bundle 源：空串/纯空白 = 未设置（回落环境变量/内置集/在线兜底）；非空即显式来源。
+    ///
+    /// 完整优先级（显式 > 环境 > 内置集 > 在线兜底）的用例在 `latteset_tectonic::resolve_source`
+    /// —— 放那边才跑得起来（`cargo test -p latteset` 在本机有 Tauri 工具链边界，见 testing.md）。
+    /// 缓存目录优先级的单测同理在 `latteset_tectonic::resolve_cache_dir`（T22 B3 起三处共用）。
     #[test]
     fn bundle_comes_from_non_empty_setting_only() {
         assert_eq!(

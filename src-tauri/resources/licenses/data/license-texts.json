@@ -1,0 +1,71 @@
+{
+  "note": "规范许可证全文（canonical）。Rust crate 的逐 crate 许可文本去重存 LICENSES/rust/，C 依赖见 LICENSES/c-deps/。",
+  "texts": [
+    {
+      "id": "MIT-Tectonic",
+      "file": "LICENSES/mit-tectonic.txt",
+      "note": "Tectonic 项目 MIT 全文",
+      "sha256": "814a258f76e420b25cb3c07172eb2b3956f34cefbf0a650413b78e65c425f306"
+    },
+    {
+      "id": "LPPL-1.3c",
+      "file": "LICENSES/lppl-1.3c.txt",
+      "note": "LPPL 1.3c 2008-05-04",
+      "sha256": "ca3227f672053cb608959d7e1d476c7a13efea11be3f6e53758a68b650c918e8"
+    },
+    {
+      "id": "GPL-2.0",
+      "file": "LICENSES/gpl-2.0.txt",
+      "note": "GPLv2 全文",
+      "sha256": "8177f97513213526df2cf6184d8ff986c675afb514d4e68a404010521b880643"
+    },
+    {
+      "id": "GPL-3.0",
+      "file": "LICENSES/gpl-3.0.txt",
+      "note": "GPLv3 全文",
+      "sha256": "3972dc9744f6499f0f9b2dbf76696f2ae7ad8af9b23dde66d6af86c9dfb36986"
+    },
+    {
+      "id": "LGPL-2.1",
+      "file": "LICENSES/lgpl-2.1.txt",
+      "note": "LGPL 2.1 全文",
+      "sha256": "76568dd3f7e12b18900ce0e767b99e59f4956a2e709a33de899508693a6425d4"
+    },
+    {
+      "id": "GFL-1.0",
+      "file": "LICENSES/gfl-1.0.txt",
+      "note": "GUST Font License 1.0（= LPPL1.3c + 改名请求）",
+      "sha256": "49ea6cb9257bbee0a3979c48a774cd221550ac1c20c95549efe45fc99cc18050"
+    },
+    {
+      "id": "OFL-1.1",
+      "file": "LICENSES/ofl-1.1.txt",
+      "note": "SIL OFL 1.1 + AMS Reserved Font Names（随包 OFL 内容为 amsfonts）",
+      "sha256": "aa783fdd47e92743bafe79277ac4067d20339344dc5b64a09c2d0f869b2999dc"
+    },
+    {
+      "id": "GFDL-1.3",
+      "file": "LICENSES/gfdl-1.3.txt",
+      "note": "GNU FDL 1.3（beamer/pgf 文档部分）",
+      "sha256": "6adc7b4f7c74882dbe7564f7b8285ff194d760727ab30036dfe9704039fe32d7"
+    },
+    {
+      "id": "GPL-3.0-Fandol",
+      "file": "LICENSES/gpl-3.0-fandol.txt",
+      "note": "GPLv3 全文 + Fandol 字体嵌入例外（Fandol COPYING 原文）",
+      "sha256": "853b586f0d520493390e571431afaf36a5fbb27dcfd239338a7ee9b0505cb004"
+    },
+    {
+      "id": "MPL-2.0",
+      "file": "LICENSES/mpl-2.0.txt",
+      "note": "MPL 2.0 全文（取自 cargo registry 中 MPL-2.0 crate 的许可文件，去重后）",
+      "sha256": "fab3dd6bdab226f1c08630b1dd917e11fcb4ec5e1e020e2c16f83a0a13863e85"
+    },
+    {
+      "id": "Knuth-TeX-fonts",
+      "file": "LICENSES/knuth-tex-fonts.txt",
+      "note": "Knuth TeX/CM 字体许可声明（逐字取自 TL 的 CM 源文件 cmbase.mf 文件头；Knuth 许可的实质就是「未改名不得修改」的短声明 + 允许未修改分发）",
+      "sha256": "ab2699c4add2df5b3ee0520b92a72d36d5db6eae3310f5ec7a087592b86d3e49"
+    }
+  ]
+}

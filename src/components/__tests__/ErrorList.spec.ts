@@ -106,7 +106,17 @@ describe("ErrorList（超时一键重试，roadmap ㉕）", () => {
     expect(el.querySelector(".retry-btn")).toBeNull();
   });
 
-  it("非超时诊断不带 suggested 字段时不渲染按钮", async () => {
+  it("缺包诊断渲染「切到在线完整宏包集」按钮（T16 补包通道），点击后写在线地址并重编", async () => {
+    const order: string[] = [];
+    vi.spyOn(ipc, "compileNow").mockImplementation(async () => {
+      order.push("compileNow");
+      return null as never;
+    });
+    const settings = useSettingsStore();
+    vi.spyOn(settings, "update").mockImplementation(async (patch) => {
+      order.push(`update:${JSON.stringify(patch)}`);
+      return null as never;
+    });
     const compile = useCompileStore();
     compile.setErrors([
       {
@@ -117,9 +127,40 @@ describe("ErrorList（超时一键重试，roadmap ㉕）", () => {
         diagnosis: {
           kind: "missing_package",
           cause: "缺少宏包文件 nope.sty",
-          hint: "执行 tlmgr install nope 安装",
+          hint: "在「设置 → 引擎 → 宏包集来源」切到「在线完整宏包集」（需联网）后重新编译",
           suggested_timeout_secs: null,
           missing_file: "nope.sty",
+        },
+      },
+    ]);
+    const { el } = mount();
+    await nextTick();
+    const btn = el.querySelector<HTMLButtonElement>(".retry-btn");
+    expect(btn).toBeTruthy();
+    expect(btn!.textContent).toContain("在线完整宏包集");
+    btn!.click();
+    await nextTick();
+    await Promise.resolve();
+
+    expect(order[0]).toMatch(/^update:\{"bundle":"https:\/\/[^"]+"\}$/);
+    expect(order[1]).toBe("compileNow");
+    expect(ipc.compileNow).toHaveBeenCalledTimes(1);
+  });
+
+  it("非超时、非缺包诊断不渲染按钮", async () => {
+    const compile = useCompileStore();
+    compile.setErrors([
+      {
+        message: "! Undefined control sequence.",
+        file: "main.tex",
+        line: 3,
+        kind: "content_error",
+        diagnosis: {
+          kind: "undefined_control_sequence",
+          cause: "命令 \\foo 未定义",
+          hint: "检查拼写",
+          suggested_timeout_secs: null,
+          missing_file: null,
         },
       },
     ]);

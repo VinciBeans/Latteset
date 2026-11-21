@@ -1,0 +1,25 @@
+{
+  "generatedAt": "2026-11-20T15:29:34.699Z",
+  "auditDate": "2026-11-20",
+  "engine": {
+    "name": "tectonic",
+    "version": "0.17.0",
+    "formatSerial": 33,
+    "license": "MIT"
+  },
+  "bundle": {
+    "product": "src-tauri/resources/tectonic-bundle.zip",
+    "digest": "9e8c63ca5624438fba4bf4587afbfe3ddcfb82745769970ca2fe1f3ea392fde6",
+    "files": 517,
+    "uncompressedBytes": 54550792,
+    "zipBytes": 31908772,
+    "zipSha256": "962bb281b201b4780d67d43662adff32a30037815044b8287e6f7823ad5da119",
+    "source": "https://relay.fullyjustified.net/default_bundle_v33.tar",
+    "texLiveLineage": "tectonic-src/bundles/bundles/texlive2024-0312"
+  },
+  "vcpkg": {
+    "triplet": "x64-windows-static-release",
+    "pinRev": "a62ce77d56ee07513b4b67de1ec2daeaebfae51a"
+  },
+  "licensingDoc": "docs/dev/tectonic-licensing.md"
+}

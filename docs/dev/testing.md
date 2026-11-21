@@ -8,16 +8,17 @@
 |---|---|---|
 | 纯逻辑 | `cargo test -p latteset-core` | 调度器语义（队列合并 / 超时 / 重试 / 终止）、`.log` 解析与诊断、设置模型与合并（含 v3 默认值 / 旧 `lib_form` 键忽略）、根文件探测、大纲、SyncTeX 纯逻辑（路径与回落分类）、XDV 页哈希、公式扫描与片段装配 |
 | 文件系统 / 存储 / watch | `cargo test -p latteset-infra` | 文件系统实现、notify 监视、设置存储（**v1→v2→v3 迁移**：备份名 / notice 矩阵 / 幂等 / 只读 / 损坏 / BOM）、manifest 解析；子进程 runner 的 32 个用例已随整文件删除 |
-| 内嵌 Tectonic（单测） | `cargo test -p latteset-tectonic`（需 vcpkg env；或 `npm run lib:test`） | format 键 / bundle 三类失败文案 / 页哈希接线 / D3① 外部工具提示 / D3③ 页进度（XDV 完整页）/ D3② 超时证据 / D7 模板提示 / Quick 预算闸门 / SyncTeX 主输入补丁 |
-| 内嵌 Tectonic（真编） | `cargo test -p latteset-tectonic -- --ignored` | **闸门 = 编进来 + 有可用 bundle**（不再探测 PATH 上的 `tectonic`）：format 生成 + 真 PDF 出图 + 页进度 + `compile-notice` 断言。T9 实测 1 个用例通过（5.33 s） |
-| headless（CLI / MCP） | `cargo test -p latteset-server`（`-- --ignored` 真编译） | `Session`（打开 / 读写 / 树 / 大纲 / 非 UTF-8 / 编译拒绝 / 配置目录 / D4 资源优先级）；lib **12 passed / 4 ignored** + cli **8 passed**（T9 实测） |
+| 内嵌 Tectonic（单测） | `cargo test -p latteset-tectonic`（需 vcpkg env；或 `npm run lib:test`） | format 键 / bundle 三类失败文案 / **bundle 来源优先级（显式 > env > 随包 > 在线）与不静默回退** / **在线源预热零网络判定** / 预热门闩与失败静默 / **缓存 GC** / 页哈希接线 + **A 闸门（Full 复用 + `.pdfid` 身份，含反例）** / D3① 外部工具提示 / D3③ 页进度（XDV 完整页）/ D3② 超时证据 / D7 模板提示 / Quick 预算闸门 / SyncTeX 主输入补丁 |
+| 内嵌 Tectonic（真编） | `cargo test -p latteset-tectonic -- --ignored` | **闸门 = 编进来 + 有可用 bundle**（不再探测 PATH 上的 `tectonic`）：真编 / **预热后首编（`format_ms=0` + 页哈希一致）** / **随包 `Shipped` verbatim 真编**。T22 复核 **3 个用例全过（17.07 s）**；crate 全集 **65 passed / 3 ignored** |
+| headless（CLI / MCP） | `cargo test -p latteset-server`（`-- --ignored` 真编译） | `Session`（打开 / 读写 / 树 / 大纲 / 非 UTF-8 / 编译拒绝 / 配置目录 / D4 资源优先级）；lib **12 passed / 4 ignored** + cli **8 passed**（T22 复核） |
 | MCP 协议链路 | `cargo test -p latteset-server --test mcp_stdio` | **真实二进制 + stdio 管道**：握手 / `tools/list` / 工具往返 / 错误语义 / 逐调用切项目（**5 passed + 1 个 `#[ignore]`** 编译用例，闸门同上） |
-| 前端 | `npm run test`（`test:watch` 监视） | stores（project/editor/compile/preview/outline）、composables（useAutoSave / useIdleConvergence / useSyncTex / useTheme）、组件（ErrorList / RootFilePicker / SettingsPanel / StatusBar）、services（paths / fuzzy / draftPatch）；T9 实测 **17 files / 151 tests** |
-| 全仓 Rust（唯一入口） | `npm run lib:test` | 四个 crate 一起跑；T9 实测 **377 passed / 6 ignored**（6 个真编在 `--ignored` 下全过） |
+| 前端 | `npm run test`（`test:watch` 监视） | stores（project/editor/compile/preview/outline）、composables（useAutoSave / useIdleConvergence / useSyncTex / useTheme）、组件（ErrorList / RootFilePicker / SettingsPanel / StatusBar）、services（paths / fuzzy / draftPatch）；T22 复核 **17 files / 161 tests** |
+| 全仓 Rust（唯一入口） | `npm run lib:test` | 四个 crate 一起跑：core 269 + infra 40 + server 12+8+5（mcp_stdio）+ tectonic 65；T22 复核 **399 passed / 8 ignored**（8 个真编在各自 `--ignored` 下全过） |
+| **性能基线（六档，现行）** | `node scripts/bench-embedded.mjs`（先 `npm run lib:cli`、`node scripts/gen-bench-projects.mjs`） | 内嵌 release CLI 的六档 × `cold-format` / `cold-project` / `noop` / `noop2` / `edit`（A 闸门命中）/ `edit2`（真实改动），跨项目 format 命中、进程地板；每档 3 次中位 + min/max + 原始值；输出 JSON + Markdown；超预算/复现差>10%/档失败退出码 1。口径、预算与未覆盖项见 §性能基线 |
 | 交付前 | `npm run build` | `copy:pdf-worker` + `vue-tsc --noEmit` + `vite build` |
-| 绑定生成物 | 启动一次 debug 构建自动导出 `src/bindings.ts`（Tauri 测试二进制在本机起不来，`export_bindings` 捷径不可用）；T9 核对 13/13 PASS（命令 18 条 / 事件 9 个与 Rust 一致） |
+| 绑定生成物 | 启动一次 debug 构建自动导出 `src/bindings.ts`（Tauri 测试二进制在本机起不来，`export_bindings` 捷径不可用）；T22 复核 **13/13 PASS**（命令 **19 条**，含 `openLicenses` / 事件 9 个与 Rust 一致） |
 
-模块分工与各用例的判据见 [modules.md](./modules.md)；延迟预算报告用 `node scripts/bench.mjs`（**历史脚本，仍驱动 latexmk/xelatex**，见下「脚本失效说明」）。
+模块分工与各用例的判据见 [modules.md](./modules.md)；**现行**性能基线用 `node scripts/bench-embedded.mjs`（内嵌 release CLI，见下「性能基线（六档）」），`node scripts/bench.mjs` 是 latexmk/xelatex 时代的历史脚本（见「脚本失效说明」）。
 
 > **构建前置（内嵌唯一后必读）**：任何 `cargo` / `tauri` 命令都需要 vcpkg 环境——统一走 `scripts/with-tectonic-lib.ps1`（先 `npm run lib:check` 自检），**不要裸跑 `cargo test`**（build script 会因缺 5 个环境变量 panic）。本机若在受限沙箱会话（工作区带 Low 完整性标签，报 `cl D8050` / `LNK1104`），还要先把 `TMP`/`TEMP` 指到工作区内目录，见 [troubleshooting.md](../troubleshooting.md)。正常终端/CI 不需要这一步。
 
@@ -153,11 +154,45 @@ node scripts/synctex-report.mjs --projects=<dir> --recompile
 
 **注意**：`test_file/e2e/drivers/`（msedgedriver 二进制）与 `test_file/e2e/node_modules/` 已 gitignore。
 
+## 性能基线（六档，内嵌 release CLI）
+
+阶段③起的**性能事实来源**。测量仪器 = `scripts/bench-embedded.mjs`（夹具由 `scripts/gen-bench-projects.mjs` 生成、不入库；脚本入库）。
+
+```powershell
+$env:TMP = $env:TEMP = '<repo>\src-tauri\target\.tmp'   # 受限沙箱会话才需要（Low 完整性标签）
+npm run lib:cli                                        # release CLI（先 npm run lib:check）
+node scripts/gen-bench-projects.mjs                    # 六档夹具，首次/重建时
+node scripts/bench-embedded.mjs                        # 六档 × 3 次 → JSON + Markdown（约 2–3 分钟）
+node scripts/bench-embedded.mjs --compare=test_file/phase3/baseline.json \
+  --out=test_file/phase3/baseline-run2.json --md=test_file/phase3/BASELINE-run2.md   # 第二遍做复现比较
+node scripts/bench-embedded.mjs --tiers=tiny,thesis    # 只跑指定档（跨项目 format 命中按给定顺序）
+```
+
+**口径**（每个采样内部按顺序跑；每档 3 次取中位，另记 min/max 与全部原始值）：
+
+| 口径 | 做法 | 预期 |
+|---|---|---|
+| `cold-format` | 清 `<cache>/formats` + 项目 `tmp/` 与主 PDF → Full | 真首编，含 ≈1 s format 生成 |
+| `cold-project` | 保留 formats、只清项目产物 → Full | format 命中（`format_ms=0`） |
+| `noop` / `noop2` | 紧接再 Full 两次（无改动） | 热路径稳态；`noop` 与 `noop2` 中位差应 ≤3% |
+| `edit` | **注释级编辑**（不改排版）→ `--quick` | A 闸门命中：`reused_pdf=true`，跳过 XDV→PDF 转换 |
+| `edit2` | **真实改动**（正文插一句话）→ `--quick` | A 不命中、转换照跑；多文件/目录档通常 2 趟 |
+| `cross-project` | 每档第一次编译时 format 由上一档留下 | 跨项目 format 命中（首档除外） |
+| 进程地板 | `help` / `settings` / `open` 各 3 次 | release CLI 启动地板 ≈10 ms |
+
+- **测量字段**：`elapsed_ms` 取 CLI JSON（产品口径）；墙钟由 Node `spawnSync` 前后 hrtime 得到（进程开销 = 墙钟 − elapsed）；分阶段取 stderr 的 `库形态分阶段耗时` 行，其中 `format_ms` / `typeset_ms` / `convert_ms` / `engine_total_ms` 是引擎段，`prep_ms`（bundle 打开 + 主文件读）/ `post_ms`（PDF 原子替换 + 页哈希缓存写）/ `preview_ms`（编译中流式出图累计，计入 typeset 窗口）是 T14 新增的**归因打点**（只加日志，不改产品语义）。
+- **预算（[design.md](../design.md) §2.6，**分类口径已由产品负责人采纳**）**：按**实测页数**分类——≤8 页 = 小文档（1 s 优秀 / 2 s 及格）、>8 页 = 大文档（3 s 优秀 / 5 s 及格）。用于两处判定：`cold-format` 的 `elapsed_ms` 中位、以及`编辑→出图 e2e = debounce(500) + edit2 中位 + preview 估算(100)`。**T22 环境税清零版**：`tiny`/`small-article` cold PASS + e2e EXCELLENT；`graphics` 小文档 cold 1.50 PASS / e2e 0.90 EXCELLENT；`thesis` EXCELLENT；`multifile`（74 页）归大文档后 cold 2.94 s / e2e 2.01 s 均 EXCELLENT（cold 距 3 s 仅 64 ms，**临界**）。**已知硬缺口**：`large`（125 页）cold 6.41 s 超 5 s（保留 5 s 线、不放宽，登记于 [design.md](../design.md) §2.8）；T19 绝对值含 ~244 ms/进程 fontconfig 税，**不得跨环境比较绝对值**。
+- **退出码**：`0` 通过；`1` 有档超预算 / 两轮复现中位差 >10%（`--compare=`）/ 有档编译失败；`2` 前置缺失（manifest 或 release CLI）。`--allow-over-budget` 只记录不判红（用于「先取基线数字」）。
+- **可复现要求**：两轮独立运行**同档同口径中位差 <10%**；单轮内 3 次离群（>20%）**保留并标注**，不剔除。
+- **证据**：`test_file/phase3/BASELINE.md`（报告，可直接摘进 design.md §2.8）+ `baseline.json`（原始数据）+ `logs-embedded/<tier>/`（每次编译的 CLI JSON 与 stderr）。**这些是工作区证据，不入库。**
+- **bundle 覆盖**：默认本地目录 bundle `test_file/tectonic-bundle`（`--bundle=` 可换）；bundle 必须覆盖六档夹具（`small-article` 需要 `lmroman9-regular` 等字体，见 T14b 的 bundle 补全）。
+
 ## e2e / 工具脚本什么时候用
 
 索引与完整清单见 [scripts/README.md](../../scripts/README.md)；验收常用的几个：
 
-- `bench.mjs`——冷编译 / 空跑 / 编辑触发 / 端到端的延迟预算报告（超预算退出码 1）；真机第 6 步与它拼成端到端。
+- **`bench-embedded.mjs`**——**现行**性能基线（内嵌 Tectonic release CLI，六档 × cold-format/cold-project/noop/noop2/edit/edit2 + 跨项目 format + 进程地板）；超预算/复现差>10% 退出码 1。见上节。
+- `bench.mjs`——⚠ **历史**：latexmk/xelatex 时代的冷编译 / 空跑 / 编辑触发 / 端到端报告（数据只能当历史基线复现）。
 - `synctex-report.mjs`——SyncTeX 双向精度基线（见上）。
 - `validate-pdf.mjs`——PDF 页数 / 文本层断言，内嵌引擎真编复核用（**别在引擎刚退出时立刻量**）。
 - `check-determinism.mjs`——同一份源码连跑两次 PDF 是否逐字节相同。
@@ -183,4 +218,82 @@ node scripts/synctex-report.mjs --projects=<dir> --recompile
 [.github/workflows/ci.yml](../../.github/workflows/ci.yml) 两个档：
 
 - **check**（`ubuntu-latest`，push / PR）：`npm ci` → `npm run build`（含 `vue-tsc --noEmit`）→ `npm run test` → `cargo test -p latteset-core` → `cargo test -p latteset-infra`。**不跑 `latteset-server`**（server 已非可选依赖内嵌 Tectonic，Linux 上会去探测 pkg-config 的 C 链；R11 决策：挪到 Windows 档）。真实编译的 `#[ignore]` 用例**不在**这里跑。
-- **build-windows**（`windows-latest`）：checkout 钉 rev 的 vcpkg → bootstrap → 缓存 `installed/`+`downloads/` → `vcpkg install` 六端口 → `with-tectonic-lib.ps1 -Mode check` → `-Mode test`（**全仓 Rust 测试，含 server 与内嵌 crate**）→ `-Mode tauri build`（含 NSIS 安装包冒烟，ADR-0003 分发路径）。**阶段②起没有独立的 `build-windows-tectonic-lib` 档**——内嵌档就是默认档，代价是每次 push/PR 都要装六端口（缓存命中时只剩校验开销）。内嵌构建细节见 [tectonic-library.md](./tectonic-library.md) §2。
+- **build-windows**（`windows-latest`）：checkout 钉 rev 的 vcpkg → bootstrap → 缓存 `installed/`+`downloads/` → `vcpkg install` 六端口 → `with-tectonic-lib.ps1 -Mode check` → **无条件 `Build release CLI`（`-Mode cli`，T22 B2：它是代表集 bundle 生成与离线首编的共同前置，不得塞进缓存分支）** → **代表集缓存/重建（`test_file/tectonic-bundle`，digest `9e8c63ca…`；未命中则 `gen-bench-bundle.mjs` 重建）** → `make-bundle.mjs` 打包产品 zip + 自校验 → **离线首编（不可用代理 + 随包 zip + validate-pdf）** → **许可资源门禁 `make-notices.mjs --check`** → `-Mode test`（全仓 Rust 测试）→ `-Mode tauri build`（NSIS/MSI）→ **安装包体积门禁（≤200 MB，记录进 `installer-size.json`）**。阶段②起没有独立的 `build-windows-tectonic-lib` 档。内嵌构建细节见 [tectonic-library.md](./tectonic-library.md) §2。
+
+## ③段 T16：离线首编与产品精简宏包集（随安装包）
+
+**产品默认 = 随包精简集**（ADR-0016 候选 A）。下面三条是本机/CI 的验收命令；**前置**：`npm run lib:cli`（release CLI）+ 产品 zip 已生成（`node scripts/make-bundle.mjs`，源目录 `test_file/tectonic-bundle` 由 `scripts/gen-bench-bundle.mjs` 生成）。
+
+```powershell
+# ① 产品 zip：确定性打包 + 自校验 + 体积上限（CI 门禁，raw zip ≤120 MiB）
+node scripts/make-bundle.mjs --max-zip-mb=120 ; node scripts/make-bundle.mjs --verify
+
+# ② 断网首编（内置集 + 空缓存 + 不可用代理 ⇒ 能编过就证明全程没走网络）
+$proj = "$env:TEMP\offline-first"; New-Item -ItemType Directory -Force $proj | Out-Null
+Set-Content "$proj\main.tex" -Encoding utf8 -Value @'
+\documentclass[UTF8]{ctexart}
+\begin{document}
+断网首编：你好，Latteset。\par
+{\heiti 黑体} {\kaishu 楷体} {\fangsong 仿宋} {\bfseries 加粗}
+\end{document}
+'@
+$env:LATTESET_TECTONIC_BUNDLE = "file:///$((Resolve-Path 'src-tauri/resources/tectonic-bundle.zip').Path.Replace('\','/'))"
+$env:LATTESET_TECTONIC_CACHE  = "$env:TEMP\offline-cache"
+$env:HTTPS_PROXY = 'http://127.0.0.1:9'; $env:HTTP_PROXY = 'http://127.0.0.1:9'
+src-tauri/target/release/latteset-cli.exe --project $proj compile
+node scripts/validate-pdf.mjs --pdf "$proj/main.pdf" --expect-pages 1 --expect-text '你好' --expect-text '黑体'
+
+# ③ 二次编译（预热后应明显更快）与安装包体积（NSIS 冒烟，≤200 MB 产品上限）
+src-tauri/target/release/latteset-cli.exe --project $proj compile
+Get-Item src-tauri/target/release/bundle/nsis/*.exe | Select-Object Name,Length
+```
+
+- **验收判据（T16 首验 + T19 终版）**：断网首编 **exit 0 / 4.4 s**（T19；中文 Fandol 四款 + `validate-pdf` 全 PASS，0 U+FFFD）；二次 1.6 s（T16）/ 1.2 s（T19）；缺包文档给可操作提示且**不自动换源**，显式切「在线完整」后 exit 0（首编含联网取包 344 s）；**最终安装包（T19）NSIS 88.46 MiB / MSI 109.63 MiB（≤200 MB 门禁）**。证据 `test_file/phase3/t16-verify/`、`test_file/phase3/t19-tauri-build.log`。
+- **不在本机验的**：`cargo test -p latteset`（外壳测试二进制在本机启动即失败，§已知边界）⇒ bundle 来源优先级/GC/预热的单测放在 `latteset-tectonic`（`cargo test -p latteset-tectonic`，T22 复核 **65 passed / 3 ignored**），外壳侧只做 `cargo check -p latteset --tests` 编译校验。
+- **bundle 内容/覆盖/体积**：见 `test_file/phase3/BUNDLE.md`；**上线前许可门禁**见 [tectonic-licensing.md](./tectonic-licensing.md) §8。
+
+## ③段 T21：第三方声明与 GPL 字体源码（G-L3 验收）
+
+**产物落点**：`src-tauri/resources/licenses/`（随安装包，`bundle.resources` 映射到安装目录 `licenses/`）。**入库清单**：`THIRD-PARTY-NOTICES.md`、`manifest.json`、`LICENSES/`（规范全文 + 去重后的 Rust/C 依赖许可文本）、`sources/`（Fandol 六款字体源码 + zapfding AFM）、`patches/`（Tectonic 对 TL 的 patch）、`data/`（可复核清单：`meta.json` / `bundle-packages.json` / `rust-deps.json` / `c-deps.json` / `patched-tl-files.json` / `sources.json`）。
+
+```powershell
+# ① 离线确定性复核：NOTICE/manifest 必须与 data+LICENSES+sources 逐字节一致（CI 门禁）
+node scripts/make-notices.mjs --check
+
+# ② 关键完整性（--check 已内置，手工抽查等价）
+Get-ChildItem src-tauri/resources/licenses/sources/fandol -Recurse -File -Filter cidfont.ps   # 6 个
+Get-ChildItem src-tauri/resources/licenses/sources/zapfding; Get-Item src-tauri/resources/licenses/sources/zapfding/pzdr.afm
+Get-Content src-tauri/resources/licenses/THIRD-PARTY-NOTICES.md -TotalCount 20
+
+# ③ 安装包内可见（G-L3 验收 = 解包可见；About 入口由 T21b frontend 接，资源路径 licenses/）
+Get-Item src-tauri/target/release/bundle/nsis/*.exe | Select-Object Name,Length
+# 解包抽查（7z/WinRAR 任意）确认 licenses/THIRD-PARTY-NOTICES.md 与 licenses/sources/fandol/*/cidfont.ps 存在
+
+# ④ 换 bundle / 换依赖后的重采集（开发机；需 TeX Live 2026 + cargo registry + vcpkg installed + tectonic-src）
+node scripts/make-notices.mjs --collect
+git status --short src-tauri/resources/licenses   # 采集结果必须整体入库、review diff
+```
+
+- **验收判据（本机实测 2026-11-20）**：`--collect` 生成 308 文件 / 48.95 MiB（NOTICE 16.2 KB；Rust 389 crate 许可去重 261 份文本；C 依赖 11 port 全文；Fandol 6 套源码 47.77 MiB）；`--check` 重算逐字节一致；安装包内 `licenses/` 可见；NSIS 体积见下方新数字；G-L1..L9 状态见 [tectonic-licensing.md](./tectonic-licensing.md) §5。
+- **残余风险（已登记，不谎报）**：Fandol 源码取自社区镜像 `Yixf-Self/fandol-fonts@b9330082…`（上游团队未单独发布源码包）；**未做「源码 → OTF」重建验证**（需 Adobe AFDKO）；Knuth 许可正文取自 TL 的 CM 源文件头声明（该许可本身是短声明）。见许可审计 §8.6。
+
+## ③段 T17/T18/T19 + T22 受控重测：六档基线、预热与门禁（2026-11-21）
+
+**六档基线**（命令见上「性能基线（六档）」）：**T22 环境税清零版**——release CLI、同夹具/bundle，六档 × 每口径 3 次 × **三轮独立运行**取"中位的中位"；测量期用最小合法 fontconfig 配置 + 可写缓存目录清除了 ~0.24 s/进程宿主字体扫描税（仅测量环境变量、产品不变）；同档同口径三轮极差除 tiny 两条热路径（绝对 21–24 ms）外 ≤7.2%。完整数字进 [design.md](../design.md) §2.8，原始数据 `test_file/phase3/BASELINE.md` §0.1（`baseline-fc-run1.json` / `baseline-fc.json` / `baseline-fc-run3.json`）。**预算分类按实测页数**（≤8 页 small / >8 页 large，产品负责人已采纳）：`multifile`（74 页）归 large 后 cold 2.94 s / e2e 2.01 s 均 EXCELLENT（cold 距 3 s 仅 64 ms，**临界**）；**唯一硬缺口 `large` cold 6.41 s 超 5 s（保留 5 s 线、不放宽）**。**T14→T19 的 +200–240 ms/进程差已归因：fontconfig 宿主字体扫描环境税（2026-11-21）**——T19 绝对值含税、跨版本绝对比较作废；T17 相对收益仍有效：L4b（A 闸门扩 Full）`noop` −7.9%…−51.6%；L5（预览默认 1 帧）`preview_ms` 311→150 / 266→131 ms。
+
+**首启预热 + 启动分段**（T18 实现、T19 复测）：
+
+```powershell
+# release GUI 直启（隔离 cache/config），RUST_LOG=info 读分段日志
+$env:TMP = $env:TEMP = '<repo>\src-tauri\target\.tmp'
+$env:LATTESET_TECTONIC_CACHE = '<repo>\test_file\phase3\tcache-gui'
+$env:RUST_LOG = 'info'
+& '<repo>\src-tauri\target\release\latteset.exe'
+# 期望日志：startup 分段：watcher 已启动 → setup 完成 → setup 末尾（后台预热已派发）→ webview Ready
+#           首启 format 预热完成 prewarm_ms=…；<cache>/formats/<digest>-latex-33.fmt 出现
+```
+
+- 验收判据（T19）：进程→setup/Ready **126 ms**、后台预热 **992 ms**（不挡窗口）、`.fmt` **24,451,466 B** 落盘、首编 **`format_cached=true / format_ms=0`**；温启动 **144–171 ms**（`AlreadyCached`）；预热前后页哈希逐页相等（`--ignored` 真编用例 `prewarm_then_first_compile_hits_format_cache`）。
+- **两个已修缺陷（T19）**：① `lib:test` 特性耦合（`network-bundle` 打开后，在线源 + 冷缓存时预热会联网）→ `bundle::prewarm_plan` 零网络零写判定；② 随包 zip 的 Windows verbatim 路径（`\\?\…`）⇒ `path_to_file_url` 未剥前缀、`Url::to_file_path()` 失败 → 修复后预热/默认离线编译双绿（单测 + `Shipped` 真编）。**T22 B2**：CI 的 release CLI 构建改为**无条件前置**（代表集缓存命中但 rust-cache 无 release 产物时，离线首编曾必红）。**T22 B3**：GC / runner / 预热共用 `resolve_cache_dir`（设置 > env > 宿主），当前 digest 由同一 bundle 解析器给出、解析不出时 GC 整体不动。
+- **门禁数字（T22 复核）**：core 269 / infra 40 / tectonic **65+3ign** / server **12+4ign+8** / mcp_stdio **5+1ign** / `lib:test` **399 passed / 8 ignored**；`npm run build` 0 error；vitest **17 files / 161 tests**；bindings **13/13**（命令 19 条）；安装包体积 **NSIS 88.46 MiB / MSI 109.63 MiB ≤200 MB**。
+- **未覆盖**（详见 `test_file/phase3/REPORT-gates.md` §8）：NSIS 安装版冷/温启动与窗口内可编辑/About 点击 `[未测-会话环境限制]`；在线 → 随包**反向**切换未单独重测；真实超时真编、makeindex/glossaries 真编 `[未测]`；GC 与预热/编译的**并发对抗样例**未构造（单测已覆盖保留当前/解析不出不动）。**每进程 +200–240 ms 已归因：fontconfig 环境税（2026-11-21），不是代码回归。**

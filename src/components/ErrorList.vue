@@ -9,6 +9,7 @@ import { useCompileStore } from "../stores/compile";
 import { useEditorStore } from "../stores/editor";
 import { useSettingsStore } from "../stores/settings";
 import { ipc } from "../services/ipc";
+import { ONLINE_BUNDLE_URL } from "../services/bundleSource";
 import type { ErrorEntry } from "../bindings";
 
 const compile = useCompileStore();
@@ -66,6 +67,38 @@ async function raiseTimeoutAndRetry(secs: number) {
     retrying.value = false;
   }
 }
+
+// ---- 缺包补全通道一键切换（T16 / ADR-0016 候选 A）----
+//
+// 内置精简集只覆盖代表性文档集（不是完整 TeX Live）：检出"缺宏包/类/文件/字体"诊断时，
+// 给一个显式切到**在线完整宏包集**的按钮（写死默认在线地址 → 重编）。
+// **不做静默回退**（ADR-0016 决策 2）：用户点之前绝不改来源；点了就是显式选择。
+const switching = ref(false);
+
+const MISSING_BUNDLE_KINDS = new Set([
+  "missing_package",
+  "missing_class",
+  "missing_file",
+  "missing_font",
+]);
+
+/** 这条错误是否属于"可能被内置精简集覆盖不全"的缺文件类。 */
+function isMissingFromBundle(e: ErrorEntry): boolean {
+  return e.diagnosis?.kind ? MISSING_BUNDLE_KINDS.has(e.diagnosis.kind) : false;
+}
+
+async function switchToOnlineBundleAndRetry() {
+  if (switching.value) return;
+  switching.value = true;
+  try {
+    await settings.update({ bundle: ONLINE_BUNDLE_URL });
+    await ipc.compileNow();
+  } catch (e) {
+    console.error("切换到在线宏包集并重试失败：", e);
+  } finally {
+    switching.value = false;
+  }
+}
 </script>
 
 <template>
@@ -110,6 +143,17 @@ async function raiseTimeoutAndRetry(secs: number) {
               @click.stop="raiseTimeoutAndRetry(g.entry.diagnosis!.suggested_timeout_secs!)"
             >
               {{ retrying ? "重试中…" : `提高到 ${g.entry.diagnosis.suggested_timeout_secs}s 并重试` }}
+            </button>
+          </div>
+          <!-- 缺包补全通道（T16 / ADR-0016 候选 A）：显式切在线完整宏包集后重编，不静默回退 -->
+          <div class="action" v-if="isMissingFromBundle(g.entry)">
+            <button
+              class="retry-btn"
+              :disabled="switching"
+              title="把宏包集来源显式切到「在线完整宏包集」（需联网）后立即重编"
+              @click.stop="switchToOnlineBundleAndRetry"
+            >
+              {{ switching ? "切换中…" : "切到在线完整宏包集并重试" }}
             </button>
           </div>
         </div>

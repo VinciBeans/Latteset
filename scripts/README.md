@@ -16,7 +16,10 @@
 | 脚本 | 用途 |
 |---|---|
 | `gen-bench-projects.mjs` | 生成六档基准夹具（夹具不入库，脚本入库）→ `test_file/projects/bench/*` |
-| `bench.mjs` | 延迟预算报告：冷编译 / 空跑 / 编辑触发 / 端到端 |
+| **`gen-bench-bundle.mjs`** | **代表集 bundle 生成器**（阶段③ T14b/T16）：按固定夹具名单（六档 + beamer + biblatex/bibtex + 中文 Fandol 四款 + lmodern 全字号）用 release CLI 从上游 `default_bundle_v33.tar` 按需取文件，落成 `test_file/tectonic-bundle`（DirBundle + `SHA256SUM`，digest/文件数/字节可复现；`--phase=gen|install|validate|all`、`--seed-cache` 复用缓存）。覆盖/体积见 `test_file/phase3/BUNDLE.md` |
+| **`make-bundle.mjs`** | **产品精简宏包集打包器**（阶段③ T16）：把代表集打成**确定性 `.zip`**（固定时间戳/排序/deflate，单文件随安装包；上游 `ZipBundle` 直接可读）→ `src-tauri/resources/tectonic-bundle.zip`；输出 digest/文件数/字节/`zipSha256`，`--verify` 自校验、`--max-zip-mb` 体积门禁。发布入口 `with-tectonic-lib.ps1 -Mode tauri build` 会自动先跑它 |
+| **`bench-embedded.mjs`** | **现行性能基线入口**（内嵌 Tectonic release CLI，阶段③起）：六档 × `cold-format` / `cold-project` / `noop` / `noop2` / `edit`（注释级编辑，A 闸门命中）/ `edit2`（真实改动，Quick）/ 跨项目 format 命中 / 进程地板；每档 3 次取中位并保留 min/max 与全部原始值、离群标注；解析 CLI JSON + stderr `库形态分阶段耗时`（含 `prep_ms`/`post_ms`/`preview_ms` 打点）；一条命令产出 JSON + 可摘进 docs 的 Markdown；超预算 / 两轮复现中位差 >10%（`--compare=`）/ 档编译失败 ⇒ 退出码 1。**口径与产物说明见 [testing.md](../docs/dev/testing.md) 与 `test_file/phase3/BASELINE.md`（工作区证据，不入库）** |
+| `bench.mjs` | ⚠ **历史入口**（latexmk/xelatex 时代）：冷编译 / 空跑 / 编辑触发 / 端到端。产品已不走 latexmk 路径，数字只能当历史基线复现，判现行实现请用 `bench-embedded.mjs` |
 | `bench-single-pass.mjs` | 编辑期"单趟 xelatex" vs 完整 latexmk 的 A/B（roadmap ㉘ 的收益评估） |
 | `check-determinism.mjs` | 构建确定性：同一份源码连跑两次，PDF 是否**逐字节**相同（`--without-epoch` 可复现非确定性） |
 | `validate-pdf.mjs` | PDF 页数 / 文本层断言（内嵌引擎真编复核用） |

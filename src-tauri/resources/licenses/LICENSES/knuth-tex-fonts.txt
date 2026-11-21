@@ -1,0 +1,4 @@
+% THIS IS THE OFFICIAL COMPUTER MODERN SOURCE FILE cmbase.mf BY D E KNUTH.
+% IT MUST NOT BE MODIFIED IN ANY WAY UNLESS THE FILE NAME IS CHANGED!
+
+（以上为 Computer Modern / TeX 字体许可声明原文，摘自 TeX Live 2026 fonts/source/public/cm/cmbase.mf 文件头。该许可要求：可以复制与分发**未修改**的文件；修改后必须更改文件名。完整上游发布见 CTAN systems/knuth（https://ctan.org/pkg/knuth）。本安装包内的 CM 字体文件（cmr*.pfb/tfm、cmmi*、cmsy*、cmex* 等）未做任何修改。）

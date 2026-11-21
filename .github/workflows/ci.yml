@@ -121,6 +121,100 @@ jobs:
         shell: pwsh
         run: ./scripts/with-tectonic-lib.ps1 -Mode check
 
+      # B2（T22 review）：release CLI 是下面两处的**共同前置**，必须在两条缓存路径上都存在：
+      #   ① `Restore or regenerate representative bundle` 的未命中分支（gen-bench-bundle 要 `latteset-cli`）；
+      #   ② `Offline first compile`（直接执行 `src-tauri/target/release/latteset-cli.exe`）。
+      # 之前只在①的分支里构建 ⇒ **代表集缓存命中但 rust-cache 没有 release 产物时，②必红**。
+      # 所以提到这里无条件构建一次（命中 rust-cache 时 cargo 增量、仅秒级）。
+      - name: Build release CLI (bundle gen + offline first compile prerequisite)
+        shell: pwsh
+        run: ./scripts/with-tectonic-lib.ps1 -Mode cli
+
+      # ---------------- T16：随包产品精简宏包集（ADR-0016 候选 A）----------------
+      # 代表集是 517 文件 / 52 MiB（gitignore，可从上游 bundle 按需取文件重建）。CI 缓存它，
+      # 缓存键带**内容版本 token**；命中后还要用 digest 核对，避免"旧缓存混进发行物"。
+      - name: Cache representative bundle
+        uses: actions/cache@v4
+        with:
+          path: test_file/tectonic-bundle
+          key: bench-bundle-v33-9e8c63ca-${{ runner.os }}
+          restore-keys: |
+            bench-bundle-v33-
+
+      - name: Restore or regenerate representative bundle
+        shell: pwsh
+        run: |
+          $expected = '9e8c63ca5624438fba4bf4587afbfe3ddcfb82745769970ca2fe1f3ea392fde6'
+          $sumFile = 'test_file/tectonic-bundle/SHA256SUM'
+          $have = if (Test-Path $sumFile) { (Get-Content $sumFile -Raw).Trim() } else { '' }
+          if ($have -ne $expected) {
+            Write-Host "代表集缺失或 digest=$have ≠ $expected ⇒ 从上游 bundle 重建（需联网，5–15 分钟）"
+            # release CLI 已由上面的 `Build release CLI` 步骤无条件构建（B2），这里不再重复构建。
+            node scripts/gen-bench-bundle.mjs --phase=gen
+            if ($LASTEXITCODE -ne 0) { throw "gen-bench-bundle --phase=gen 失败" }
+            node scripts/gen-bench-bundle.mjs --phase=install
+            if ($LASTEXITCODE -ne 0) { throw "gen-bench-bundle --phase=install 失败" }
+          } else {
+            Write-Host "代表集缓存命中（digest=$have）"
+          }
+
+      # 产品 zip（随安装包）：确定性打包 + 自校验 + 体积上限（≤120 MiB 原始 zip；安装包总上限 200 MB 另测）
+      - name: Pack product bundle (zip)
+        shell: pwsh
+        run: |
+          node scripts/make-bundle.mjs --max-zip-mb=120
+          if ($LASTEXITCODE -ne 0) { throw "make-bundle 失败" }
+          node scripts/make-bundle.mjs --verify
+          if ($LASTEXITCODE -ne 0) { throw "make-bundle --verify 失败" }
+
+      # T21（G-L3）：第三方声明 / 许可全文 / GPL 字体 Corresponding Source 必须与随包物一致，
+      # 且随安装包分发（tauri.conf resources 已带 licenses/）。--check 是纯离线确定性比对。
+      - name: Check third-party notices (G-L3)
+        shell: pwsh
+        run: |
+          node scripts/make-notices.mjs --check
+          if ($LASTEXITCODE -ne 0) { throw "make-notices --check 失败" }
+          $lic = 'src-tauri/resources/licenses'
+          if (-not (Test-Path "$lic/THIRD-PARTY-NOTICES.md")) { throw "缺 THIRD-PARTY-NOTICES.md" }
+          if (-not (Test-Path "$lic/manifest.json")) { throw "缺 licenses/manifest.json" }
+          $cid = @(Get-ChildItem "$lic/sources/fandol" -Recurse -File | Where-Object { $_.Name -eq 'cidfont.ps' })
+          if ($cid.Count -lt 6) { throw "Fandol Corresponding Source 不全（cidfont.ps $($cid.Count)/6）" }
+          if (-not (Test-Path "$lic/sources/zapfding/pzdr.afm")) { throw "缺 zapfding AFM 源码" }
+          $bytes = (Get-ChildItem $lic -Recurse -File | Measure-Object Length -Sum).Sum
+          $files = (Get-ChildItem $lic -Recurse -File | Measure-Object).Count
+          Write-Host ("licenses+sources = {0:N2} MiB / {1} files" -f ($bytes / 1MB), $files)
+          if ($bytes -gt 80MB) { throw "licenses/sources 体积 {0:N2} MiB 超 80 MiB 预算（T21）" -f ($bytes / 1MB) }
+
+      # 离线首编验收（docs/dev/testing.md 的 CI 版）：内置精简集 + 空缓存 + **不可用代理**
+      # ⇒ 能编过 = 全程没走网络（ADR-0016 候选 A 的"离线开箱"判据）。
+      - name: Offline first compile with shipped bundle
+        shell: pwsh
+        run: |
+          $proj = Join-Path $env:RUNNER_TEMP 'offline-first'
+          New-Item -ItemType Directory -Force $proj | Out-Null
+          Set-Content -Path (Join-Path $proj 'main.tex') -Encoding utf8 -Value @'
+          \documentclass[UTF8]{ctexart}
+          \begin{document}
+          断网首编：你好，Latteset。\par
+          {\heiti 黑体} {\kaishu 楷体} {\fangsong 仿宋} {\bfseries 加粗}
+          \end{document}
+          '@
+          $zip = (Resolve-Path 'src-tauri/resources/tectonic-bundle.zip').Path.Replace('\','/')
+          $env:LATTESET_TECTONIC_BUNDLE = "file:///$zip"
+          $env:LATTESET_TECTONIC_CACHE = Join-Path $env:RUNNER_TEMP 'offline-cache'
+          $env:HTTPS_PROXY = 'http://127.0.0.1:9'
+          $env:HTTP_PROXY = 'http://127.0.0.1:9'
+          $env:TMP = $env:RUNNER_TEMP
+          $env:TEMP = $env:RUNNER_TEMP
+          $out = & (Resolve-Path 'src-tauri/target/release/latteset-cli.exe').Path --project $proj compile
+          $code = $LASTEXITCODE
+          Write-Host $out
+          if ($code -ne 0) { throw "离线首编失败（exit $code）" }
+          $pdf = Join-Path $proj 'main.pdf'
+          if (-not (Test-Path $pdf)) { throw "离线首编没有产出 PDF" }
+          node scripts/validate-pdf.mjs --pdf $pdf --expect-pages 1 --expect-text '你好' --expect-text '黑体'
+          if ($LASTEXITCODE -ne 0) { throw "validate-pdf 未通过" }
+
       # 全量 Rust 测试（core / infra / headless-server / 内嵌 tectonic crate）。
       # 原 Ubuntu 档的 headless 用例、原 `build-windows-tectonic-lib` 档的库形态单测都并到这里。
       - name: Rust tests (all crates, embedded engine)
@@ -133,3 +227,22 @@ jobs:
       - name: Tauri build (NSIS installer)
         shell: pwsh
         run: ./scripts/with-tectonic-lib.ps1 -Mode tauri build
+
+      # T16 体积门禁（ADR-0016 候选 A）：安装包 ≤200 MB（产品负责人 2026-11-20 给的数），
+      # 同时打印"随包 bundle zip / 安装包 / 二者差"的实测账（发布记录用）。
+      - name: Record installer size (gate ≤200 MB)
+        shell: pwsh
+        run: |
+          $installer = Get-ChildItem 'src-tauri/target/release/bundle/nsis/*.exe' -ErrorAction SilentlyContinue |
+            Sort-Object LastWriteTime -Descending | Select-Object -First 1
+          if (-not $installer) { throw "找不到 NSIS 安装包（tauri build 没产出？）" }
+          $bundleZip = Get-Item 'src-tauri/resources/tectonic-bundle.zip'
+          $limit = 200MB
+          $mb = { param($b) [math]::Round($b / 1MB, 2) }
+          Write-Host ("NSIS installer: {0} = {1} MiB" -f $installer.Name, (& $mb $installer.Length))
+          Write-Host ("shipped bundle : {0} = {1} MiB" -f $bundleZip.Name, (& $mb $bundleZip.Length))
+          if ($installer.Length -gt $limit) {
+            throw ("安装包 {0} MiB > 上限 200 MB（T16 体积门禁）" -f (& $mb $installer.Length))
+          }
+          @{ installer = $installer.Length; bundleZip = $bundleZip.Length; limit = $limit } |
+            ConvertTo-Json | Set-Content -Path 'test_file/phase3/installer-size.json' -Encoding utf8

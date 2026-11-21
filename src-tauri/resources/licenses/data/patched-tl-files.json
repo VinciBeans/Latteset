@@ -1,0 +1,50 @@
+{
+  "note": "G-L6：Tectonic 对 TeX Live 的 patch 清单（来自 tectonic-src bundles/bundles/texlive2024-0312/patches/texlive/）。随包集合中实际只包含 latex.ltx。",
+  "files": [
+    {
+      "file": "latex.ltx",
+      "patch": "latex.ltx.diff",
+      "bundled": true,
+      "originalSource": "TeX Live 2024-03-12 的 latex-base（CTAN macros/latex/base，2024 快照；Tectonic bundles/bundles/texlive2024-0312 取自该版本）",
+      "license": "LPPL 1.3c",
+      "changeSummary": "Tectonic 对 latex.ltx 打补丁以支持其「格式化/预编译 format」与跨平台确定性输出（见 patches/latex.ltx.diff）；文件名保持 latex.ltx（LPPL 1.3c 允许分发修改版，但须明确标注为修改版并附变更说明）。",
+      "licenseImpact": "修改版仍按 LPPL 1.3c 分发（LICENSES/lppl-1.3c.txt）；变更说明与 diff 随包，原件可从上方 originalSource 获取。",
+      "patchPath": "patches/latex.ltx.diff",
+      "patchSha256": "83e9f27ad334208c58fbf9237488f3e07eb15cda24b3e3bf157ee8d5e660d4e3",
+      "bundledSha256": "70ba1d0d113a986e4966e5a7ebb5afa3fbb17843ec4395bd0187d2aa266b5646"
+    },
+    {
+      "file": "listings.sty",
+      "patch": "listings.sty.diff",
+      "bundled": false,
+      "originalSource": "CTAN macros/latex/contrib/listings（TL 2024-03-12）",
+      "license": "LPPL 1.3",
+      "changeSummary": "不在随包代表集内（未分发），仅登记 Tectonic 对该文件的 patch 存在。",
+      "licenseImpact": "未随包 ⇒ 无分发义务；补足完整 bundle 时需重新审计。",
+      "patchPath": "patches/listings.sty.diff",
+      "patchSha256": "4beb0d8453aa8faef77d27a7044686720311dd45592d81de760a490b3120f133"
+    },
+    {
+      "file": "fontawesome.sty",
+      "patch": "fontawesome.sty.diff",
+      "bundled": false,
+      "originalSource": "CTAN fonts/fontawesome（TL 2024-03-12）",
+      "license": "LPPL 1.3c / OFL（字体部分）",
+      "changeSummary": "不在随包代表集内（未分发），仅登记 patch 存在。",
+      "licenseImpact": "未随包 ⇒ 无分发义务。",
+      "patchPath": "patches/fontawesome.sty.diff",
+      "patchSha256": "4c525257216d26e109c12c0d1dc0719e0118514e1504966ebc3ee95fbb8df78b"
+    },
+    {
+      "file": "fithesis-mu-base.sty",
+      "patch": "fithesis-mu-base.sty.diff",
+      "bundled": false,
+      "originalSource": "CTAN macros/latex/contrib/fithesis（TL 2024-03-12）",
+      "license": "LPPL 1.3c",
+      "changeSummary": "不在随包代表集内（未分发），仅登记 patch 存在。",
+      "licenseImpact": "未随包 ⇒ 无分发义务。",
+      "patchPath": "patches/fithesis-mu-base.sty.diff",
+      "patchSha256": "0fabb9350a03fac9a184773c73a8cecca1790a900f2261fe8cf593873e535ef2"
+    }
+  ]
+}

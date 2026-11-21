@@ -26,7 +26,10 @@
 | 引擎「找不到文件 / 改了没生效」（**历史：latexmk/kpathsea 专属**） | 引擎读了什么：四个通道 |
 | headless（CLI / MCP） | [cli.md](./cli.md) + 常驻二进制锁 |
 | 前端探针 / 脚本的坑（WS 探针、PowerShell 自动变量、format、`<select>`、死 CSS） | 前端与脚本杂项 |
-| 精简 bundle 不含 `beamer.cls` / 配本地 bundle | 实验室 bundle 缺 beamer |
+| 精简 bundle 不含 `beamer.cls` / 配本地 bundle | 实验室 bundle 缺 beamer（历史；③段随包集已覆盖） |
+| 编译报缺宏包 / 内置宏包集缺失或损坏 / 缓存变大（③段） | 缺包切在线 / 内置集缺失 / 缓存 GC |
+| 启动日志 `failed to parse local path`（随包宏包集打不开） | Windows verbatim 路径（T19 已修） |
+| 看性能数字：为什么 `multifile`/`large` 超线？ | 预算/基线口径（按实测页数分类；large cold 已知硬缺口） |
 
 ## 无 GPU 虚拟机白屏：首帧呈现竞态
 
@@ -560,18 +563,57 @@ Get-ChildItem src -Recurse -Filter *.vue | ForEach-Object {
 
 **处理**：把规则挪回 `<style scoped>` 内。判据不看截图看几何（`webview_execute_js` 读 `getBoundingClientRect` 与 `getComputedStyle(btn).marginLeft`）：按钮右缘应等于面板右缘减内边距、`marginLeft` 应是**算出来的 px 值**（`auto` 被解析掉）而不是 `auto`。
 
-## 实验室的精简 bundle 不含 `beamer.cls`：选「幻灯片」会编不过（非缺陷）
+## 实验室的精简 bundle 不含 `beamer.cls`：选「幻灯片」会编不过（**历史**；③段已修）
 
-**症状**：向导里选「幻灯片」建出的骨架，在本机（引擎 = 内嵌 Tectonic + `LATTESET_TECTONIC_BUNDLE=test_file/tectonic-bundle`）编译**失败得很快（0.35 s）**，错误列表一条：
+> **③段（2026-11-20）更新**：随安装包的产品精简集已覆盖 `beamer.cls`/`ctexbeamer`/`biblatex`/`lmroman5–17`/Fandol 四款（517 文件，见 [dev/testing.md](./dev/testing.md) 的离线首编验收与 `test_file/phase3/BUNDLE.md`）——本节描述的"424 文件夹具缺 beamer"只适用于**历史实验室夹具**；若现在仍见到 `File 'beamer.cls' not found`，说明内置集缺失/损坏或用了自备旧 bundle，按下面两条新条目处理。
+
+**症状（历史）**：向导里选「幻灯片」建出的骨架，在本机（引擎 = 内嵌 Tectonic + `LATTESET_TECTONIC_BUNDLE=test_file/tectonic-bundle`）编译**失败得很快（0.35 s）**，错误列表一条 `! LaTeX Error: File 'beamer.cls' not found.`。
+
+**原因（历史）**：当时的手工裁剪 bundle 只有 424 个文件，`beamer.cls` 不在。**环境变量已收口**：`LATTESET_TECTONIC_LIB` 与 `tectonic.lib_form` 已在阶段②删除；现役资源覆盖只剩 `LATTESET_TECTONIC_BUNDLE` / `LATTESET_TECTONIC_CACHE`（优先序：显式设置 > 环境变量 > **随包内置集** > 在线兜底）。
+
+## 编译报缺宏包（`File 'X.sty' not found`）：内置精简集不是完整 TeX Live（③段 T16）
+
+**症状**：文档用到一个随包精简集里没有的宏包（例：`enumitem`、`listings`、`tikz` 之外的专用包），编译失败，错误列表给出 `缺少宏包文件 X.sty`。
+
+**这是设计内的边界，不是缺陷**：产品默认 bundle 是**代表性文档集**（ADR-0016 候选 A），覆盖常用文档（论文/幻灯片/中文/图表/参考文献），不是 2.88 GB 的完整 TeX Live。**处理（按推荐顺序）**：
+
+1. **设置 → 引擎 → 宏包集来源 → 「在线完整」**（显式选择，需联网；首次编译会按需取包，之后离线复用缓存）；错误面板上对缺文件类诊断也有一键「切到在线完整宏包集并重试」。
+2. 或把缺失文件补进**本地目录 bundle**（目录需自带 `SHA256SUM`；在设置里把来源指到它）。
+3. 若文件是**模板自带**的（`.cls`/logo），确认「打开项目」选的是模板根目录；GitHub 源码版模板可能要先跑模板的 `.ins` 生成 `.cls`。
+
+⚠ **不会静默回退**（ADR-0016 决策 2）：内置集缺失/损坏时只报错并给"修复安装 / 显式切在线"，**不会**偷偷改用网络；同样，缺包时也不会自动换源——必须由你在设置里显式选。
+
+## 启动/编译报「内置宏包集缺失或损坏」（③段 T16）
+
+**症状**：`内置宏包集文件不存在：<资源目录>/tectonic-bundle.zip`（或"打开失败/无法识别"），编译立即失败。
+
+**原因**：安装包应该带 `tectonic-bundle.zip`（NSIS/MSI 资源，30.43 MiB）。文件被杀毒软件隔离、被手动删除、或安装包打包漏了都会这样；**不会**自动改用网络（决策 2）。
+
+**处理**：① 重新安装/修复安装；② 或在「设置 → 引擎 → 宏包集来源」显式切到「在线完整」或本地目录；③ 开发构建（`tauri dev`）会回退仓库内产物（`src-tauri/resources/tectonic-bundle.zip` 或 `test_file/tectonic-bundle`），若都没有才用在线兜底。
+
+## 缓存目录变大：format / 网络 bundle 缓存会自动 GC（③段 T16）
+
+**口径**：`<cache>/formats`（每份约 24.45 MB）、`<cache>/data/<digest>/`（在线 bundle 按需取到的文件）、`<cache>/hashes/` 在**应用启动时**按「**当前 bundle digest**（由同一 bundle 解析器给出：随包/显式/在线各自的 digest）+ 最近 N 份」清理；`N` = 环境变量 `LATTESET_CACHE_KEEP`（默认 3，范围 1..50）。**解析不出当前 digest 时整体不动**（不猜、不删）；**还没预热的缓存不会动**（避免把首次取到的 bundle 数据误删）。缓存目录与编译/预热**共用同一解析**（设置 > `LATTESET_TECTONIC_CACHE` > 宿主缓存），自定义 `cache_dir` 时 GC 作用在同一目录（T22 B3）。GC 只在启动、无编译在跑时执行。
+
+## 启动日志报 `failed to parse local path` / 随包宏包集打不开（Windows verbatim 路径，T19 已修）
+
+**症状**：release 版启动日志出现
 
 ```
-! LaTeX Error: File `beamer.cls' not found.
+WARN startup 分段：format 预热失败（静默：首编会自行生成） prewarm_ms=0
+     msg=内置宏包集打开失败（\\?\E:\…\tectonic-bundle.zip）：failed to parse local path
 ```
 
-**原因**：`test_file/tectonic-bundle` 是**为离线复现手工裁出来的最小 bundle**（424 个文件）——`ctexart.cls`/`book.cls`/`article.cls`/`amsmath.sty` 都在，**`beamer.cls` 不在**。骨架本身没问题：同一份 `slides.tex` 用 **TeX Live 2026 的 `xelatex`** 编译得到 `Output written on slides.pdf (1 page)`、exit 0（**历史对照：xelatex 已删除，该命令不再属于产品路径**）；上游标准（网络）bundle 也含 beamer。
+随后缓存目录没有 `.fmt`，默认（随包精简集）编译整体不可用。
 
-**处理**：
+**原因**：release 下 `resource_dir()` 返回 Windows **verbatim 长路径** `\\?\E:\…`；旧实现 `path_to_file_url` 只把 `\` 换成 `/`、没剥前缀，拼出 `file:////?/E:/…`，上游 `Url::to_file_path()` 把 `?` 当 host 段解析失败。**不是安装包损坏、不是 bundle 缺文件**。
 
-- **不要去改骨架**（`core::newfile` 的 beamer 分支是对的），也**不要**为了这个把 beamer 塞进精简 bundle —— 那会把"最小离线 fixture"变成又一个宏包仓库；
-- 要在本机验幻灯片这条路，只能换 **bundle**（引擎固定为内嵌、不可切，ADR-0015）：在 `settings.json` 里把 `tectonic.bundle` 指向上游/完整 bundle（目录 bundle 写 `file:///E:/…`，**绝对 Windows 路径 `E:\…` 会被上游当 URL scheme 吃掉**，见 [design.md](./design.md) §3.2），或用 `LATTESET_TECTONIC_BUNDLE` 起 dev；
-- **环境变量已收口**：`LATTESET_TECTONIC_LIB` 与设置里的 `tectonic.lib_form` 都已在阶段②删除——设了前者只会在启动日志收到一条「已删除，忽略」warn（`warn_removed_env_overrides`，幂等），**不会再改变形态**。现役资源类覆盖只剩 `LATTESET_TECTONIC_BUNDLE` / `LATTESET_TECTONIC_CACHE`（优先序：设置 > 环境变量 > 宿主默认）。
+**处理**：升级到含修复的版本（`path_to_file_url` 先剥 `\\?\` / `\\.\` / `\\?\UNC\`；单测 + `Shipped` 真编覆盖）。若在开发构建里遇到，先确认 `src-tauri/resources/tectonic-bundle.zip` 存在、且路径确实是 `\\?\` 形态（`Resolve-Path`/`canonicalize` 后）；不要手工改 zip。**T19 修复后默认离线路径恢复**（GUI 直启预热成功、`<cache>/formats/<digest>-latex-33.fmt` 出现，证据 `test_file/phase3/t19-startup-fixed/`）。
+
+## 预算 / 基线口径（③段 T19 提出、T22 复核）：按实测页数分类；`large` cold 是已知硬缺口
+
+**分类口径（2026-11-21 产品负责人已采纳）**：预算按**实测页数**，不按文档意图——**≤8 页 = 小文档**（1 s 优秀 / 2 s 及格）、**>8 页 = 大文档**（3 s 优秀 / 5 s 及格）。因此 `multifile`（74 页）归大文档，T22 清零版 cold **2.94 s** / e2e **2.01 s** 均 EXCELLENT（cold 距 3 s 仅 64 ms，**临界**）；**不要再用旧口径（small 2 s 线）把它判红**。
+
+**已知硬缺口**：`large`（125 页）**cold 6.41 s**（含税 6.63 s）超 5 s（引擎排版上限量级；T18 预热后 GUI 首编仍 ≈5.4 s）——**保留 5 s 线、不放宽阈值**，只作回归对照，不是可修的配置问题。
+
+**读数的正确用法**：① 现行基线入口 = `node scripts/bench-embedded.mjs`（release CLI，六档 × cold-format/cold-project/noop/noop2/edit/edit2，n=3 中位），**必须与 `test_file/phase3/BASELINE.md` §0.1 同口径**（最小 fontconfig 配置 + 可写缓存，否则每进程多付 ~244 ms 字体扫描税）；数字见 [design.md](./design.md) §2.8；② **跨版本别直接比绝对值**——T14→T19 的 **+200–240 ms/进程**差已归因：**fontconfig 宿主字体扫描环境税（2026-11-21）**（T19 绝对值含税、不能与无税数字比；相对收益与分项字段仍有效：`convert_ms=0`、`preview_ms` 减半）；③ GUI 首编已由 T18 后台预热移出 format 生成（首编 `format_ms=0`），冷编数字里仍含 format 成本，别把它当"排版变慢"。

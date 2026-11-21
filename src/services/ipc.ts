@@ -79,4 +79,12 @@ export const ipc = {
    * 窗口首次出现那一下由后端在 `setup` 里直接从磁盘设置定色，所以这里失败不影响可用性。
    */
   setWindowTheme: (theme: UiTheme) => unwrap(commands.setWindowTheme(theme)),
+  /**
+   * 打开随安装包分发的**第三方许可材料**（设置 → 关于）。
+   *
+   * 路径**不来自前端**：后端从安装资源目录解析 `licenses/` 下的固定落点（`THIRD-PARTY-NOTICES.md`
+   * 或 `sources/`）再交给系统打开；这里只传"看哪一个"。缺资源时后端回可行动错误（重装 / 手动路径），
+   * 调用方必须显示出来，不静默。
+   */
+  openLicenses: (kind: "notices" | "sources") => unwrap(commands.openLicenses(kind)),
 };

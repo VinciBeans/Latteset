@@ -33,7 +33,7 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Condvar, Mutex, OnceLock};
 use std::time::{Duration, Instant, SystemTime};
 
 use async_trait::async_trait;
@@ -42,9 +42,10 @@ use latteset_core::log_parser::{
     parse_log, source_release_hint,
 };
 use latteset_core::project::FileSystem;
-use latteset_core::scheduler::{CompileProgress, CompileRunner};
+use latteset_core::scheduler::{CompileProgress, CompileRunner, NoProgress};
 use latteset_core::types::{CompileKind, CompileOutcome, CompileRequest, ErrorEntry, ErrorKind};
 use tectonic_bridge_core::{CoreBridgeLauncher, MinimalDriver};
+use tectonic_bundles::Bundle;
 use tectonic_engine_bibtex::{BibtexEngine, BibtexOutcome};
 use tectonic_engine_xdvipdfmx::XdvipdfmxEngine;
 use tectonic_engine_xetex::{TexEngine, TexOutcome};
@@ -264,14 +265,79 @@ fn capture_len(shared: &SharedCapture, name: &str) -> usize {
     shared.lock().unwrap_or_else(|e| e.into_inner()).files.get(name).map_or(0, Vec::len)
 }
 
-/// 功能点 **A** 的判据：页逐页相同 **且** 项目根确实已有 PDF **且** 本次是 Quick。
+/// PDF 产物身份（大小 + mtime 纳秒）：证明"磁盘上的 `<stem>.pdf` 仍是我们上次写出的那一份"。
 ///
-/// 闸门与子进程档一致（`latteset-infra/src/runner.rs` 的 `finish_success`）：只对 Quick 跳过
-/// 转换与拷贝 —— Full 的语义就是"完整刷新一遍"。`prev` 为 `None`（首轮/口径不符）或页数不同
-/// 一律不复用（`prev == Some(hashes)` 同时挡住这两种）。
-fn should_reuse_pdf(wants_full: bool, hashes: &[u64], prev: Option<&[u64]>, pdf_exists: bool) -> bool {
-    !wants_full && !hashes.is_empty() && prev == Some(hashes) && pdf_exists
+/// 为什么需要它（D-L4b）：A 闸门原来只对 Quick 生效，Full 一定重跑转换（"完整刷新一遍"）。
+/// 产品已批准 Full 在**页哈希全同**时也跳过转换；但"页哈希相同"只证明排版结果没变，**不证明**
+/// 项目根那个 PDF 还是我们产出的 —— 用户可能手改/替换过它。所以再加一道磁盘身份判据：
+/// 上次转换成功后把 PDF 的 `(len, mtime)` 记进 `tmp/<stem>.tectonic.pdfid`；下次只有当磁盘
+/// PDF 的身份与记录一致（未被手改/替换/删除）才复用。缺记录（老项目/清过 tmp）⇒ 保守转换一次。
+///
+/// **已知限制（T22 B4，已接受）**：判据是 `(len, mtime_ns)`，不哈希 PDF 内容。若有人手工改 PDF
+/// 且**同时**伪造出完全相同长度与 mtime（常规编辑/复制/另存都会改 mtime），则检测不到、会错误复用。
+/// 这是需要刻意伪造的低风险场景；不引入整份 PDF 哈希是为了不给每次 Full 复用加一次 O(PDF) 读 + 哈希。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct PdfIdentity {
+    len: u64,
+    mtime_ns: u128,
 }
+
+/// 取磁盘文件的产物身份；文件不存在/不是文件/时间戳不可读 ⇒ `None`（= 不能证明可复用）。
+fn pdf_identity(path: &Path) -> Option<PdfIdentity> {
+    let md = std::fs::metadata(path).ok()?;
+    if !md.is_file() {
+        return None;
+    }
+    let mtime_ns = md.modified().ok()?.duration_since(SystemTime::UNIX_EPOCH).ok()?.as_nanos();
+    Some(PdfIdentity { len: md.len(), mtime_ns })
+}
+
+/// PDF 身份记录的落点：`<tmp>/<stem>.tectonic.pdfid`（与页哈希缓存同目录；不进 `tmp/` 以外的任何地方）。
+fn pdf_identity_cache_path(tmp_dir: &Path, stem: &str) -> PathBuf {
+    tmp_dir.join(format!("{stem}.{}.pdfid", latteset_core::types::ENGINE_ID))
+}
+
+/// 身份记录的口径版本（与页哈希缓存一样带首行标记；不认识就当"没有记录"⇒ 保守转换）。
+const PDF_IDENTITY_VERSION: &str = "v1";
+
+fn format_pdf_identity(id: &PdfIdentity) -> String {
+    format!("{PDF_IDENTITY_VERSION}\n{}\t{}\n", id.len, id.mtime_ns)
+}
+
+fn parse_pdf_identity(text: &str) -> Option<PdfIdentity> {
+    let mut lines = text.lines();
+    if lines.next()?.trim() != PDF_IDENTITY_VERSION {
+        return None;
+    }
+    let line = lines.find(|l| !l.trim().is_empty())?;
+    let (len, mtime) = line.trim().split_once('\t')?;
+    Some(PdfIdentity { len: len.parse().ok()?, mtime_ns: mtime.parse().ok()? })
+}
+
+/// A 闸门的第三条件：磁盘 PDF 与上次记录的产物身份一致（未被手工改/替换/删除）。
+fn pdf_unchanged_since_we_wrote_it(pdf: &Path, identity_cache: &Path) -> bool {
+    let cached = std::fs::read_to_string(identity_cache)
+        .ok()
+        .and_then(|t| parse_pdf_identity(&t));
+    cached.zip(pdf_identity(pdf)).is_some_and(|(recorded, on_disk)| recorded == on_disk)
+}
+
+/// 功能点 **A** 的判据（D-L4b：Quick/Full 共用）：页逐页相同 **且** 磁盘 PDF 仍是上次产出的那一份。
+///
+/// 反例全部挡住：`prev` 为 `None`（首轮/口径不符）或页数/页序不同（`prev == Some(hashes)`）、
+/// 空表（"无法判定"，不是"零页"）、PDF 被手工改/替换/删除（身份不一致）。
+fn should_reuse_pdf(hashes: &[u64], prev: Option<&[u64]>, pdf_identity_ok: bool) -> bool {
+    !hashes.is_empty() && prev == Some(hashes) && pdf_identity_ok
+}
+
+/// `LATTESET_A_FULL=0|false|off|no` 可关掉"Full 也复用"（A/B 复核用；默认开 = 产品已批准行为）。
+fn full_reuse_enabled() -> bool {
+    match std::env::var("LATTESET_A_FULL") {
+        Ok(v) => !matches!(v.trim().to_ascii_lowercase().as_str(), "0" | "false" | "off" | "no"),
+        Err(_) => true,
+    }
+}
+
 
 /// 捕获表里某个输出的字节（页哈希要用**原始字节**，不能走文本解码）。
 fn capture_bytes(shared: &SharedCapture, name: &str) -> Option<Vec<u8>> {
@@ -851,7 +917,11 @@ fn run_engines(
     cancel: Arc<AtomicBool>,
     // 已上报过的最大页数（D3③）：趟边界写页进度，超时路径据此补页标记证据。
     pages_seen: Arc<AtomicU32>,
+    // T14 基线打点：主文件读耗时（异步侧 `compile()` 里已计时；prep_ms = 它 + 本函数里的 bundle 打开）。
+    root_read_ns: u128,
 ) -> CompileOutcome {
+    // T18：后台 format 预热可能正在生成同一份缓存；先等它收尾，避免"预热 + 首编"各跑一趟 initex。
+    wait_for_prewarm();
     let xdv_name = format!("{stem}.xdv");
     let pdf_name = format!("{stem}.pdf");
     let log_name = format!("{stem}.log");
@@ -882,6 +952,10 @@ fn run_engines(
         None
     };
 
+    // T14 基线打点：prep_ms = bundle 打开（detect_bundle + digest）+ 主文件读（异步侧已计时）。
+    // 只用于测量归因，不参与任何判定（语义不变）。
+    let prep_started = Instant::now();
+
     // ② bundle：`detect_bundle(source, only_cached, Some(产品缓存目录))`（§3.4 第 2 步）。
     let mut bundle = match open_bundle(&bundle_source, only_cached, cache_dir.clone()) {
         Ok(b) => b,
@@ -896,6 +970,8 @@ fn run_engines(
         },
         None => None,
     };
+    // T14 基线打点：prep 到此结束（bundle 打开 + digest + 主文件读）。
+    let prep_ms = (root_read_ns + prep_started.elapsed().as_nanos()) as f64 / 1e6;
     // format 缓存落点先算好（在生产 `io` 之前，`cache_dir`/`digest` 还没被 move 走）：format 趟
     // 收 dump 时要用它，与 `io.format_path` 走**同一个**函数，避免两处各拼一次名字。
     //
@@ -916,6 +992,9 @@ fn run_engines(
     // 页哈希缓存落点（A 的判据）：**必须先算** —— `tmp_dir` 紧接着就被 `TectonicIo` 拿走了。
     // 缓存文件名带引擎段（`ENGINE_ID`，已知债 #25）；口径定义在 core，与子进程档共用。
     let pages_cache = latteset_core::xdv::pages_cache_path(&tmp_dir, &stem);
+    // PDF 产物身份记录（D-L4b：Full 也复用时的"磁盘 PDF 未被手改"证据）：同样必须在 `tmp_dir`
+    // 被 `TectonicIo` 拿走之前算好。
+    let pdf_id_cache = pdf_identity_cache_path(&tmp_dir, &stem);
     // bib 判据缓存落点与 `.bib` 的解析根（同上：`project_root`/`tmp_dir` 紧接着被 `TectonicIo` 拿走）。
     let bib_sig = bib_signature_path(&tmp_dir, &stem);
     let bib_root = project_root.clone();
@@ -953,6 +1032,9 @@ fn run_engines(
     // 页哈希与 A 的判定（闭包内赋值，收尾处用）：见 ⑥ 段。
     let mut page_hashes: Vec<u64> = Vec::new();
     let mut reuse_pdf = false;
+    // T14 基线打点：编译中预览（流式出图）累计耗时与次数（只测量，不影响闸门）。
+    let mut preview_ns: u128 = 0;
+    let mut preview_paints: u32 = 0;
     let engine_result: Result<(), String> = {
         let mut launcher = CoreBridgeLauncher::new(&mut driver, &mut status);
         (|| -> Result<(), String> {
@@ -1168,7 +1250,10 @@ fn run_engines(
                 // 而这一趟刚收尾 ⇒ 引擎全局锁是空的。此刻出图既新鲜（前缀就是刚排完的那份）
                 // 又不排队、不拖慢下一趟。放在循环末尾而不是开头，正是为了这个"确定"。
                 if let Some(painter) = preview_painter.as_mut() {
+                    let paint_started = Instant::now();
                     painter.paint(first_pass);
+                    preview_ns += paint_started.elapsed().as_nanos();
+                    preview_paints += 1;
                 }
             }
             if let Some(tool) = unsupported_tool {
@@ -1201,18 +1286,23 @@ fn run_engines(
             let prev_pages = std::fs::read_to_string(&pages_cache)
                 .ok()
                 .and_then(|t| latteset_core::xdv::parse_pages_cache(&t));
-            // A：页逐字节未变 **且** 项目根确实已有 PDF（用户可能手删过）⇒ 跳过转换与拷贝。
-            // 闸门与子进程档一致：只对 **Quick**（编辑触发）做 —— Full 的语义就是"完整刷新一遍"。
-            reuse_pdf = should_reuse_pdf(
-                wants_full,
-                &page_hashes,
-                prev_pages.as_deref(),
-                pdf_dst.is_file(),
-            );
+            // A（D-L4b）：页逐字节未变 **且** 磁盘 PDF 仍是上次产出的那一份 ⇒ 跳过转换与拷贝。
+            // - Quick（编辑触发）：一直允许（"内容没变的编辑"的快速路径）；
+            // - Full：产品已批准（2026-11-20）在同样条件下也跳过 —— 页哈希证明排版结果等价，
+            //   磁盘身份证明 PDF 未被用户手改/替换/删除，两者同时成立才复用；
+            // - `LATTESET_A_FULL=0` 可关（A/B 复核）。
+            let allow_full_reuse = !wants_full || full_reuse_enabled();
+            reuse_pdf = allow_full_reuse
+                && should_reuse_pdf(
+                    &page_hashes,
+                    prev_pages.as_deref(),
+                    pdf_unchanged_since_we_wrote_it(&pdf_dst, &pdf_id_cache),
+                );
             if reuse_pdf {
                 info!(
                     pages = page_hashes.len(),
-                    "页哈希与上次逐页相同：跳过 XDV→PDF 转换与拷贝（复用现有产物）"
+                    requested_full = wants_full,
+                    "页哈希与上次逐页相同，且磁盘 PDF 未被改动：跳过 XDV→PDF 转换与拷贝（复用现有产物）"
                 );
             } else {
                 let mut pdf_engine = XdvipdfmxEngine::default();
@@ -1246,6 +1336,8 @@ fn run_engines(
 
     match engine_result {
         Ok(()) => {
+            // T14 基线打点：post_ms = PDF 原子替换 + 页哈希缓存写（成功路径收尾，不含 synctex 修补）。
+            let post_started = Instant::now();
             // A（复用现有 PDF）时跳过拷贝：产物是上一次那一个，页哈希已证明它与本次排版逐页等价。
             if !reuse_pdf {
                 let pdf = files.get(&pdf_name).map(Vec::as_slice).unwrap_or(&[]);
@@ -1281,6 +1373,19 @@ fn run_engines(
                     debug!(path = %pages_cache.display(), "写页哈希缓存失败（下次会多转换一次）：{e}");
                 }
             }
+            // D-L4b：记下**本次写出的** PDF 身份（复用路径不写：磁盘 PDF 没变，记录继续有效）。
+            // 失败只记 debug：最坏结果是下一轮保守转换一次，不该让编译失败。
+            if !reuse_pdf {
+                match pdf_identity(&pdf_dst) {
+                    Some(id) => {
+                        if let Err(e) = std::fs::write(&pdf_id_cache, format_pdf_identity(&id)) {
+                            debug!(path = %pdf_id_cache.display(), "写 PDF 身份记录失败（下次会多转换一次）：{e}");
+                        }
+                    }
+                    None => debug!(path = %pdf_dst.display(), "取 PDF 身份失败（下次会多转换一次）"),
+                }
+            }
+            let post_ms = post_started.elapsed().as_nanos() as f64 / 1e6;
             debug!(
                 pages = page_hashes.len(),
                 reused_pdf = reuse_pdf,
@@ -1304,6 +1409,13 @@ fn run_engines(
                 passes = pass_count,
                 pages = page_hashes.len(),
                 reused_pdf = reuse_pdf,
+                // T14 基线打点（只测量，不参与判定）：
+                // prep_ms = bundle 打开 + 主文件读；post_ms = PDF 原子替换 + 页哈希缓存写；
+                // preview_ms = 编译中流式出图累计耗时（计入 typeset 窗口内）。
+                prep_ms = prep_ms,
+                post_ms = post_ms,
+                preview_ms = preview_ns as f64 / 1e6,
+                preview_paints = preview_paints,
                 req_ram = n_ram,
                 req_mem = n_mem,
                 req_disk = n_disk,
@@ -1370,6 +1482,8 @@ impl CompileRunner for TectonicLibRunner {
         }
 
         // 判据 3：主文件**直喂内存**（方案 §4.1 HL-1）。读取在 async 侧（走注入的 FileSystem）。
+        // T14 基线打点：主文件读耗时（prep_ms 的一半；bundle 打开在阻塞段里另计）。
+        let root_read_started = Instant::now();
         let root_bytes = match self.fs.read_bytes(&req.root_file).await {
             Ok(b) => b,
             Err(e) => {
@@ -1378,6 +1492,7 @@ impl CompileRunner for TectonicLibRunner {
                 };
             }
         };
+        let root_read_ns = root_read_started.elapsed().as_nanos();
 
         // bundle 的**打开**放到阻塞段里做（`Box<dyn Bundle>` 不是 `Send`，见 `run_engines` 头注）。
         let shared: SharedCapture = new_capture();
@@ -1424,6 +1539,7 @@ impl CompileRunner for TectonicLibRunner {
                 shared,
                 cancel_for_task,
                 pages_seen,
+                root_read_ns,
             )
         }));
 
@@ -1482,6 +1598,217 @@ impl CompileRunner for TectonicLibRunner {
             }
         }
     }
+}
+
+// ===================== 首启 format 预热（T18） =====================
+//
+// 产品决定（2026-11-20）：`.fmt` **不随包**，改为应用首启**后台预热**生成 —— 把 ~1s 的冷缓存首编
+// 等待藏到用户打开项目/打字期间。`prewarm_format` 只跑 **initex + dump**（等价 runner 里的 format
+// 分支），**不跑用户文档**；成功才把 `.fmt` 原子落进产品缓存；失败静默（不影响启动与后续首编）。
+
+/// 首启预热的判定结果（GUI 只记日志/上报，**不**据此让启动失败）。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PrewarmOutcome {
+    /// 本次实际生成并落盘。
+    Generated,
+    /// 已有缓存（无需再跑 initex）。
+    AlreadyCached,
+    /// 没有可用的**本地/已缓存** bundle（网络 bundle 冷缓存）⇒ 启动期跳过（不联网）。
+    SkippedNoBundle,
+    /// 失败（静默；下次首编会照常自行生成）。`msg` 只进日志，不弹给用户。
+    Failed(String),
+}
+
+/// 预热互斥状态（进程级一次性）：`Running` 期间别的预热/编译要等它收尾，避免同一份 format
+/// 被"后台预热"与"用户首编"各生成一次（引擎锁只串行、不会去重）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum GatePhase {
+    Idle,
+    Running,
+    Done,
+    Failed,
+}
+
+struct PrewarmGate {
+    phase: Mutex<GatePhase>,
+    cv: Condvar,
+}
+
+static PREWARM_GATE: OnceLock<Arc<PrewarmGate>> = OnceLock::new();
+
+fn prewarm_gate() -> &'static Arc<PrewarmGate> {
+    PREWARM_GATE.get_or_init(|| Arc::new(PrewarmGate {
+        phase: Mutex::new(GatePhase::Idle),
+        cv: Condvar::new(),
+    }))
+}
+
+/// 编译入口等预热收尾：预热正在生成同一份 format 时先等它结束，再判定缓存命中
+/// （否则首编会把"预热正在生成"看成"没有缓存"，白跑一趟 initex）。
+///
+/// 没有预热发生过（`OnceLock` 未初始化）⇒ 立即返回，零开销。
+fn wait_for_prewarm() {
+    let Some(gate) = PREWARM_GATE.get() else { return };
+    let mut phase = gate.phase.lock().unwrap_or_else(|e| e.into_inner());
+    if *phase != GatePhase::Running {
+        return;
+    }
+    let deadline = Instant::now() + PREWARM_WAIT_TIMEOUT;
+    while *phase == GatePhase::Running {
+        let Some(remaining) = deadline.checked_duration_since(Instant::now()) else {
+            debug!("等首启 format 预热超时：继续按「无缓存」处理（首编会自行生成）");
+            break;
+        };
+        let (guard, _) = gate.cv.wait_timeout(phase, remaining).unwrap_or_else(|e| e.into_inner());
+        phase = guard;
+    }
+}
+
+/// 编译在入口最多等预热多久（预热是一次 initex 趟，正常 ~1s；超时就不再等、按无缓存继续）。
+const PREWARM_WAIT_TIMEOUT: Duration = Duration::from_secs(60);
+
+/// 首启 format 预热：只跑 initex + dump，成功才把 `.fmt` **原子**落进 `<cache>/formats/`。
+///
+/// 预热计划见 [`crate::bundle::prewarm_plan`]：**在线源先做零网络判定**（本地缓存标记可用且未过期
+/// 才进 `open_bundle`，否则直接 `SkippedNoBundle`）——上游 `detect_bundle` 对 http 源在缓存冷时
+/// 会联网取 digest，启动预热不得走那条路。**失败静默**：返回 [`PrewarmOutcome::Failed`] 只供日志，
+/// 不写半成品（半成品会被首编当成"缓存命中"）、不影响启动与后续首编。
+pub fn prewarm_format(bundle: &BundleSource, cache_dir: &Path) -> PrewarmOutcome {
+    let only_cached = match crate::bundle::prewarm_plan(bundle, cache_dir) {
+        crate::bundle::PrewarmPlan::Skip => return PrewarmOutcome::SkippedNoBundle,
+        crate::bundle::PrewarmPlan::Prewarm { only_cached } => only_cached,
+    };
+    let open = match open_bundle(bundle, only_cached, Some(cache_dir.to_path_buf())) {
+        Ok(Some(b)) => b,
+        Ok(None) => return PrewarmOutcome::SkippedNoBundle,
+        Err(msg) => {
+            // 在线 bundle 的"只读缓存未命中"是**正常跳过**（启动期不联网）；本地 bundle 失败才是真失败。
+            return if only_cached { PrewarmOutcome::SkippedNoBundle } else { PrewarmOutcome::Failed(msg) };
+        }
+    };
+    let mut open = open;
+    let digest = match bundle_digest(&mut *open) {
+        Ok(d) => d,
+        Err(msg) => return PrewarmOutcome::Failed(msg),
+    };
+    let format_cache_dir = cache_dir.join("formats");
+    let target = match crate::io::format_cache_path(
+        Some(&format_cache_dir),
+        Some(&digest),
+        crate::FORMAT_NAME,
+    ) {
+        Ok(p) => p,
+        Err(msg) => return PrewarmOutcome::Failed(msg),
+    };
+    if target.is_file() {
+        return PrewarmOutcome::AlreadyCached;
+    }
+
+    let gate = prewarm_gate();
+    {
+        let mut phase = gate.phase.lock().unwrap_or_else(|e| e.into_inner());
+        while *phase == GatePhase::Running {
+            phase = gate.cv.wait(phase).unwrap_or_else(|e| e.into_inner());
+        }
+        // 等锁期间可能已有另一路生成（或首编自己跑完了）。
+        if target.is_file() {
+            return PrewarmOutcome::AlreadyCached;
+        }
+        *phase = GatePhase::Running;
+    }
+
+    let started = Instant::now();
+    let result = generate_format_prewarm(
+        Some(open),
+        digest,
+        format_cache_dir,
+        cache_dir.to_path_buf(),
+        target,
+    );
+    let mut phase = gate.phase.lock().unwrap_or_else(|e| e.into_inner());
+    let outcome = match result {
+        Ok(()) => {
+            *phase = GatePhase::Done;
+            info!(
+                prewarm_ms = started.elapsed().as_millis() as u64,
+                "首启 format 预热完成（.fmt 已落产品缓存）"
+            );
+            PrewarmOutcome::Generated
+        }
+        Err(msg) => {
+            *phase = GatePhase::Failed;
+            debug!(
+                prewarm_ms = started.elapsed().as_millis() as u64,
+                %msg,
+                "首启 format 预热失败（静默：首编会自行生成）"
+            );
+            PrewarmOutcome::Failed(msg)
+        }
+    };
+    gate.cv.notify_all();
+    outcome
+}
+
+/// 真正跑 initex 趟并落盘（与 `run_engines` 的 format 分支同序；改动要两边同步）。
+fn generate_format_prewarm(
+    bundle: Option<Box<dyn Bundle>>,
+    digest: String,
+    format_cache_dir: PathBuf,
+    project_root: PathBuf,
+    target: PathBuf,
+) -> Result<(), String> {
+    let shared = new_capture();
+    let requests: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
+    let mut io = TectonicIo::new(
+        project_root,
+        None,
+        bundle,
+        Some(digest),
+        Some(format_cache_dir),
+        shared.clone(),
+        requests,
+        None,
+    );
+    // format 趟开关：主输入换成合成的 `\input tectonic-format-latex.tex`（上游 `enter_format_mode`）。
+    io.set_format_pass(Arc::new(AtomicBool::new(true)));
+    let mut driver = MinimalDriver::new(io);
+    let progress: Arc<dyn CompileProgress> = Arc::new(NoProgress);
+    let log_ring: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
+    let mut status = ProgressStatus::new(progress, log_ring);
+    let result = {
+        let mut launcher = CoreBridgeLauncher::new(&mut driver, &mut status);
+        (|| -> Result<(), String> {
+            let mut init = TexEngine::default();
+            init.halt_on_error_mode(true);
+            init.initex_mode(true);
+            init.build_date(SystemTime::now());
+            let outcome = init
+                .process(&mut launcher, crate::io::FORMAT_DUMP_PLACEHOLDER, "texput")
+                .map_err(|e| format!("预热 initex 趟失败：{e:#}"))?;
+            if matches!(outcome, TexOutcome::Errors) {
+                return Err("预热失败：initex 趟报 Errors（format 没建起来）".to_owned());
+            }
+            let Some((_name, bytes)) = take_dumped_format(&shared) else {
+                return Err("预热失败：initex 趟没有产出任何 `*.fmt`".to_owned());
+            };
+            if let Some(parent) = target.parent() {
+                std::fs::create_dir_all(parent).map_err(|e| {
+                    format!("预热失败：建 format 缓存目录失败（{}）：{e}", parent.display())
+                })?;
+            }
+            // 原子落盘：半成品不能被首编当成"缓存命中"。
+            let tmp = target.with_extension("fmt.tmp");
+            std::fs::write(&tmp, &bytes)
+                .map_err(|e| format!("预热失败：写 format 临时文件失败（{}）：{e}", tmp.display()))?;
+            if let Err(e) = std::fs::rename(&tmp, &target) {
+                let _ = std::fs::remove_file(&tmp);
+                return Err(format!("预热失败：落盘 format 失败（{}）：{e}", target.display()));
+            }
+            Ok(())
+        })()
+    };
+    drop(driver);
+    result
 }
 
 #[cfg(test)]
@@ -1783,20 +2110,74 @@ mod tests {
         assert!(capture_bytes(&c, "nope.xdv").is_none(), "没写过的名字要返回 None");
     }
 
-    /// **A 的判据**（功能点 A）：四个条件缺一不可。
+    /// **A 的判据**（D-L4b，Quick/Full 共用）：页表逐页相同 + 磁盘 PDF 身份一致，缺一不可。
+    ///
+    /// 反例清单（任务书要求自证）：页数变、页序变、PDF 被手工改/替换/删除、旧 PDF 缺失、空表。
     #[test]
-    fn reuse_pdf_requires_quick_unchanged_and_an_existing_pdf() {
+    fn reuse_pdf_requires_unchanged_pages_and_an_untouched_pdf() {
         let hashes = vec![1u64, 2, 3];
-        assert!(should_reuse_pdf(false, &hashes, Some(&hashes), true), "Quick + 逐页相同 + 有 PDF ⇒ 可复用");
-        assert!(!should_reuse_pdf(true, &hashes, Some(&hashes), true), "Full 不做跳过（语义是完整刷新）");
-        assert!(!should_reuse_pdf(false, &hashes, None, true), "首轮没有上一次的哈希 ⇒ 不复用");
-        assert!(!should_reuse_pdf(false, &hashes, Some(&[9, 9, 9]), true), "页变了 ⇒ 不复用");
+        assert!(should_reuse_pdf(&hashes, Some(&hashes), true), "逐页相同 + PDF 未动 ⇒ 可复用（Quick/Full 同判据）");
+        assert!(!should_reuse_pdf(&hashes, None, true), "首轮没有上一次的哈希 ⇒ 不复用");
+        assert!(!should_reuse_pdf(&hashes, Some(&[9, 9, 9]), true), "页变了 ⇒ 不复用");
         assert!(
-            !should_reuse_pdf(false, &hashes, Some(&[1, 2]), true),
+            !should_reuse_pdf(&hashes, Some(&[1, 2]), true),
             "页数变了 ⇒ 不复用（prev != cur）"
         );
-        assert!(!should_reuse_pdf(false, &hashes, Some(&hashes), false), "项目根没有 PDF ⇒ 必须转换");
-        assert!(!should_reuse_pdf(false, &[], Some(&[]), true), "空表是'无法判定'，不得当成'零页相同'");
+        assert!(
+            !should_reuse_pdf(&hashes, Some(&[3, 2, 1]), true),
+            "页序变了 ⇒ 逐页哈希序列不同 ⇒ 不复用"
+        );
+        assert!(!should_reuse_pdf(&hashes, Some(&hashes), false), "PDF 被手改/替换/删除 ⇒ 必须转换");
+        assert!(!should_reuse_pdf(&[], Some(&[]), true), "空表是'无法判定'，不得当成'零页相同'");
+    }
+
+    /// **PDF 身份记录**：往返可解析；磁盘 PDF 被手工改/删除后必须判为"不可复用"。
+    ///
+    /// 这正是 Full 复用新增的那道判据的可判定证据（页哈希相同 ≠ 磁盘 PDF 没被动过）。
+    #[test]
+    fn pdf_identity_detects_manual_edits_and_missing_files() {
+        let dir = std::env::temp_dir().join(format!(
+            "latteset-tectonic-pdfid-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("建临时目录");
+        let pdf = dir.join("main.pdf");
+        let cache = pdf_identity_cache_path(&dir, "main");
+        std::fs::write(&pdf, b"%PDF-1.5 original").expect("写 PDF 夹具");
+
+        // ① 转换成功后记身份 ⇒ 下一轮可复用。
+        let id = pdf_identity(&pdf).expect("取身份");
+        std::fs::write(&cache, format_pdf_identity(&id)).expect("写身份记录");
+        assert_eq!(parse_pdf_identity(&format_pdf_identity(&id)), Some(id), "身份记录必须可往返");
+        assert!(pdf_unchanged_since_we_wrote_it(&pdf, &cache), "刚写出的 PDF ⇒ 身份一致");
+
+        // ② 用户手工改 PDF（内容/大小变）⇒ 身份不一致 ⇒ 不复用。
+        std::fs::write(&pdf, b"%PDF-1.5 hand edited, longer").expect("手改 PDF");
+        assert!(!pdf_unchanged_since_we_wrote_it(&pdf, &cache), "PDF 被手工改 ⇒ 必须重新转换");
+
+        // ③ 同长度覆盖也要能发现（mtime 变了；写后小睡确保时间戳粒度不会吃掉差异）。
+        std::fs::write(&pdf, b"%PDF-1.5 hand edited, longer").expect("同长度覆盖");
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        std::fs::write(&pdf, b"%PDF-1.5 hand edited, longer").expect("同长度覆盖 2");
+        assert!(
+            !pdf_unchanged_since_we_wrote_it(&pdf, &cache),
+            "同长度但被改过（mtime 变）⇒ 不复用"
+        );
+
+        // ④ 旧 PDF 被删除 / 没有身份记录（老项目/清过 tmp）⇒ 保守转换。
+        std::fs::remove_file(&pdf).expect("删 PDF");
+        assert!(!pdf_unchanged_since_we_wrote_it(&pdf, &cache), "PDF 缺失 ⇒ 必须转换");
+        std::fs::write(&pdf, b"%PDF-1.5 original").expect("重建 PDF");
+        let _ = std::fs::remove_file(&cache);
+        assert!(!pdf_unchanged_since_we_wrote_it(&pdf, &cache), "缺身份记录 ⇒ 保守转换一次");
+
+        // ⑤ 损坏/老格式身份记录 ⇒ 当"没有记录"（不猜）。
+        std::fs::write(&cache, "not-a-version\n").expect("写坏记录");
+        assert!(!pdf_unchanged_since_we_wrote_it(&pdf, &cache));
+        assert_eq!(parse_pdf_identity(""), None);
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     /// 重跑判据只覆盖会被回读的中间产物（不做无谓的大文件摘要）。
@@ -2169,5 +2550,249 @@ mod tests {
 
         let _ = std::fs::remove_dir_all(&work);
     }
-}
 
+    // ---------------------------------------------------------------- 首启 format 预热（T18）
+
+    // 预热**计划**（本地主动 / 在线零网络判定）的纯函数用例在 `bundle::tests`
+    // （`prewarm_plan_*`）：放那边才能与在线缓存的标记布局一起测，且与 feature 无关。
+
+    /// T18 缺陷修复：**在线源 + 冷缓存**必须在**零网络、零写**下返回 `SkippedNoBundle`。
+    ///
+    /// 回归的是 `-Mode test`（4 包同建、`network-bundle` 特性被 server/src-tauri 打开）下的红：
+    /// 上游 `detect_bundle` 对 http 源在缓存冷时会联网取 digest（~8s）并建 `data/` 目录。
+    /// 本用例对 `Default` 与显式在线 URL 都断言：结果 Skip、耗时 ≈0、缓存目录**未被创建**；
+    /// 不依赖网络可达性（无论特性开关/有网无网都应通过）。
+    #[test]
+    fn prewarm_online_cold_cache_skips_without_network_or_cache_writes() {
+        let dir = std::env::temp_dir()
+            .join(format!("latteset-tectonic-prewarm-online-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("建临时目录");
+        let cache = dir.join("cache");
+
+        let started = Instant::now();
+        let default_outcome = prewarm_format(&BundleSource::Default, &cache);
+        let explicit_outcome = prewarm_format(
+            &BundleSource::Explicit("https://example.invalid/default_bundle_v33.tar".into()),
+            &cache,
+        );
+        let elapsed = started.elapsed();
+        eprintln!("T18 修复：在线源冷缓存两次预判定耗时 {elapsed:?}（要求 ≈0ms、无网络）");
+
+        assert!(
+            matches!(default_outcome, PrewarmOutcome::SkippedNoBundle),
+            "在线默认源冷缓存必须跳过（不得联网）：{default_outcome:?}"
+        );
+        assert!(
+            matches!(explicit_outcome, PrewarmOutcome::SkippedNoBundle),
+            "在线显式源冷缓存必须跳过（不得联网）：{explicit_outcome:?}"
+        );
+        assert!(
+            elapsed < Duration::from_secs(2),
+            "在线冷缓存判定必须零网络（耗时 {elapsed:?}；联网取 digest 实测 ~8s）"
+        );
+        assert!(!cache.exists(), "零网络判定不得创建/污染缓存目录：{}", cache.display());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// T18：预热失败必须**静默**且**不污染缓存**（半成品会被首编当成"缓存命中"）。
+    #[test]
+    fn prewarm_failure_is_silent_and_does_not_pollute_cache() {
+        let dir = std::env::temp_dir()
+            .join(format!("latteset-tectonic-prewarm-fail-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("建临时目录");
+        let missing = dir.join("no-such-bundle.zip");
+        let cache = dir.join("cache");
+        match prewarm_format(&BundleSource::Shipped(missing), &cache) {
+            PrewarmOutcome::Failed(msg) => {
+                assert!(msg.contains("内置") || msg.contains("不存在"), "失败文案要可读：{msg}");
+            }
+            other => panic!("内置集缺失必须 Failed（静默失败）：{other:?}"),
+        }
+        let formats = cache.join("formats");
+        let polluted = formats.is_dir()
+            && std::fs::read_dir(&formats).map(|mut it| it.next().is_some()).unwrap_or(false);
+        assert!(!polluted, "预热失败不得留下任何 .fmt（含半成品）");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// T18：预热闸门 —— 编译侧在 `Running` 期间会被唤醒式等待，不会永久阻塞。
+    #[test]
+    fn prewarm_gate_wakes_waiting_compilers() {
+        let gate = prewarm_gate();
+        *gate.phase.lock().unwrap_or_else(|e| e.into_inner()) = GatePhase::Running;
+        let started = Instant::now();
+        let waiter = std::thread::spawn(|| {
+            wait_for_prewarm();
+            Instant::now()
+        });
+        std::thread::sleep(Duration::from_millis(80));
+        *gate.phase.lock().unwrap_or_else(|e| e.into_inner()) = GatePhase::Done;
+        gate.cv.notify_all();
+        let woke = waiter.join().expect("预热等待线程");
+        let waited = woke.duration_since(started);
+        *gate.phase.lock().unwrap_or_else(|e| e.into_inner()) = GatePhase::Idle;
+        assert!(waited >= Duration::from_millis(60), "编译侧必须真的等到 Running 结束：{waited:?}");
+        assert!(waited < Duration::from_secs(5), "不应长期阻塞：{waited:?}");
+    }
+    /// T18 **真编**（`#[ignore]`）：预热生成 format 后，首编必须**命中缓存**（省掉 initex 趟），
+    /// 且编译结果与未预热逐页一致（同一页哈希口径）。
+    #[tokio::test]
+    #[ignore = "真编：需要本机 test_file/tectonic-bundle 夹具（gitignore）"]
+    async fn prewarm_then_first_compile_hits_format_cache() {
+        let repo = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../..")
+            .canonicalize()
+            .expect("仓库根");
+        let repo_url = {
+            let s = repo.to_string_lossy().replace('\\', "/");
+            s.strip_prefix("//?/").map(str::to_owned).unwrap_or(s)
+        };
+        let bundle_dir = repo.join("test_file/tectonic-bundle");
+        if !bundle_dir.join("SHA256SUM").is_file() {
+            eprintln!("跳过预热真编：本机没有 {} 夹具（gitignore）", bundle_dir.display());
+            return;
+        }
+        let bundle = BundleSource::Explicit(format!("file:///{repo_url}/test_file/tectonic-bundle"));
+        let work = repo.join("test_file/tmp/tectonic-prewarm-test");
+        let _ = std::fs::remove_dir_all(&work);
+        let proj = work.join("proj");
+        std::fs::create_dir_all(&proj).expect("建项目目录");
+        std::fs::write(
+            proj.join("main.tex"),
+            "\\documentclass{article}\n\\begin{document}\nPrewarm.\n\\end{document}\n",
+        )
+        .expect("写夹具");
+        let make_runner = |cache: PathBuf| {
+            TectonicLibRunner::new(Arc::new(LocalFs), Arc::new(NoProgress))
+                .with_bundle(bundle.clone())
+                .with_cache_dir(cache)
+        };
+        let make_req = || CompileRequest {
+            root_file: proj.join("main.tex"),
+            project_root: proj.clone(),
+            timeout: Duration::from_secs(180),
+            kind: CompileKind::Full,
+        };
+
+        // ① 冷缓存首编（自行生成 format）作为对照。
+        let cold_started = Instant::now();
+        let cold = make_runner(work.join("cache-cold"))
+            .compile(make_req(), CancellationToken::new())
+            .await;
+        let cold_ms = cold_started.elapsed();
+        let cold_hashes = match cold {
+            CompileOutcome::Success { page_hashes, .. } => page_hashes,
+            other => panic!("冷缓存首编应当成功：{other:?}"),
+        };
+
+        // ② 后台预热到**另一个空缓存**（产品场景：启动时缓存里还没有 .fmt）。
+        let warm_cache = work.join("cache-warm");
+        let prewarm_started = Instant::now();
+        let outcome = prewarm_format(&bundle, &warm_cache);
+        let prewarm_ms = prewarm_started.elapsed();
+        assert!(
+            matches!(outcome, PrewarmOutcome::Generated),
+            "空缓存预热应当实际生成：{outcome:?}"
+        );
+        assert_eq!(
+            prewarm_format(&bundle, &warm_cache),
+            PrewarmOutcome::AlreadyCached,
+            "二次预热必须命中已有缓存（不得重复生成）"
+        );
+        let fmt_count = std::fs::read_dir(warm_cache.join("formats"))
+            .expect("formats 目录")
+            .filter_map(|e| e.ok())
+            .filter(|e| e.path().extension().is_some_and(|x| x == "fmt"))
+            .count();
+        assert_eq!(fmt_count, 1, "预热必须产出一份 .fmt");
+
+        // ③ 预热后首编：命中缓存 ⇒ 省掉 initex 趟；结果与冷编逐页一致。
+        let warm_started = Instant::now();
+        let warm = make_runner(warm_cache)
+            .compile(make_req(), CancellationToken::new())
+            .await;
+        let warm_ms = warm_started.elapsed();
+        let warm_hashes = match warm {
+            CompileOutcome::Success { page_hashes, .. } => page_hashes,
+            other => panic!("预热后首编应当成功：{other:?}"),
+        };
+        assert_eq!(warm_hashes, cold_hashes, "预热与否必须逐页一致（同一页哈希口径）");
+        assert!(
+            warm_ms + Duration::from_millis(150) < cold_ms,
+            "预热后首编应当省掉 initex 趟：cold={cold_ms:?} warm={warm_ms:?}（prewarm={prewarm_ms:?}）"
+        );
+        eprintln!(
+            "T18 真编：prewarm={prewarm_ms:?} cold_first_compile={cold_ms:?} warm_first_compile={warm_ms:?} pages={}",
+            cold_hashes.len()
+        );
+        let _ = std::fs::remove_dir_all(&work);
+    }
+
+    /// T19 阻断项真编（`#[ignore]`，**不经 `LATTESET_TECTONIC_BUNDLE`/Explicit**）：
+    /// 用 [`BundleSource::Shipped`] + **canonicalize 后的 verbatim 路径**（release GUI 的真实形态：
+    /// `\\?\E:\…\tectonic-bundle.zip`）直接编译；修复前这条路径在 `path_to_file_url` 处失败
+    /// （`failed to parse local path`），修复后必须能正常出 PDF。
+    #[tokio::test]
+    #[ignore = "真编：需要随包 bundle（src-tauri/resources/tectonic-bundle.zip 或 test_file/tectonic-bundle）"]
+    async fn shipped_bundle_compiles_through_verbatim_path() {
+        let repo = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../..")
+            .canonicalize()
+            .expect("仓库根");
+        let candidates = [
+            repo.join("src-tauri/resources/tectonic-bundle.zip"),
+            repo.join("src-tauri/target/release/tectonic-bundle.zip"),
+            repo.join("test_file/tectonic-bundle"),
+        ];
+        let Some(shipped) = candidates.iter().find(|p| p.exists()) else {
+            eprintln!("跳过 Shipped 真编：本机没有随包 bundle 产物（gitignore）");
+            return;
+        };
+        // release 实况：资源解析给出的是 canonicalize 后的 `\\?\…` 形态（Windows）。
+        let shipped = shipped.canonicalize().expect("canonicalize 随包 bundle");
+        let work = repo.join("test_file/tmp/tectonic-shipped-test");
+        let _ = std::fs::remove_dir_all(&work);
+        let proj = work.join("proj");
+        std::fs::create_dir_all(&proj).expect("建项目目录");
+        std::fs::write(
+            proj.join("main.tex"),
+            "\\documentclass{article}\n\\begin{document}\nShipped bundle.\n\\end{document}\n",
+        )
+        .expect("写夹具");
+        let runner = TectonicLibRunner::new(Arc::new(LocalFs), Arc::new(NoProgress))
+            .with_bundle(BundleSource::Shipped(shipped.clone()))
+            .with_cache_dir(work.join("cache"));
+        let outcome = runner
+            .compile(
+                CompileRequest {
+                    root_file: proj.join("main.tex"),
+                    project_root: proj.clone(),
+                    timeout: Duration::from_secs(180),
+                    kind: CompileKind::Full,
+                },
+                CancellationToken::new(),
+            )
+            .await;
+        match outcome {
+            CompileOutcome::Success { pdf_path, page_hashes, .. } => {
+                assert!(pdf_path.is_file(), "PDF 必须落在项目根：{}", pdf_path.display());
+                let pdf = std::fs::read(&pdf_path).expect("读 PDF");
+                assert!(pdf.starts_with(b"%PDF"), "产物必须是 PDF");
+                assert_eq!(page_hashes.len(), 1, "1 页文档要出 1 个页哈希");
+                eprintln!(
+                    "T19 Shipped 真编：bundle={}（canonical={}）pages={}",
+                    shipped.display(),
+                    shipped.display(),
+                    page_hashes.len()
+                );
+            }
+            other => panic!(
+                "Shipped 分支（verbatim 路径 {}）必须能编译成功：{other:?}",
+                shipped.display()
+            ),
+        }
+        let _ = std::fs::remove_dir_all(&work);
+    }
+}
