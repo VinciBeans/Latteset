@@ -58,6 +58,7 @@ npm run tauri dev      # 构建 Rust + 起 vite + 真窗口（GUI 测试必须�
 | 文档 | 内容 |
 |---|---|
 | [modules.md](./modules.md) | 模块实现契约、当前行为基线、已知债与验证入口 |
+| [copy-guide.md](./copy-guide.md) | **用户文案规范**：8 条硬规则、术语唯一说法/禁用说法、可见串 grep 检查方法 |
 | [testing.md](./testing.md) | 怎么跑测试、真机验收清单、真机探针手法 |
 | [tectonic-library.md](./tectonic-library.md) | 内嵌 Tectonic（唯一形态）：构建/打包入口、装配点、随包精简集、能力面与验证入口 |
 | [tectonic-licensing.md](./tectonic-licensing.md) | 分发许可审计：Rust/C 依赖与随包精简集的许可证、义务清单、G-L1..G-L9 门禁（全绿）+ R-L10 残余风险 |

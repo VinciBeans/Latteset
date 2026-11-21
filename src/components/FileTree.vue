@@ -255,7 +255,7 @@ const deleteLines = computed(() => {
         : "该文件夹是空的（删除不可撤销）。"
     );
   } else {
-    lines.push("删除后不可撤销（项目里没有回收站）。");
+    lines.push("删除后不可撤销（Latteset 没有回收站）。");
   }
   return lines;
 });
@@ -336,7 +336,7 @@ async function afterTreeMutation(oldPath: string, newPath: string | null) {
     if (newPath) {
       const rel = relativeToRoot(newPath);
       if (!rel) {
-        createError.value = "改名成功，但新路径不在项目内，根文件覆盖未更新——请在「设置 → 项目」里手动指定";
+        createError.value = "文件已改名。它不再是编译用的根文件——请在「设置 → 项目」中重新指定";
       } else {
         await settings.update({ root_file: rel });
       }
@@ -462,7 +462,7 @@ function clearSearch() {
              右键菜单那条路仍然直接给两项（菜单里罗列本来就自然，而且能指定落在哪个目录）。 -->
         <button
           class="new-file"
-          title="新建（文件 / 文件夹；也可在树节点上右键建到某个目录里）"
+          title="新建文件或文件夹（右键可建到目录）"
           data-testid="new-file-button"
           @click="startCreate('file')"
         >＋</button>
@@ -509,14 +509,14 @@ function clearSearch() {
           class="search-input"
           type="text"
           spellcheck="false"
-          placeholder="搜索文件（支持模糊，如 cit → chapters/intro.tex）"
+          placeholder="输入文件名片段"
           data-testid="tree-search"
           @keydown.esc.prevent="clearSearch"
         />
         <button v-if="searching" class="search-clear" title="清空搜索" data-testid="tree-search-clear" @click="clearSearch">×</button>
       </div>
       <div v-if="searching" class="search-count" data-testid="tree-search-count">
-        命中 {{ hitCount }} 个文件{{ hitCount === 0 ? "（换个词试试）" : "" }}
+        {{ hitCount }} 个文件匹配
       </div>
 
       <div class="tree-scroll">
@@ -524,14 +524,14 @@ function clearSearch() {
           <span class="empty-card">
             <span class="empty-icon">📂</span>
             <span class="empty-title">还没打开项目</span>
-            <span class="empty-hint">点左上角「打开项目」开始</span>
+            <span class="empty-hint">点顶部「打开项目」开始</span>
           </span>
         </div>
         <div v-else-if="searching && hitCount === 0" class="empty">
           <span class="empty-card">
             <span class="empty-icon">🔍</span>
             <span class="empty-title">没有匹配的文件</span>
-            <span class="empty-hint">搜索按名字或路径模糊匹配</span>
+            <span class="empty-hint">换个关键词试试</span>
           </span>
         </div>
         <FileTreeItem
@@ -652,9 +652,9 @@ function clearSearch() {
   font: inherit;
   font-size: 12px;
   padding: 3px 6px;
-  border: 1px solid var(--border, #d8d8e0);
+  border: 1px solid var(--border);
   border-radius: 4px;
-  background: var(--surface, #fff);
+  background: var(--surface);
   color: inherit;
 }
 /* 类型切换：两个小图标按钮（`mousedown.prevent` 保住输入框焦点，点它不会当成"失焦取消"） */
@@ -665,9 +665,9 @@ function clearSearch() {
   padding: 0;
   font-size: 11px;
   line-height: 1;
-  border: 1px solid var(--border, #d8d8e0);
+  border: 1px solid var(--border);
   border-radius: 4px;
-  background: var(--surface, #fff);
+  background: var(--surface);
   cursor: pointer;
   opacity: 0.55;
 }
@@ -696,7 +696,7 @@ function clearSearch() {
   height: 25px;
   border: 1px solid var(--line-soft);
   border-radius: var(--radius-sm);
-  background: var(--surface, #fff);
+  background: var(--surface);
 }
 .search-row:focus-within { border-color: var(--blueberry); }
 .search-icon { font-size: 10px; opacity: 0.55; }

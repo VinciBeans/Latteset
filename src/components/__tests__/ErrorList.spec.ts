@@ -8,6 +8,7 @@ import ErrorList from "../ErrorList.vue";
 import { useCompileStore } from "../../stores/compile";
 import { useSettingsStore } from "../../stores/settings";
 import { ipc } from "../../services/ipc";
+import { MAX_DISPLAY } from "../../services/errorGroups";
 import type { ErrorEntry } from "../../bindings";
 
 vi.mock("../../services/ipc", () => ({
@@ -168,5 +169,81 @@ describe("ErrorList（超时一键重试，roadmap ㉕）", () => {
     await nextTick();
     expect(el.querySelector(".retry-btn")).toBeNull();
     expect(el.querySelector(".entry")).toBeTruthy();
+  });
+});
+
+// A-02：空态三态（未编译 / 排版中 / 无问题）——此前未编译也显示绿色对勾「没有发现错误」
+describe("ErrorList：空态三态（A-02）", () => {
+  beforeEach(() => {
+    setActivePinia(createPinia());
+  });
+
+  it("未编译：中性灰圈 +「还没有编译」", async () => {
+    const { el } = mount();
+    await nextTick();
+    expect(el.querySelector(".empty")!.textContent).toContain("还没有编译");
+    const icon = el.querySelector(".empty-icon")!;
+    expect(icon.classList.contains("idle")).toBe(true);
+    expect(icon.textContent).toBe("○");
+  });
+
+  it("排版中：显示「排版中…」", async () => {
+    useCompileStore().setStatus("running", null, false);
+    const { el } = mount();
+    await nextTick();
+    expect(el.querySelector(".empty")!.textContent).toContain("排版中…");
+  });
+
+  it("编译成功且无错误：绿勾 +「没有发现问题」", async () => {
+    useCompileStore().setStatus("success", null, false);
+    const { el } = mount();
+    await nextTick();
+    expect(el.querySelector(".empty")!.textContent).toContain("没有发现问题");
+    const icon = el.querySelector(".empty-icon")!;
+    expect(icon.classList.contains("idle")).toBe(false);
+    expect(icon.textContent).toBe("✓");
+  });
+});
+
+// A-18：折叠头/头部计数与列表同口径（去重后的组数），不是原始条数
+describe("ErrorList：计数口径（A-18）", () => {
+  it("同源错误合并后，头部计数 = 组数而非条数", async () => {
+    setActivePinia(createPinia());
+    const compile = useCompileStore();
+    const dup = (): ErrorEntry => ({
+      message: "! Undefined control sequence.",
+      file: "main.tex",
+      line: 3,
+      kind: "content_error",
+      diagnosis: null,
+    });
+    compile.setErrors([dup(), dup(), { ...dup(), file: "other.tex" }]);
+    const { el } = mount();
+    await nextTick();
+    expect(el.querySelector(".head-count")!.textContent).toBe("2");
+  });
+
+  it("B-08：超上限时「已隐藏 N 条重复问题」+「显示全部」，点开后全部渲染", async () => {
+    setActivePinia(createPinia());
+    const compile = useCompileStore();
+    const many: ErrorEntry[] = Array.from({ length: MAX_DISPLAY + 2 }, (_, i) => ({
+      message: `err-${i}`,
+      file: "main.tex",
+      line: i,
+      kind: "content_error",
+      diagnosis: null,
+    }));
+    compile.setErrors(many);
+    const { el } = mount();
+    await nextTick();
+    const more = el.querySelector(".more")!;
+    expect(more.textContent).toContain("已隐藏 2 条重复问题");
+    // MAX_DISPLAY 本身不进文案（只给"隐藏了多少"）
+    expect(more.textContent).not.toContain(String(MAX_DISPLAY));
+
+    (el.querySelector(".show-all") as HTMLButtonElement).click();
+    await nextTick();
+    expect(el.querySelector(".more")).toBeNull();
+    expect(el.querySelectorAll(".entry")).toHaveLength(MAX_DISPLAY + 2);
   });
 });

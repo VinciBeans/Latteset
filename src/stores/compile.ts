@@ -5,6 +5,13 @@ import type { CompilePhase, ErrorEntry, FailureKind } from "../bindings";
 
 export const useCompileStore = defineStore("compile", () => {
   const phase = ref<CompilePhase>("success"); // 初始无编译
+  /**
+   * **本次运行是否已经编译过**（纯前端派生，不改后端 DTO）。
+   *
+   * `phase` 的初值是 `success`（没有 `idle` 这个后端相位）⇒ 未编译时不能显示"就绪"。
+   * 任意终态（success / failed）置 true；状态栏据此区分「未编译」与「就绪/失败」。
+   */
+  const hasCompiled = ref(false);
   const kind = ref<FailureKind | null>(null);
   const errors = ref<ErrorEntry[]>([]);
   const hasError = ref(false);
@@ -29,6 +36,7 @@ export const useCompileStore = defineStore("compile", () => {
   function setStatus(p: CompilePhase, k: FailureKind | null, isDraft: boolean) {
     phase.value = p;
     kind.value = k;
+    if (p === "success" || p === "failed") hasCompiled.value = true;
     if (p === "running") {
       // 编译中清空错误（design.md 错误列表时机）+ 进度归零（新的一趟）
       errors.value = [];
@@ -72,8 +80,24 @@ export const useCompileStore = defineStore("compile", () => {
     errors.value = list;
   }
 
+  /**
+   * **切换项目时清空编译态**（B1，跨项目状态泄漏）：`hasCompiled`/`errors`/`draft` 等是
+   * "当前项目这一次会话"的状态，编译过 A 再打开 B 时不能沿用 A 的「就绪」与旧错误。
+   * pinia 的 setup store 没有 `$reset` ⇒ 手写一份显式重置。
+   */
+  function reset() {
+    phase.value = "success"; // 与初始值一致；状态栏靠 hasCompiled=false 显示「未编译」
+    hasCompiled.value = false;
+    kind.value = null;
+    errors.value = [];
+    hasError.value = false;
+    draft.value = false;
+    pages.value = 0;
+  }
+
   return {
     phase,
+    hasCompiled,
     kind,
     errors,
     hasError,
@@ -83,5 +107,6 @@ export const useCompileStore = defineStore("compile", () => {
     setProgress,
     setLiveErrors,
     setErrors,
+    reset,
   };
 });

@@ -1,7 +1,7 @@
 # Latteset 设计文档
 
 > **这是什么、给谁看**：Latteset（`tex-presso`）的产品与架构主文档。前三节定产品语义与子系统行为（实时编译、失败语义、延迟预算、实测口径），第四节定实现结构（分层、模块、IPC 契约、技术栈），第五节内联架构图，第六节定 MVP 边界、分发与质量底线。面向要改这个仓库的开发者/维护者，以及要判断"行为对不对"的评审与验收。
-> **配套文档**：术语 [glossary.md](./glossary.md)｜决策记录 [adr/](./adr/)｜未决与后置事项 [roadmap.md](./roadmap.md)｜函数级实现契约 [dev/modules.md](./dev/modules.md)｜测试与验证入口 [dev/testing.md](./dev/testing.md)｜CLI/MCP 用法 [cli.md](./cli.md)｜内嵌 Tectonic 构建/装配 [dev/tectonic-library.md](./dev/tectonic-library.md)｜归档素材（带日期的调研与实测原件）[archive/](./archive/)。
+> **配套文档**：术语 [glossary.md](./glossary.md)｜用户文案规范 [dev/copy-guide.md](./dev/copy-guide.md)｜决策记录 [adr/](./adr/)｜未决与后置事项 [roadmap.md](./roadmap.md)｜函数级实现契约 [dev/modules.md](./dev/modules.md)｜测试与验证入口 [dev/testing.md](./dev/testing.md)｜CLI/MCP 用法 [cli.md](./cli.md)｜内嵌 Tectonic 构建/装配 [dev/tectonic-library.md](./dev/tectonic-library.md)｜归档素材（带日期的调研与实测原件）[archive/](./archive/)。
 
 ## 目录
 
@@ -42,7 +42,7 @@
 
 ### 2.1 触发
 
-- 双模式可切换：**连续编译**（默认，输入停顿防抖 ~500ms 即触发）+ **保存触发编译**；外加手动「编译」按钮（第三种触发）
+- 双模式可切换：**连续编译**（默认，输入停顿防抖 ~500ms 即触发）+ **保存时编译**（保存文件时触发）；外加手动「编译」按钮（第三种触发）。状态栏模式 chip 单击展开菜单选择，模式说明可见（title 只作补充，见 §2.13）
 - **防抖只在前端"保存时机"层**（500ms 是产品语义）；后端不做时间防抖 —— 合并队列（最多一个等待条目）本身吸收事件风暴，后端再加防抖会把延迟撑爆预算；外部工具改文件同样进这条链路（notify 不依赖前端）
 
 ### 2.2 调度：合并队列
@@ -55,7 +55,7 @@
 
 | 情形 | 处理 |
 |---|---|
-| **超时**（单次 >120s，可配置，上限 1800s） | 队列有等待 → 直接执行等待条目；无等待 → **立即失败，不重试**：错误列表给一条证据化诊断（为什么慢 / 疑似卡住 + 怎么办）+ **一键「提高到 Ns 并重试」** |
+| **超时**（单次 >120s，可配置，上限 1800s） | 队列有等待 → 直接执行等待条目；无等待 → **立即失败，不重试**：问题面板给一条证据化诊断（为什么慢 / 疑似卡住 + 怎么办）+ **一键「提高到 Ns 并重试」** |
 | **内容错误**（源码问题，进程非零退出） | 不重试；队列有等待 → 直接执行最新版本；无 → 展示错误信息 |
 | **手动终止**（用户点停止） | 终止运行中编译 + **清空队列**中的等待条目 |
 
@@ -63,7 +63,7 @@
 
 **超时诊断的证据与判据**（实现契约见 [dev/modules.md](./dev/modules.md) §4.2 / §2.6.1）：条目由 runner 现场采集证据构造（是否首编 / `.tex` 源文件数 / **引擎输出**已排版到第几页）；证据 = `tmp/<stem>.log`（有内容才用）+ **已捕获的 stdout/stderr 尾部** + 流式通道已上报的最大页——Tectonic 的 `.log` 收尾才落盘，被树杀时常常零字节，只读日志会退化成"无页输出"；判据分两类——有页输出 → `compile_timeout`（在推进，只是比上限慢），无任何页输出 → `compile_timeout_stalled`（可能仍在做前置处理，也可能真卡住，**不武断说"卡住"**）；**强判据优先**：证据里已有致命错误就直接报那条且**不给**一键按钮（提高超时救不了）；`suggested_timeout_secs` 阶梯 `300 → 900 → 1800`（**首编直接跳 900**：首编最慢，让用户在注定不够的 300s 上再等一次代价过高），点击按钮的顺序固定为「先改设置、再重跑」。
 
-### 2.4 错误列表与诊断
+### 2.4 问题面板与诊断
 
 - 时机：编译中清空 → **编译还没结束就能看见致命错误**（阶段 2 流式反馈；只报致命错误，`Overfull` 这类警告留到终态）→ 失败展示最新完整清单（含警告）→ 点击跳转源码行。⚠ 这条"结束前看见"在 latexmk 时代成立；内嵌形态的中间错误来自引擎状态后端（不是"日志按页 flush"），**提前量 `[未测]`**
 - 依据 `.log` 解析（结构化错误提取）；**实时那一路走引擎管道**（stdout 的 `-p` 页标记 + stderr），`tmp/<stem>.log` 尾随只作补充——Tectonic 的 `.log` **收尾才落盘**，编译期间它常常还是空的（见 [dev/modules.md](./dev/modules.md) §2.6.1）；"编译还没结束就报致命错误"的提前量在 Tectonic 下 `[未测]`
@@ -225,7 +225,7 @@ node scripts/bench.mjs --with-real         # 追加真实模板档（依赖本�
 - **强度如实上报**：`Success{kind}` 报**实际**执行结果——Quick 请求在预算内收敛即报 Full（前端 `draft=false`，不亮「引用待更新」，也不会再排一次空闲收敛）；首编没有上一趟产物时同样按预算判定，不虚报草稿态
 - **空闲收敛**：成功且为草稿后停手 **2000ms**（任何编辑或新编译都取消）补一次 Full，把目录/交叉引用页码追上；期间状态栏显示琥珀色「引用待更新」，只由下一次成功且为 Full 的编译清除（失败与运行中都不清——屏幕上的 PDF 没变）
 - **草稿是"判定结果"而不是固定档**：预算 = 3 趟 / 第 1 趟 <1s / 累计 <2s（末值与前端 2000ms 同值）。超出预算或文档要外部工具（biber/makeindex）时停在草稿态，行为与上面几条原样一致。阶段② T9 实测（热缓存、本地 bundle）：Quick 请求 **75 ms** 且如实报 Full（已收敛）；冷缓存 Full **1,200 ms**（format 974 + 排版 149 + 转换 76）。阈值按发布档标定（debug 构建一趟慢 ≈4.6×，`tauri dev` 下会更早退化——见 [troubleshooting.md](./troubleshooting.md)）
-- **编译中反馈**：状态栏显示「已排版 N 页」——内嵌形态在**每趟排版收尾**从捕获的 XDV 数完整页（不是子进程 stdout 的 `[N]`，那路已删除）。⚠ "错误列表在编译结束前就报出"的真实提前量 `[未测]`（内嵌形态的错误来自引擎状态后端；见 [dev/modules.md](./dev/modules.md) §2.6.1）。下面 400KB / 162 页的数字是 latexmk 时代读数
+- **编译中反馈**：状态栏显示「已排版 N 页」——内嵌形态在**每趟排版收尾**从捕获的 XDV 数完整页（不是子进程 stdout 的 `[N]`，那路已删除）。⚠ "问题面板在编译结束前就报出"的真实提前量 `[未测]`（内嵌形态的错误来自引擎状态后端；见 [dev/modules.md](./dev/modules.md) §2.6.1）。下面 400KB / 162 页的数字是 latexmk 时代读数
 - **页级复用**（[增量编辑 × DVI](./archive/research/incremental-edit-x-dvi.md)）：每次编译后按捕获的 XDV **页哈希**与上一轮比对，把"哪些页变了"随 `pdf-updated` 下发，换来三处复用——**逐页未变则不刷新预览**、**部分变化则只重绘变化页**（实测 74 页文档改末章：render **102ms → 7ms**）、**页哈希全同则跳过 PDF 转换**。内嵌唯一后该能力恒可用（不再有"某形态不可用"）；空表只表示"无法判定"（XDV 缺失/损坏）⇒ 全量刷新。收益都落在"下游重复工作"，不改变排版本身（重排场景仍会命中大量页）
 - **真机证据（历史：latexmk 时代）**（tauri server MCP，`multifile`）：一个 cycle 内 就绪 → 排版中 → 就绪 +「引用待更新」→ **Δ≈2.0s** 后再次排版中（收敛的 Full）→ 就绪、提示消失；`tmp/main.fdb_latexmk` 由收敛那一趟更新而 Quick 趟不动它。⚠ 该文件**不再生成**（latexmk 产物），内嵌形态下同类判据改用日志/状态与 `kind` 字段
 - **未验证**：biber 场景下编辑期的可用性——内嵌形态**不跑外部 biber**（T9 实测），检出即提示并停在草稿态；`backend=bibtex` 由内建 BibtexEngine 正常出参考文献。详见 §2.4 / [dev/modules.md](./dev/modules.md) §2.7
@@ -285,6 +285,28 @@ node scripts/bench.mjs --with-real         # 追加真实模板档（依赖本�
 - **失败不影响启动**：预热指向不存在的本地 bundle 时，启动日志照常 `setup 126ms / Ready`、仅 `WARN format 预热失败（静默）`，缓存目录零产物；首编会自行生成（错误路径照常显式报 bundle 问题）。
 - 分段日志（`RUST_LOG=info`）：`startup 分段：watcher 已启动` → `setup 完成` → `setup 末尾（后台预热已派发）` → `webview Ready`，以及 `首启 format 预热完成 prewarm_ms`；`open_project / 首帧可编辑 / 首编完成` 属前端时间点，本会话 WebView2 受 `%LOCALAPPDATA%` 写权限限制未能渲染 ⇒ **窗口内可编辑 `[未测-环境限制]`**（与 T9 同因），启动关键路径（进程→Ready 126 ms ≪ 60 s 硬线）已由分段日志覆盖。
 - **仍未覆盖**：NSIS 安装版冷/温启动（安装器在受限会话不可交互）、真实网络 bundle 的"缓存已有 digest 才预热"端到端（策略有单测覆盖）。
+
+### 2.13 编译状态与交互语义（T35–T42，2026-11-21）
+
+> 文案写作规范见 [dev/copy-guide.md](./dev/copy-guide.md)；实现契约见 [dev/modules.md](./dev/modules.md) §2.7（状态/文案派生）、§9.1/§9.2/§9.4、§10（事件表）。
+
+**可见状态只有这些**（后端 `CompilePhase` 只有 `queued/running/success/failed` 四相位，**没有 `idle`**）：
+
+| 状态 | 界面文字 | 判定/来源 |
+|---|---|---|
+| 无项目 | 不渲染状态 chip | 没打开项目 |
+| 未编译 | 状态栏中性灰「未编译」；问题面板灰圈「还没有编译」 | **前端派生** `hasCompiled=false`（成功/失败任一终态置真）；零 DTO/事件变化 |
+| 排队中 | 「排队中…」（状态栏 chip 与工具栏按钮同源） | 后端 `queued`：已入队、引擎未开始（合并队列最多一个等待条目） |
+| 排版中 | 「排版中…」；「已排版 N 页」只在 `running && pages>0` 时显示 | 后端 `running` |
+| 就绪 | 「就绪」（绿） | 后端 `success` **且** 至少成功编译过一次（首编前不显示就绪） |
+| 失败 | 「失败· 内容错误 / 失败· 超时」；问题面板给条目 | 后端 `failed` + `kind` |
+
+- **就绪 = 一次成功编译解锁**：`phase` 的初值虽是 `success`，未编译时必须靠 `hasCompiled` 显示「未编译」——否则启动即绿点「就绪」是假状态（A-01）。`hasCompiled`/错误/草稿**都是"当前项目这一次会话"的状态**：打开/切换项目必须 `compile.reset()`，否则上一项目的「就绪」和旧错误会带到新项目（A-01/B1）。在途编译事件覆写的边界（F1）见 [dev/modules.md](./dev/modules.md) §12.1 `[待修]`。
+- **按钮文案与状态同源**：工具栏「编译」按钮 = `compileStatus.compileButtonText(phase)`（`排队中…` / `排版中…` / `编译`）；PLAN 原判据"queued 保持「编译」+title 排队中"**已由 lead 裁决作废**（按钮文字分档更直白），不得再按旧判据实现或验收。
+- **编译模式切换**：连续编译（默认，输入停顿防抖 ~500ms）/ 保存时编译。状态栏模式 chip 单击打开菜单，两项各带一句**可见说明**（`title` 只作补充）；菜单支持 ArrowUp/Down/Home/End/Esc（Esc 关菜单并把焦点还给 chip）与外部点击关闭（A-12）。
+- **问题面板**：标题「问题」，计数「N 个问题」；计数唯一口径 `errorGroups.groupErrors().total`（状态栏折叠头与面板头部同源）；空态三态（还没有编译 / 排版中… / 没有发现问题）；诊断 hint 可换行完整显示；超出上限显示「已隐藏 N 条重复问题」+「显示全部」（A-02/B-08/C-01 承重局部）。
+- **不可逆动作必须二次确认**：外部修改采用磁盘版本（覆盖未保存修改、不可撤销）、恢复编译项默认（列出将重置项）、有未应用输入时切页/关闭（取消不丢输入）、删除文件；确认按钮写动作本身（A-11/A-14/A-15/C-10）。
+- **chip 不做单击即覆盖/即清除**：外部修改 chip 单击只弹确认；运行时提示 chip 单击展开全文并展开问题面板、**不销毁**；设置里的持久提示点击 = 不再提示（写盘），文案明说（C-02/B-20）。
 
 ## 3. 预览、工具链、编辑器与界面主题
 
@@ -428,7 +450,7 @@ Cargo workspace **五 crate**：[ADR-0006](./adr/0006-workspace-split-core-and-t
 ### 4.3 前端侧：模块划分
 
 - **services**：`ipc.ts`（specta 生成的类型化 invoke 封装）、`events.ts`（事件订阅 → store 分发）
-- **stores（Pinia ×6）**：projectStore（项目/根文件/文件树）｜editorStore（打开文件、脏标志、活动标签）｜compileStore（编译状态/队列/错误列表）｜previewStore（PDF 文档、滚动位置、SyncTeX 高亮）｜outlineStore（源码结构树）｜settingsStore
+- **stores（Pinia ×6）**：projectStore（项目/根文件/文件树）｜editorStore（打开文件、脏标志、活动标签）｜compileStore（编译相位/队列/问题数据）｜previewStore（PDF 文档、滚动位置、SyncTeX 高亮）｜outlineStore（源码结构树）｜settingsStore
 - **组件**：EditorPane（Monaco 封装）、PreviewPane（pdf.js 封装）、FileTree、TabBar、OutlinePane（大纲）、ErrorList、StatusBar、布局壳、**自研 splitter**（不引入 vue-code-layout，多面板布局后置）
 - **composables**：useAutoSave（防抖保存）、useSyncTex、useTheme、useIdleConvergence
 
@@ -459,13 +481,15 @@ Cargo workspace **五 crate**：[ADR-0006](./adr/0006-workspace-split-core-and-t
 
 | 事件 | 载荷 |
 |---|---|
-| compile-status | { phase: queued\|running\|success\|failed, kind: timeout\|content_error\|aborted\|null, draft } |
+| compile-status | { phase: queued\|running\|success\|failed, kind: timeout\|content_error\|aborted\|null, draft }（后端相位无 `idle`；「未编译」由前端 `hasCompiled` 派生，见 §2.13） |
 | errors-updated | ErrorEntry[]（失败时携带；编译中清空） |
 | pdf-updated | { path, changed_pages, pages }（编译成功、PDF 新版本就绪；页级差异见 [§2.9](#29-编辑期单趟quick的收益代价与落地形态)） |
 | files-changed | { paths, structural }（监视旁路：文件树刷新/重载判定；`structural`=true 仅增/删/重命名，内容修改为 false——见 [dev/modules.md](./dev/modules.md) §7） |
 | settings-changed | Settings |
 
 **中间态事件**（阶段 2 流式反馈与编译中预览）：`compile-progress`（已排版页数）、`compile-errors`（运行时致命错误）、`compile-preview`（部分 PDF）。三者**刻意与终态分开**：收尾期补发的中间态可能晚于终态抵达，复用终态事件名会顶掉权威列表；前端以 `phase === "running"` 为前置采纳。完整载荷见 [dev/modules.md](./dev/modules.md) §10。
+
+**前端派生状态不进事件**：「未编译 / 就绪」由 `hasCompiled` 判定、按钮进行态文案由 `compileButtonText` 派生、问题计数由 `errorGroups` 派生——事件只承载后端事实，不为文案新增 DTO/事件（零 bindings diff）。
 
 不做编译输出流式推送——.log 文件是权威，避免 IPC 风暴。
 
@@ -540,7 +564,7 @@ Cargo workspace **五 crate**：[ADR-0006](./adr/0006-workspace-split-core-and-t
 ### 4.8 工程基建
 
 - **Rust 测试**：cargo test——scheduler 用 fake CompileRunner 单测（队列合并/超时/终止语义）；insta 快照——log_parser 用真实 `.log` 固化为用例；`latteset-tectonic` 有 `#[ignore]` 真编用例（format 生成 + 真 PDF + 页进度 + notice；闸门 = **编进来 + 有可用 bundle**），`latteset-server` 的 4 个真编用例同闸门；跑法统一走 `npm run lib:test`（全仓 4 crate）或 `-p` 单跑（需 vcpkg env）
-- **前端**：vitest（+ @vue/test-utils）——stores 与 composables（project 路径归一化、editor 自保存过滤/冲突、useAutoSave 防抖、useIdleConvergence、useSyncTex）与组件单测，`npm run test`（T19：17 files / 161 tests）
+- **前端**：vitest（+ @vue/test-utils）——stores 与 composables（project 路径归一化、editor 自保存过滤/冲突、useAutoSave 防抖、useIdleConvergence、useSyncTex）与组件单测，`npm run test`（T38/T41：**18 files / 189 tests**；T19 时为 17/161）
 - **CI（GitHub Actions，MVP 前即搭）**：Linux 档跑 `npm run build` + `npm run test` + `cargo test -p latteset-core` + `cargo test -p latteset-infra`（不碰 C 链）；Windows 默认档装 vcpkg 六端口 → `with-tectonic-lib.ps1 -Mode check → -Mode test`（全仓 Rust）→ `-Mode tauri build` 冒烟（NSIS 打包链路，覆盖 [ADR-0003](./adr/0003-windows-first-unsigned-distribution.md)）。**内嵌唯一后不再有独立的库形态 tag 档**。完整验证入口清单见 [dev/testing.md](./dev/testing.md)
 
 ## 5. 架构图
@@ -836,13 +860,13 @@ node scripts/render-diagrams.mjs docs/design.md docs/diagrams --png
 
 ### 6.1 MVP 边界
 
-**MVP 包含**：项目打开 + 文件树 + 标签页 + 编辑（高亮/查找替换）+ 双模式编译 + 调度全套（队列/超时/手动终止/错误分类）+ 错误列表跳转 + 内嵌预览（含 SyncTeX）。范围决策见 [ADR-0004](./adr/0004-mvp-scope.md)。
+**MVP 包含**：项目打开 + 文件树 + 标签页 + 编辑（高亮/查找替换）+ 双模式编译 + 调度全套（队列/超时/手动终止/错误分类）+ 问题面板跳转 + 内嵌预览（含 SyncTeX）。范围决策见 [ADR-0004](./adr/0004-mvp-scope.md)。
 
 **MVP 后未做（规划中/后置）**：LSP（v1.1）、外部查看器、自动更新、代码签名证书。Tectonic 在 MVP 后已完成**内嵌唯一形态**（②段收口：子进程路径删除、设置 v3、构建/CI 统一 vcpkg，证据见 [dev/tectonic-library.md](./dev/tectonic-library.md) §6 与 [roadmap.md](./roadmap.md)），**bundle 分发方案已在③段落地**（ADR-0016 候选 A：随包精简集 + 缺包补全通道，离线首编可用；见 [ADR-0016](./adr/0016-ship-bundle-offline.md)「③段执行记录」）。已落地项与其证据见 [roadmap.md](./roadmap.md)。
 
 **已否决**：
 
-- **引擎语言自适应**（见 [§2.4](#24-错误列表与诊断)：19 个真实模板双引擎实测 0 例因默认 XeLaTeX 选错、`\RequirePDFTeX` 为 0/7374、文档口径 19/19 兼容 XeLaTeX——"引擎自动推断"解决的是不存在的问题；唯一两种引擎都不行的是日文 `jsarticle`，需 platex，不在三引擎范围内）
+- **引擎语言自适应**（见 [§2.4](#24-问题面板与诊断)：19 个真实模板双引擎实测 0 例因默认 XeLaTeX 选错、`\RequirePDFTeX` 为 0/7374、文档口径 19/19 兼容 XeLaTeX——"引擎自动推断"解决的是不存在的问题；唯一两种引擎都不行的是日文 `jsarticle`，需 platex，不在三引擎范围内）
 - **DVI/XDV 作为预览格式**（实测：产物→屏幕比"xdvipdfmx + pdf.js"慢 **57–68×**——121 页 44.06s vs 0.65s+115ms；XDV 体积不定（0.15×–29× PDF）；未写完的 DVI 无 postamble 直接解析失败。唯一值得吸收的是"编译期页完成度进度信号"，见 [dvi-preview-feasibility.md](./archive/research/dvi-preview-feasibility.md)。**显示格式仍否决**，但"页前缀 + 合成 postamble → **部分 PDF**"这条**流式出图**路在进程内每次刷新只要 **~0.1 s**（构造 10 ms + 进程内转换 92–131 ms），长编译窗口 7.6 s、重载 0 long task、滚动位置零偏移 ⇒ 已从"仅可行性"变为**已落地**（「编译中预览」；内嵌唯一后恒可用））
 - **增量编译具体策略**（latexmk 增量 = 整份单遍重排，属引擎上限，见 [ADR-0005](./adr/0005-latexmk-first-incremental-next.md)）
 

@@ -124,6 +124,7 @@ function submitRename() {
         <button
           class="trash"
           :title="`删除${isDir ? '文件夹' : '文件'}：${node.entry.name}`"
+          :aria-label="`删除${isDir ? '文件夹' : '文件'}：${node.entry.name}`"
           data-testid="tree-trash"
           @click.stop="emit('remove', { path: node.entry.path, isDir, name: node.entry.name })"
         >🗑</button>
@@ -215,7 +216,7 @@ export default { name: "FileTreeItem" };
   padding: 1px 4px;
   border: 1px solid var(--blueberry);
   border-radius: 3px;
-  background: var(--surface, #fff);
+  background: var(--surface);
   color: var(--ink);
 }
 </style>

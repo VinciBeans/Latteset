@@ -9,6 +9,7 @@ import { useCompileStore } from "../stores/compile";
 import { useEditorStore } from "../stores/editor";
 import { useSettingsStore } from "../stores/settings";
 import { ipc } from "../services/ipc";
+import { groupErrors, MAX_DISPLAY } from "../services/errorGroups";
 import { ONLINE_BUNDLE_URL } from "../services/bundleSource";
 import type { ErrorEntry } from "../bindings";
 
@@ -16,35 +17,25 @@ const compile = useCompileStore();
 const editor = useEditorStore();
 const settings = useSettingsStore();
 
-/** 展示上限（去重后的组数）。 */
-const MAX_DISPLAY = 30;
+/** B-08：「显示全部」后不再截断（MAX_DISPLAY 不出现在文案里）。 */
+const showAll = ref(false);
 
-interface Group {
-  entry: ErrorEntry;
-  count: number;
-  /** 首行展示文本：有诊断用「原因」，否则用原始消息首行。 */
-  headline: string;
-}
+/** 去重 + 截断（口径在 `services/errorGroups`：与状态栏计数同源）。 */
+const grouped = computed(() =>
+  groupErrors(compile.errors, showAll.value ? Number.POSITIVE_INFINITY : MAX_DISPLAY),
+);
 
-/** 去重：file + 展示文本（诊断原因优先，否则消息首行）作为键；保留首次出现的文件/行号。 */
-const grouped = computed(() => {
-  const seen = new Map<string, Group>();
-  for (const e of compile.errors) {
-    const headline = e.diagnosis?.cause ?? e.message.split("\n")[0] ?? "";
-    const key = `${e.file ?? ""}\n${headline}`;
-    const g = seen.get(key);
-    if (g) g.count += 1;
-    else seen.set(key, { entry: e, count: 1, headline });
-  }
-  const items = [...seen.values()];
-  return {
-    items: items.slice(0, MAX_DISPLAY),
-    hidden: items.length - MAX_DISPLAY,
-  };
+/** 空态三态（A-01/A-02）：未编译 / 排版中 / 没有发现问题。 */
+const emptyText = computed(() => {
+  if (compile.phase === "running") return "排版中…";
+  if (!compile.hasCompiled) return "还没有编译";
+  return "没有发现问题";
 });
-
-/** 诊断覆盖情况（头部徽标用：让"有几条能被解释"一眼可见）。 */
-const diagnosed = computed(() => grouped.value.items.filter((g) => g.entry.diagnosis).length);
+const emptyIcon = computed(() => {
+  if (compile.phase === "running") return "…";
+  return compile.hasCompiled ? "✓" : "○";
+});
+const emptyIdle = computed(() => compile.phase !== "running" && !compile.hasCompiled);
 
 function jump(file: string | null, line: number | null) {
   if (!file) return;
@@ -105,17 +96,12 @@ async function switchToOnlineBundleAndRetry() {
   <div class="error-list">
     <div class="list-head">
       <span class="head-title">问题</span>
-      <span class="head-count" v-if="grouped.items.length > 0">{{ grouped.items.length }}</span>
-      <span
-        class="head-diagnosed"
-        v-if="diagnosed > 0"
-        :title="`其中 ${diagnosed} 条已给出原因与修复建议`"
-      >已诊断 {{ diagnosed }}</span>
+      <span class="head-count" v-if="grouped.items.length > 0">{{ grouped.total }}</span>
     </div>
     <div class="list-body">
       <div v-if="grouped.items.length === 0" class="empty">
-        <span class="empty-icon">✓</span>
-        <span>{{ compile.phase === "running" ? "排版中…" : "没有发现错误" }}</span>
+        <span class="empty-icon" :class="{ idle: emptyIdle }">{{ emptyIcon }}</span>
+        <span>{{ emptyText }}</span>
       </div>
       <div
         v-for="(g, i) in grouped.items"
@@ -142,7 +128,7 @@ async function switchToOnlineBundleAndRetry() {
               :disabled="retrying"
               @click.stop="raiseTimeoutAndRetry(g.entry.diagnosis!.suggested_timeout_secs!)"
             >
-              {{ retrying ? "重试中…" : `提高到 ${g.entry.diagnosis.suggested_timeout_secs}s 并重试` }}
+              {{ retrying ? "重试中…" : `提高到 ${g.entry.diagnosis.suggested_timeout_secs} 秒并重试` }}
             </button>
           </div>
           <!-- 缺包补全通道（T16 / ADR-0016 候选 A）：显式切在线完整宏包集后重编，不静默回退 -->
@@ -159,7 +145,8 @@ async function switchToOnlineBundleAndRetry() {
         </div>
       </div>
       <div class="more" v-if="grouped.hidden > 0">
-        另有 {{ grouped.hidden }} 组错误未显示（仅展示前 {{ MAX_DISPLAY }} 组）
+        <span>已隐藏 {{ grouped.hidden }} 条重复问题</span>
+        <button class="show-all" @click.stop="showAll = true">显示全部</button>
       </div>
     </div>
   </div>
@@ -185,16 +172,6 @@ async function switchToOnlineBundleAndRetry() {
   font-size: 10.5px; font-weight: 700;
   letter-spacing: 0;
 }
-/* 「已诊断 N」：本次新增的诊断覆盖提示（roadmap ④） */
-.head-diagnosed {
-  display: inline-flex; align-items: center;
-  padding: 0 7px; height: 17px;
-  border-radius: 9px;
-  background: var(--tint-blueberry-strong);
-  color: var(--blueberry);
-  font-size: 10.5px; font-weight: 700;
-  letter-spacing: 0;
-}
 .list-body { flex: 1 1 auto; overflow: auto; }
 .empty {
   display: flex; align-items: center; gap: 9px;
@@ -208,6 +185,11 @@ async function switchToOnlineBundleAndRetry() {
   background: rgba(var(--mint-rgb), 0.14);
   color: var(--ok-ink);
   font-size: 10px; font-weight: 700;
+}
+/* 未编译（A-02）：中性灰圈，别给"已检查通过"的绿色暗示 */
+.empty-icon.idle {
+  background: var(--card-2);
+  color: var(--ink-faint);
 }
 .entry {
   display: flex; align-items: flex-start; gap: 9px;
@@ -231,9 +213,9 @@ async function switchToOnlineBundleAndRetry() {
   color: var(--ink-dim);
   font-size: 11.5px;
   line-height: 1.5;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  /* B2：可行动出路不能被单行截断——完整换行显示（不再 nowrap/省略号） */
+  white-space: normal;
+  word-break: break-word;
 }
 .hint-icon { color: var(--blueberry); font-weight: 700; margin-right: 4px; }
 /* 一键操作行（roadmap ㉕：超时"提高上限并重试"） */
@@ -271,8 +253,22 @@ async function switchToOnlineBundleAndRetry() {
 }
 .loc { color: var(--blueberry); font-family: var(--mono); flex: 0 0 auto; max-width: 45%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .more {
+  display: flex;
+  align-items: center;
+  gap: 8px;
   padding: 8px 16px 12px;
   color: var(--ink-faint);
   font-size: 11.5px;
 }
+.show-all {
+  padding: 2px 8px;
+  border: 1.5px solid var(--line);
+  border-radius: 6px;
+  background: var(--card);
+  color: var(--ink-dim);
+  font-size: 11px;
+  font-family: inherit;
+  cursor: pointer;
+}
+.show-all:hover { border-color: var(--blueberry); color: var(--blueberry); }
 </style>

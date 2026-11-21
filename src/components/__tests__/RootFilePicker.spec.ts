@@ -30,8 +30,11 @@ describe("RootFilePicker", () => {
     expect(texts[0]).toContain("b.tex");
     expect(texts[1]).toContain("chapters/a.tex");
     expect(texts[2]).toContain("z.tex");
-    // 文案指向「多个可能」
-    expect(w.find(".lead").text()).toContain("3");
+    // 文案指向「多个可能」，并给出根文件的白话释义（正文入口 + \documentclass）
+    const lead = w.find(".lead").text();
+    expect(lead).toContain("3");
+    expect(lead).toContain("正文入口");
+    expect(lead).toContain("documentclass");
   });
 
   it("多候选：点击行 emit select，且载荷是**项目内相对路径**", async () => {
@@ -46,10 +49,11 @@ describe("RootFilePicker", () => {
     expect(w.find(".lead").text()).toContain("没有找到");
   });
 
-  it("零候选且无 .tex：给出空状态提示，不渲染列表", () => {
+  it("零候选且无 .tex：给出空状态提示（含完整设置路径），不渲染列表", () => {
     const w = mountPicker();
     expect(w.findAll(".file-row")).toHaveLength(0);
     expect(w.find(".empty").exists()).toBe(true);
+    expect(w.find(".empty").text()).toContain("设置 → 项目 → 根文件");
   });
 
   it("项目外路径被过滤（不提供不可用的候选）", () => {

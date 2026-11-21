@@ -45,18 +45,18 @@ function split(rel: string): { dir: string; name: string } {
 
 <template>
   <div class="picker-backdrop" @click.self="emit('close')">
-    <div class="picker-panel" role="dialog" aria-label="选择根文件">
+    <div class="picker-panel" role="dialog" aria-modal="true" aria-label="选择根文件">
       <header class="panel-head">
         <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
           <path d="M6 2h7l5 5v13a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2zm7 1.5V8h4.5L13 3.5z"/>
         </svg>
         <span class="head-title">选择根文件</span>
-        <button class="head-close" title="关闭" @click="emit('close')">×</button>
+        <button class="head-close" title="关闭" aria-label="关闭" @click="emit('close')">×</button>
       </header>
 
       <div class="panel-body">
         <p class="lead" v-if="isMulti">
-          检测到 <b>{{ items.length }}</b> 个可能的根文件（都含 <code>\documentclass</code>）。
+          检测到 <b>{{ items.length }}</b> 个可能的根文件。根文件是编译的正文入口文件（通常含 <code>\documentclass</code>）。
           请选择要编译的根文件——选定后会写入项目设置（只对当前项目生效）。
         </p>
         <p class="lead" v-else>
@@ -73,7 +73,7 @@ function split(rel: string): { dir: string; name: string } {
           </li>
         </ul>
         <p class="empty" v-else>
-          项目内没有 <code>.tex</code> 文件。请确认打开的是模板所在目录，或在设置里手动指定根文件。
+          项目内没有 <code>.tex</code> 文件。请确认打开的是模板所在目录，或在「设置 → 项目 → 根文件」里手动指定。
         </p>
 
         <p class="err" v-if="error">{{ error }}</p>

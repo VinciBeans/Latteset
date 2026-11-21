@@ -41,7 +41,7 @@ onMounted(() => panel.value?.focus());
         <p class="cf-err" v-if="error">{{ error }}</p>
       </div>
       <footer class="cf-foot">
-        <button class="btn" :disabled="busy" data-testid="confirm-cancel" @click="emit('cancel')">
+        <button class="btn" data-testid="confirm-cancel" @click="emit('cancel')">
           取消
         </button>
         <button class="btn danger" :disabled="busy" data-testid="confirm-ok" @click="emit('confirm')">

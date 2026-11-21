@@ -213,7 +213,7 @@ pub fn diagnose_timeout(evidence: &str, ev: &TimeoutEvidence) -> Diagnosis {
         return Diagnosis {
             kind: fatal.kind,
             cause: format!(
-                "本次编译在 {}s 内没跑完、已被终止；但引擎输出显示它其实早已失败——真正要修的是这条：{}",
+                "本次编译在 {} 秒内没跑完、已被终止；但引擎输出显示它其实早已失败——真正要修的是这条：{}",
                 ev.timeout_secs, fatal.cause
             ),
             hint: fatal.hint.map(|h| format!("{h}（注意：这种情况提高编译超时救不了）")),
@@ -236,11 +236,11 @@ pub fn diagnose_timeout(evidence: &str, ev: &TimeoutEvidence) -> Diagnosis {
         Some(pages) => Diagnosis {
             kind: DiagnosisKind::CompileTimeout,
             cause: format!(
-                "编译在 {}s 内没有跑完，但引擎输出显示已经排版到第 {pages} 页——是在推进，只是比上限慢（{first}，{scale}）",
+                "编译在 {} 秒内没有跑完，但引擎输出显示已经排版到第 {pages} 页——是在推进，只是比上限慢（{first}，{scale}）",
                 ev.timeout_secs
             ),
             hint: Some(format!(
-                "把编译超时提高到 {suggested}s 后重试（下方按钮一键完成）；大文档首编常需数分钟，仍不够可继续调大（上限 1800s）"
+                "把编译超时提高到 {suggested} 秒后重试（问题面板里的「提高到 {suggested} 秒并重试」按钮）；大文档首编常需数分钟，仍不够可继续调大（上限 1800 秒）"
             )),
             suggested_timeout_secs: Some(suggested),
             missing_file: None,
@@ -248,11 +248,11 @@ pub fn diagnose_timeout(evidence: &str, ev: &TimeoutEvidence) -> Diagnosis {
         None => Diagnosis {
             kind: DiagnosisKind::CompileTimeoutStalled,
             cause: format!(
-                "编译在 {}s 内没有跑完，且引擎输出里还没出现任何页面输出（{first}，{scale}）——可能仍在做前置处理（加载字体、展开宏包），也可能真的卡住了",
+                "编译在 {} 秒内没有跑完，且引擎输出里还没出现任何页面输出（{first}，{scale}）——可能仍在做前置处理（加载字体、展开宏包），也可能真的卡住了",
                 ev.timeout_secs
             ),
             hint: Some(format!(
-                "先排除死循环（\\loop / \\foreach / \\whileloop）与等待终端输入（如 \\read）；若确认只是慢，把超时提高到 {suggested}s 后重试（下方按钮一键完成）"
+                "先排除死循环（\\loop / \\foreach / \\whileloop）与等待终端输入（如 \\read）；若确认只是慢，把超时提高到 {suggested} 秒后重试（问题面板里的「提高到 {suggested} 秒并重试」按钮）"
             )),
             suggested_timeout_secs: Some(suggested),
             missing_file: None,
@@ -353,7 +353,7 @@ pub fn diagnose(m: &LogMessage) -> Option<Diagnosis> {
         return Some(d(
             DiagnosisKind::NonUtf8Source,
             "源文件含非法 UTF-8 字节——常见于 GBK 编码的旧文件",
-            "把该 .tex 另存为 UTF-8（本引擎只支持 UTF-8 源码；GBK 旧文件请先转码）",
+            "把该 .tex 另存为 UTF-8（Latteset 只支持 UTF-8 源码；GBK 旧文件请先转码）",
         ));
     }
 
@@ -364,11 +364,11 @@ pub fn diagnose(m: &LogMessage) -> Option<Diagnosis> {
     //    检出即给可行动出路，不静默降级、也不建议"切回别的工具链再试一遍"当作无事发生。
     if let Some(tool) = unsupported_tool(text) {
         let cause = if tool == "biber" {
-            "该文档的参考文献需要外部 biber：内嵌引擎不运行外部工具（不会调用 biber、不会生成 .bbl）\
+            "该文档的参考文献需要外部 biber：Latteset 内嵌引擎不运行外部工具（不会调用 biber、不会生成 .bbl）\
              ⇒ 引用/参考文献很可能是未解析的"
                 .to_string()
         } else {
-            format!("该文档的构建步骤需要外部工具 {tool}：本引擎不会自动运行它，只跳过那一步")
+            format!("该文档的构建步骤需要外部工具 {tool}：Latteset 内嵌引擎不会自动运行它，只跳过那一步")
         };
         return Some(d(
             DiagnosisKind::UnsupportedTool,
@@ -376,7 +376,7 @@ pub fn diagnose(m: &LogMessage) -> Option<Diagnosis> {
             "两条可行动出路：① 参考文献改用内建 bibtex——biblatex 写 \\usepackage[backend=bibtex]{biblatex}，\
              或改用传统的 \\bibliography{...} + \\bibliographystyle{...}（引擎会跑内建 bibtex，正常生成 .bbl）；\
              ② 索引/术语表暂时去掉 \\makeindex / \\printindex 或 \\makeglossaries / \\printglossaries——\
-             这两类本引擎不会自动跑，静默跳过只会得到缺索引/术语表的 PDF，需要时先在命令行跑一次 \
+             这两类 Latteset 内嵌引擎不会自动跑，静默跳过只会得到缺索引/术语表的 PDF，需要时先在命令行跑一次 \
              makeindex / makeglossaries 再编译。留在 biber 上：先在本机命令行用 biber 生成 .bbl 再编译\
              （引擎会读项目里的 .bbl；本机 biber 的版本要与文档用的 biblatex 匹配），或改用支持外部工具的\
              其它构建流程",
@@ -415,9 +415,9 @@ pub fn diagnose(m: &LogMessage) -> Option<Diagnosis> {
                     DiagnosisKind::MissingPackage,
                     format!("缺少宏包文件 {n}"),
                     format!(
-                        "本应用随包的是精简宏包集（覆盖常用文档，不是完整 TeX Live）⇒ 在「设置 → 引擎 → \
+                        "Latteset 随包的是内置精简宏包集（覆盖常用文档，不是完整 TeX Live）⇒ 在「设置 → 引擎 → \
                          宏包集来源」切到「在线完整宏包集」（需联网）后重新编译，或把 {pkg} 补进本地目录 \
-                         bundle；若模板自带该文件（{n}），确认「打开项目」选的是模板根目录"
+                         宏包集；若模板自带该文件（{n}），确认「打开项目」选的是模板根目录"
                     ),
                     n,
                 ));
@@ -427,8 +427,8 @@ pub fn diagnose(m: &LogMessage) -> Option<Diagnosis> {
                     DiagnosisKind::MissingClass,
                     format!("缺少文档类文件 {n}"),
                     format!(
-                        "本应用随包的是精简宏包集（不是完整 TeX Live）⇒ 在「设置 → 引擎 → 宏包集来源」\
-                         切到「在线完整宏包集」（需联网）后重新编译，或把 {n} 补进本地目录 bundle；\
+                        "Latteset 随包的是内置精简宏包集（不是完整 TeX Live）⇒ 在「设置 → 引擎 → 宏包集来源」\
+                         切到「在线完整宏包集」（需联网）后重新编译，或把 {n} 补进本地目录宏包集；\
                          学位论文模板常自带 .cls（确认项目根目录是否正确），GitHub 源码版可能需先编译 \
                          .ins 生成 .cls"
                     ),
@@ -540,7 +540,7 @@ pub fn diagnose(m: &LogMessage) -> Option<Diagnosis> {
         return Some(d(
             DiagnosisKind::AuxWriteFailed,
             format!("写不出中间文件 {file}——\\include{{子目录/文件}} 要在中间文件目录里写同名 .aux，而那个子目录不存在"),
-            "把根文件里的 \\include{子目录/文件} 改成 \\input{子目录/文件}（\\input 不写子文件 .aux，可绕开）；根因是模板的构建约定要求中间文件与源文件同目录，而本产品把中间文件统一收纳在 tmp/",
+            "把根文件里的 \\include{子目录/文件} 改成 \\input{子目录/文件}（\\input 不写子文件 .aux，可绕开）",
         ));
     }
 

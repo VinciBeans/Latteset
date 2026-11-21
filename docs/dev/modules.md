@@ -286,6 +286,7 @@ pub enum FailureKind { Timeout, ContentError, Aborted }
 | ADR-0010 例外 | `IoProvider` 是**同步** trait（`io_base/src/lib.rs:433-533`）而 core 的 `FileSystem` 是 async（`project/fs.rs:15-16`）⇒ 本层的磁盘读写只能在 `spawn_blocking` 里用 `std::fs`（只碰 `project_root` 与 `tmp/`）。这是 X-5 登记的"第二落点"，**与方案 §4.1 写的"代理到 core FileSystem"有出入**（技术上前者不可达），已记入 t21 的交付说明 |
 | 复核入口 | **主入口（唯一）**：`npm run lib:check` → `npm run lib:cli` → `latteset-cli --project <dir> compile` → `node scripts/validate-pdf.mjs --pdf <out.pdf> --expect-pages N --expect-text <子串>`；单测 `cargo test -p latteset-tectonic`（需 vcpkg env，或直接 `npm run lib:test`）；性能 `node scripts/bench-embedded.mjs`；随包/断网/缺包用 `scripts/make-bundle.mjs` + `validate-pdf`（见 [testing.md](./testing.md) §③）；许可 `node scripts/make-notices.mjs --check`；另有 `node scripts/tectonic-lib-xdvscan.mjs`。`scripts/bench-tectonic-lib.mjs` 原用于**库形态 vs 子进程 A/B**，对照组已删除，只作历史入口 |
 | 当前状态（T22 复核，2026-11-21） | **内嵌唯一形态 + 随包精简集全绿**：`cargo test -p latteset-tectonic` **65 passed / 3 ignored**（3 个真编在 `--ignored` 下全过：真编 / 预热后首编 / 随包 `Shipped` verbatim 真编）；`npm run lib:test` **399 passed / 8 ignored**；随包 zip 断网首编 exit 0（4.4 s、Fandol 四款、0 U+FFFD）、二次 1.2 s；缺包 → 显式切在线后 exit 0；U-14 + SyncTeX 正向在随包集内跑绿；启动 release GUI 直启进程→Ready **126 ms**、后台预热 **992 ms**、首编 `format_ms=0`。⚠ debug 构建下 C 引擎 `-O0`，同夹具数字会大 6–8×，**比性能必须 release**。仍未支持（按 ADR-0015 决策 4 照单接受，如实提示）：biber / makeindex / glossaries |
+| **状态/文案派生（前端，不扩 DTO；T35–T42）** | `compile-status` 只描述后端**四相位**（`queued/running/success/failed`，**没有 `idle`**）：**「未编译」由前端 `hasCompiled=false` 派生**（`src/stores/compile.ts`，成功/失败终态置真；打开或切换项目时 `compile.reset()`，否则会把上一项目「就绪」/旧错误带过来——F1 在途事件边界见 §12.1）。工具栏「编译」按钮与状态栏 phase 的进行态文案**唯一来源** `src/services/compileStatus.ts`：`queued → 排队中…`、`running → 排版中…`（A-18 按 lead 裁决；PLAN 原判据"queued 保持「编译」+title"**已作废**）。问题/错误计数**唯一口径** `src/services/errorGroups.ts` 的 `groupErrors().total`（状态栏折叠头与「问题」面板同源，`MAX_DISPLAY` 不进文案）。界面文案规范见 [copy-guide.md](./copy-guide.md)，交互契约见 §9.1/§9.2/§9.4 |
 
 
 ## 3. 项目子系统（project 大模块）
@@ -482,7 +483,7 @@ pub fn diagnose(msg: &LogMessage) -> Option<Diagnosis>;
 
 ### 4.2 超时：证据采集与一键提超时
 
-- 超时**进错误列表**：`CompileOutcome::Timeout { entry }`，条目由 runner 现场采集证据构造（是否首编 / `.tex` 源文件数 / **引擎输出**已排版到第几页；证据 = `.log` + 已捕获输出尾部 + 流式最大页，见 §2.6.1）；手动终止（`Aborted`）不产证据条目；
+- 超时**进问题面板**：`CompileOutcome::Timeout { entry }`，条目由 runner 现场采集证据构造（是否首编 / `.tex` 源文件数 / **引擎输出**已排版到第几页；证据 = `.log` + 已捕获输出尾部 + 流式最大页，见 §2.6.1）；手动终止（`Aborted`）不产证据条目；
 - 两类判据：有页输出 → `compile_timeout`（在推进，只是比上限慢）；无任何页输出 → `compile_timeout_stalled`（可能仍在做前置处理，也可能真卡住——**不武断说"卡住"**）；
 - **强判据优先**：证据文本里已有致命错误 → 直接报那条错误且**不给**一键按钮（提高超时救不了）；
 - `suggested_timeout_secs` 阶梯 `300 → 900 → 1800`，**首编直接跳 900**（首编最慢，让用户在注定不够的 300s 上再等一次代价过高）；`ErrorList.vue` 据此渲染「提高到 Ns 并重试」，点击后 `update_settings` → `compile_now`（顺序固定：先改设置再重跑）。
@@ -733,7 +734,7 @@ crates/latteset-server
 
 ### 9.1 services（唯一碰 IPC 的层）
 
-**另有四份纯函数工具**（roadmap ㊿ 收敛，改前是各处手写一份；都是纯函数、可单测）：
+**另有六份纯函数工具**（roadmap ㊿ 收敛，改前是各处手写一份；都是纯函数、可单测；`compileStatus` / `errorGroups` 为 T35–T42 新增）：
 
 | 文件 | 职责 | 为什么独立出来 |
 |---|---|---|
@@ -741,6 +742,8 @@ crates/latteset-server
 | `errors.ts` | `errorText(e)` | 原先三份不等价实现 ⇒ 同一类失败在不同位置显示成 `[object Object]` 或空串 |
 | `fuzzy.ts` | 文件树搜索的模糊匹配（子串优先、子序列兜底） | 纯函数 + 6 例单测（roadmap ㊾） |
 | `draftPatch.ts` | 草案层：LaTeX → 近似排版文本 | 纯函数（实时预览 v1） |
+| `compileStatus.ts` | `compileButtonText(phase)`：`queued → 排队中…` / `running → 排版中…` / 其余 → `编译` | 工具栏按钮与状态栏 phase 的进行态文案**只此一份**：后端只有 `queued/running` 两个进行相位，把排队说成「排版中…」会让用户以为引擎已在跑（A-18；PLAN 原"queued 保持「编译」+title"判据被 lead 裁决取代） |
+| `errorGroups.ts` | `groupErrors(errors, limit)`：去重（同文件 + 同首行/原因算一条，`count` 记重复次数）→ `items` / `hidden` / `total`；`MAX_DISPLAY = 30` 只作默认上限 | **计数唯一口径**：状态栏折叠头「N 个问题」、问题面板头部计数、`hidden` 文案都来自同一份 `grouped.total`；原先两处各算一遍会出现数字对不上（B-08）。`MAX_DISPLAY` 只作计算常量，**不进文案** |
 
 `src/bindings.ts` 是**生成物**（调试构建启动时由 specta 覆盖，见 `src-tauri/src/lib.rs`），**禁止手改**。
 
@@ -758,7 +761,7 @@ export function subscribeEvents(): () => void
 //   compile-errors   → compileStore.setLiveErrors（中间态：仅 running 时采纳）
 //   errors-updated   → compileStore.setErrors（**权威终态**，无条件写入）
 //   compile-notice   → noticesStore.push（**运行时**能力边界提示：非持久、不落盘；
-//                       状态栏 chip，用户点击清空。不进 errors——编译仍可能成功）
+//                       状态栏 chip，**点击展开全文 + 展开「问题」面板，不销毁**（C-02）；不进 errors——编译仍可能成功）
 //   pdf-updated    → previewStore.onPdfUpdated（含 changed_pages/pages：可能**不重载**）
 //   compile-preview → previewStore.onCompilePreview（中间态：仅 running 时采纳；roadmap ㉞ 编译中预览）
 //   files-changed  → editorStore.onFilesChanged(paths)（过滤+重载判定）
@@ -766,7 +769,9 @@ export function subscribeEvents(): () => void
 //   settings-changed → settingsStore.setSettings
 ```
 
-> **两套提示不要混**：`Settings.notices`（持久提示，后端落盘、状态栏 chip、点击发 `dismiss_notice`）与 `compile-notice`（运行时提示，`noticesStore` 内存态、点击清空）。两者都**不进错误列表**——成功态会清空 `errors`，把提示塞进去等于让它消失。
+> **两套提示不要混**：`Settings.notices`（持久提示，后端落盘、状态栏 chip、**点击 = `dismiss_notice` 写盘、点掉不再回来**）与 `compile-notice`（运行时提示，`noticesStore` 内存态、**点击展开全文、不销毁**；`clear()` 目前没有调用点，属已知 P3 死代码）。两者都**不进问题面板**——成功态会清空 `errors`，把提示塞进去等于让它消失。
+>
+> **事件没有项目标识（F1 边界）**：`compile-status` 等事件载荷只描述编译相位，不带项目根/epoch ⇒ 切项目时旧项目在途编译的终态仍会写进新项目状态（真机约 441 ms 后被覆写为「就绪」，§12.1 F1 `[待修]`）；在修掉前不要把"事件一定属于当前项目"当不变量。修复方向：切项目时 abort 在途编译，或事件带项目根由前端过滤。
 
 ### 9.2 stores 与依赖方向
 
@@ -782,7 +787,7 @@ useAutoSave 依赖 editorStore.dirty + settingsStore（读）
 |---|---|---|
 | projectStore | project、rootFile、fileTree | openProject、refreshTree、refreshTreeDebounced、resolvePath、relativizePath（绝对 → 项目内相对路径，`update_settings` 唯一可接受的形态）、syncProject（经 `get_project` 重新同步）、**rescanRoot**（无根文档时的静默重探测，㊺ §6.13.1-B） |
 | editorStore | openTabs[]、activePath、dirtyPaths:Set、lastSaved:Map<path,time>、buffers、externalConflict | openFile、closeTab、markDirty、markSaved、saveAll、onFilesChanged、acceptExternal |
-| compileStore | phase、kind、draft、errors[]、pages | setStatus、setProgress、setLiveErrors、setErrors |
+| compileStore | phase、**hasCompiled**（纯前端派生：本次运行是否编译过；`phase` 初值 `success` 无 `idle` 相位）、kind、draft、errors[]、pages | setStatus、setProgress、setLiveErrors、setErrors、**reset**（切项目时清 phase/hasCompiled/kind/errors/hasError/draft/pages） |
 | previewStore | pdfPath、reloadKey、highlight、syncNote、changedPages、pagesTotal、skippedReloads、**livePreview**（编译中的部分 PDF）、**docIdentity / sourcePath / displayPath**（派生：身份 / 字节来源 / 可显示） | onPdfUpdated（**页哈希全同则不递增 reloadKey**；但屏幕上是部分 PDF 时必须重载一次）、onCompilePreview（帧版本号 = `pages`，只增不减 ⇒ 旧帧丢弃）、clearLivePreview（编译终态收口；返回"刚才是否在预览"）、setHighlight、setSyncNote |
 | settingsStore | settings | setSettings、updateSettings |
 
@@ -793,6 +798,8 @@ useAutoSave 依赖 editorStore.dirty + settingsStore（读）
 - `editorStore.openFile`：去重判断放在 `await readFile` **之后复检**——并发的树节点双击不会开出两个标签；
 - `editorStore.onFilesChanged`：读盘后**复检 `dirty`**，但结论只由**内容**给——磁盘与缓冲一致（含"上一条事件的重载刚写好 buffer"这种情况）就不算冲突；不一致才保留本地内容 + 冲突标记，不覆盖用户最新输入；
 - `compileStore.setStatus("success")` 清空 `errors`/`hasError`——无 `running` 前置时旧错误不残留；
+- **「未编译」只能由 `hasCompiled` 派生，不许给后端 `CompilePhase` 加 `idle`**：`phase` 初值就是 `success`（后端没有"未编译"相位），直接显示 `phase` 会把启动态说成「就绪」（A-01）。`hasCompiled` 在成功/失败终态置真，**打开/切换项目必须 `compile.reset()`**（B1：否则上一项目的「就绪」与旧错误会带到新项目；在途编译事件覆写的边界见 F1/§12.1）；
+- **文案不是语义标识**：行为判定、测试选择器、计数/动作都不得依赖可见文案——用 `phase`/`hasCompiled`/`grouped.total` 等状态字段与 `data-testid`；改文案不得改变任何 phase、计数或动作（改文案只需同步文案断言，不得动逻辑）。
 - **中间态只在运行中采纳**：`setProgress` / `setLiveErrors` 都以 `phase === "running"` 为前置（前者只增不减，后者不碰 `hasError`）——收尾期补发的中间态可能**晚于终态**抵达，缺了守卫就会顶掉权威列表（真机实测：超时诊断 1 条被 30 条中间态覆盖）；
 - `EditorPane` 的 Monaco 事件订阅逐个收集并随卸载 dispose；`PreviewPane` 带 `unmounted` 守卫（在途 load 不回写插桩与标题、catch 不误报）、卸载时 `cancelAllRenders()`、`onCanvasClick` 包 try/catch（卸载期间点击不产生未处理 rejection）。
 
@@ -833,12 +840,13 @@ useAutoSave 依赖 editorStore.dirty + settingsStore（读）
 | FileTree | 树数据、激活路径 | 打开文件/目录展开、右键菜单（新建/改名）、悬停垃圾桶（删除）、搜索 | 展开状态（只在前端本地）+ `expandPath`/`renamingPath`/`forceExpand`（三个**一次性请求**，递归透传：建完展开、行内改名、搜索强制展开）；**新建（文件 / 文件夹）**（㊺）：标题栏**一个** `＋` → 行内输入 + 类型小切换（📄 默认 / 📁，点它不会收掉输入行）→ `save_all` / `create_dir`；**删除**（㊼）：悬停垃圾桶 → `ConfirmDialog` 二次确认（目录报"里面还有 N 个文件"）→ `delete_path` → `closeTabsUnder` + 刷新；**改名**（㊽）：右键 → 行内编辑 → `rename_path` → `remapPaths` + 刷新；**搜索**（㊾）：`services/fuzzy.ts` 过滤树（保留祖先与整棵子树）；**新建向导**只在「无根文件 ∧ 无候选 ∧ `.tex` ∧ 开关为开」时拦一次 |
 | FileTreeItem | node、expandPath、renamingPath、forceExpand | `menu`（右键）、`remove`（垃圾桶）、`rename`/`renameCancel` | 展开状态（组件内，信息局部性）；改名态是行内输入框（**只选中主名**，不含扩展名）；垃圾桶默认 `opacity:0`（**仍占位**，避免悬停时名字省略号跳宽）|
 | ConfirmDialog | title、lines[]、confirmLabel、busy、error | `confirm` / `cancel` | 无状态（通用二次确认：先说要动什么、再说后果；`Esc`/点蒙层 = 取消）|
-| NewFileWizard | fileName、initialTitle、busy、error | `confirm({lang,kind,title})` / `cancel` | 语言 / 类型 / 标题三项本地状态 + **骨架实时预览**（每次改动调 `new_file_skeleton` 拿 core 的产物 ⇒ 预览与落盘不可能不一致）。Esc / 点蒙层 / 取消 = **不产生任何文件** |
+| NewFileWizard | fileName、initialTitle、busy、error | `confirm({lang,kind,title})` / `cancel` | 语言 / 类型 / 标题三项本地状态 + **起步文档实时预览**（每次改动调 `new_file_skeleton` 拿 core 的产物 ⇒ 预览与落盘不可能不一致）。Esc / 点蒙层 / 取消 = **不产生任何文件**；footer 只留「取消 / 创建」 |
 | RootFilePicker | root、candidates（探测候选）、fallbackFiles（零候选时全部 .tex）、busy、error | `select`（**项目内相对路径**）、`close` | 无（纯展示；相对路径由 `relativizePath` 计算） |
-| ErrorList | errors[] | 点击条目 → openFile+定位 | 无；**诊断展示**（roadmap ④）：条目带 `diagnosis` 时渲染两行（原因 + 建议），无诊断降级为原文首行；头部「已诊断 N」。**去重/截断**：同源（文件 + 首行消息相同）聚合为一条并显示 `×N`；不同源最多展示 `MAX_DISPLAY=30` 组，超出提示隐藏数量（错误雪崩时不刷屏） |
-| StatusBar | compileStore/editorStore/projectStore 只读投影 + 「未确定根文件」可点击入口（emit `pick-root`）+ 草稿期「引用待更新」+ 编译中「已排版 N 页」 | `pick-root` → App 打开根文件选择器 | 无（`queued/running/failed` 不改「引用待更新」标记——屏幕上的 PDF 仍是旧的，失败不产出新 PDF；「已排版 N 页」只在 `running && pages > 0` 时显示） |
+| SettingsPanel | settings / 编译项 / 引擎资源 | `confirm` 类动作（切页/关闭/恢复默认）与设置 patch | 页签状态；**未应用输入**（防抖/超时/根文件输入框失焦或回车才提交）：`pendingInput` 非空时切页/关闭先弹确认（`取消` 留在原页且输入不丢 / `丢弃并继续` 继续），页脚有「· 有未应用的输入」标记（A-15/C-14）。**恢复编译项默认**：先确认并列出将重置项，确认后才写 patch（A-14）。**关于页**：运行时 `getVersion()` 显示 `Latteset 0.1.0`（A-06）。引擎页只留 Tectonic 资源（宏包集/缓存目录），引擎本身不可选 |
+| ErrorList | errors[] | 点击条目 → openFile+定位 | 无；**「问题」面板**（roadmap ④）：条目带 `diagnosis` 时渲染两行（原因 + 建议，`.hint` **可换行完整显示**，不单行截断），无诊断降级为原文首行；头部计数「N 个问题」= `groupErrors(errors).total`（与状态栏折叠头同源）。**去重/截断**：同文件 + 同首行/原因聚合为一条并显示重复次数；展示上限 `MAX_DISPLAY (=30)` **不进文案**，超出显示「已隐藏 N 条重复问题」+「显示全部」（点后 `limit=Infinity` 全量渲染，`showAll` 状态在下一次错误集合变化前不复位——P3 已知）。**空态三态**：`!hasCompiled` → 灰圈「还没有编译」；`running` → 「排版中…」；否则绿勾「没有发现问题」 |
+| StatusBar | compileStore/editorStore/projectStore 只读投影 + 「尚未指定根文件」可点击入口（emit `pick-root`）+ 草稿期「引用待更新」+ 编译中「已排版 N 页」 + 外部修改 chip + 运行时提示 chip + 编译模式 chip | `pick-root` → App 打开根文件选择器；`expand-problems` → App 展开问题面板 | 无（`queued/running/failed` 不改「引用待更新」——屏幕上的 PDF 仍是旧的，失败不产出新 PDF；「已排版 N 页」只在 `running && pages > 0` 时显示）。**phase chip**：无项目不渲染；有项目 `!hasCompiled` → 中性灰「未编译」；进行态/终态见 glossary。**外部修改 chip**：单击只弹 `ConfirmDialog`（「采用磁盘上的版本？」+ 覆盖未保存修改不可撤销），取消保留冲突标记与本地内容，确认才 `acceptExternal`（A-11）。**运行时提示 chip**：单击展开全文 + 请求展开问题面板，**不销毁**（C-02）。**编译模式 chip**：单击打开 `role="menu"` 菜单（两项含可见说明），键盘 Arrow/Home/End/Esc 与外部点击关闭，`title` 只作补充（A-12） |
 
-**布局（App.vue）**：左栏文件树与大纲**上下分布**（`SplitPane direction="horizontal"`，比例 0.55）；底部面板默认折叠成约 30px 细条（头部「报告 · 展开」，点击展开/收起；**只在编译失败时**多显示「● N 个错误」——就绪/排版中… 归状态栏 phase chip，同源不重复渲染），展开后错误列表占满底部宽度。分割器自研（不引入 vue-code-layout，多面板布局后置），`.split-pane.vertical` 显式写规则，不依赖默认 flex 行为。
+**布局（App.vue）**：左栏文件树与大纲**上下分布**（`SplitPane direction="horizontal"`，比例 0.55）；底部**问题面板**默认折叠成约 30px 细条（头部「问题 · 展开」，点击展开/收起；**只在编译失败时**多显示「● N 个问题」——就绪/排版中… 归状态栏 phase chip，同源不重复渲染；计数与面板同用 `errorGroups.groupErrors().total`），展开后问题列表占满底部宽度。分割器自研（不引入 vue-code-layout，多面板布局后置），`.split-pane.vertical` 显式写规则，不依赖默认 flex 行为。
 
 **窗口顶部的两条带子**：目前最上方是**系统标题栏**（Windows 原生，颜色由 `apply_window_theme` 的 DWM 沉浸式深色跟随主题），它下面才是我们自己的工具栏（品牌/打开项目/编译/终止/设置 + 项目路径）。两条带子并存是当前的结构现状；**把三个系统按钮搬进我们的顶栏（合成一条）已立项为 roadmap ㉟**（`decorations: false` + 自绘顶栏，含技术清单与验收判据）。
 
@@ -889,7 +897,9 @@ shouldStripLeadBackslash(line, startColumn): boolean; // 补全专用启发式
 ```ts
 compile-status: { phase: 'queued'|'running'|'success'|'failed',
                   kind?: 'timeout'|'content_error'|'aborted', draft: boolean }
+                                                   // **后端只有这四相位，没有 `idle`**；「未编译」由前端 hasCompiled 派生（A-01，零 DTO 变化）
                                                    // draft=true：屏幕上的 PDF 是草稿（引用/目录可能落后一趟）
+                                                   // ⚠ 载荷无项目标识（F1，§12.1）：切项目时旧项目在途编译的终态仍会到达前端
 errors-updated: ErrorEntry[]                       // 失败时携带；编译启动时清空由前端 setStatus('running') 触发
                                                    // ErrorEntry = { message, file, line, kind, diagnosis }
                                                    // diagnosis = { kind, cause, hint, suggested_timeout_secs } | null
@@ -903,7 +913,8 @@ compile-preview: { path: string, pages: number }   // **中间态**（roadmap �
                                                    //   status(running) → preview 121 页 → preview 125 页 → pdf-updated(125 页) → status(success)
                                                    // ⚠ 它不是权威产物，也**不是**"当前文档"：路径与权威 PDF 不同，按"换文档"处理会重建 DOM、丢滚动位置
 compile-notice:  { message: string }               // **运行时**能力边界提示（ADR-0015 决策 4）：内嵌形态不跑外部工具（biber / makeindex / glossaries）
-                                                   // 检出即发（编译仍可能成功）；状态栏 chip，点击清空，**不进 errors**。与 Settings.notices 分开
+                                                   // 检出即发（编译仍可能成功）；状态栏 chip，**点击展开全文 + 展开「问题」面板、不销毁**（C-02），**不进 errors**。与 Settings.notices 分开
+                                                   // Settings.notices（持久提示）点击 = dismiss_notice 写盘（点掉不再回来），语义不同，别混
 pdf-updated:    { path: string, changed_pages: number[], pages: number }
                                                    // 页级差异（incremental-edit-x-dvi.md 的 B/C）：
                                                    //   pages>0 且 changed_pages 空 → 逐页未变 → 前端**跳过重载**；
@@ -914,6 +925,8 @@ pdf-updated:    { path: string, changed_pages: number[], pages: number }
 files-changed:  { paths: string[], structural: boolean }   // structural=true 仅增/删/重命名（文件树重建）；内容修改为 false（跳过）
 settings-changed: Settings
 ```
+
+**事件表里没有「未编译」事件**：`hasCompiled`（未编译 vs 就绪）与 `compileButtonText`（排队中…/排版中…）都是**前端派生**，不新增 DTO / 事件；「问题」面板计数同样派生自 `errorGroups.groupErrors()`，不进事件载荷。事件只承载后端事实（相位、页数、错误、PDF 路径）。
 
 **命令（invoke）**：见 §8 表（**19 条**，含 `open_licenses`），输入输出全部是 DTO；许可/第三方声明的 About 入口走**命令**（`open_licenses`），**不新增事件**。
 
@@ -984,6 +997,8 @@ settings-changed: Settings
 - **NSIS 安装版冷/温启动 `[未测-环境限制]`**：受限会话静默安装挂起（UAC/权限不可交互）；替代证据 = `tauri build` exit 0 + 体积门禁（NSIS 88.46 MiB / MSI 109.63 MiB ≤200 MB）+ release 直启分段（进程→Ready 126 ms）。
 - **About 许可入口真机点击 `[未测-环境限制]`**：`open_licenses` 的数据面由 bindings 13/13 + vitest 覆盖，WebView2 在本会话不渲染，未做真机点击。
 - **A 闸门 `.pdfid` 判据的已知限制（T22 B4，低风险、不修）**：`tmp/<stem>.tectonic.pdfid` 只记 `{len, mtime_ns}`，**不哈希 PDF 内容**。正常编辑/编译都会改变二者（同长度覆盖也会变 mtime）；只有刻意伪造"内容变、长度与 mtime 都不变"才能绕过 A 面 ⇒ 且第一条件（页哈希逐页相同）仍需同时成立，故记为低风险。改为内容哈希会让每次编译多读整份 PDF（首编 PDF 数 MB），收益不成比例。
+- **F1 跨项目在途编译事件泄漏（T38 真机，2026-11-21；`[待修]`）**：编译项目 A 进行中时切到 B——B 先正确显示「未编译」，但在 **t≈441 ms 被 A 的在途 `compile-status success` 事件覆写为「就绪」**（证据 `test_file/prose2/evidence/a01-race.json`）。**机理**：`compile-status` 是全局事件、载荷**无项目标识**（无根路径/epoch）；`open_project`（`src-tauri/src/commands.rs`）只替换项目状态、**不 abort 在途编译**；前端 `compile.reset()` 之后仍会收到旧项目的终态事件。**正常（无在途编译）切项目已通过**（A-01/B1 reset 有效）。**建议二选一**：切项目时 abort 在途编译（`abort_compile` 或后端在 `open_project` 内中止），或事件带项目根由前端按当前项目过滤。日常少见、不阻断提交；PLAN 后续项记 `[待修]`。
+- **F2 切项目后旧项目标签页残留（T38 真机；`[待复现/定级]`）**：`openProjectInto` 只打开新项目的根文件、不清 `editorStore.openTabs`，切项目后标签栏可能同时含新旧项目的 `main.tex`（证据 `test_file/prose2/evidence/a01-clean.json`）。**非本轮 60 条范围，疑似既有行为**；后端 D8 会拒绝跨项目读、点旧标签只会报错。**尚未复现/定级**，先记为已知边界，不要当已确认缺陷或本轮回归。
 - **缓存 GC / 预热的并发对抗样例 `[未测]`**：GC 单测覆盖保留当前/删旧/不误删、解析不出当前 digest 时整体不动，但 GC 与预热/编译的并发压测未构造。
 - **本机 DSH 会话的 `cl D8050` / `LNK1104` `[环境归属，非代码债]`**：根因是**工作区根目录带 DSH 沙箱遗留的可继承 Low 完整性标签** ⇒ 由工作区内 exe（cargo build-script）起的 `cl.exe` 是 Low IL、写不了 Medium 的 `%TEMP%`，`/Z7` 临时文件与 `lib.exe` 的 `lnk{…}.tmp` 因此失败。**不是 vcpkg 缺包、不是 MSVC 版本、不是 pwsh 管道**。绕法 = 把 `TMP`/`TEMP` 指到工作区内目录；彻底修 = `icacls "<repo>" /setintegritylevel (OI|CI)Medium`。CI/普通终端无此问题。复现与 env 结论见 `test_file/build-env/REPORT-build-env.md`，排障条目见 [troubleshooting.md](../troubleshooting.md)。
 - **构建代价三项 `[未测]`**：干净机器冷/热墙钟、峰值内存；CI 内嵌档冷构建记录 +15–20 min（缓存缓解）。**安装包体积已测**（T19 终版 NSIS 88.46 MiB / MSI 109.63 MiB）。
@@ -1042,10 +1057,10 @@ settings-changed: Settings
 | 内嵌 Tectonic 引擎（含真编） | `npm run lib:test`（四个 crate：**399 passed / 8 ignored**，T22 复核）；`cargo test -p latteset-tectonic` = **65 passed / 3 ignored**，`-- --ignored` 跑 3 个真编（真编 / 预热后首编 / 随包 `Shipped` verbatim，17.07 s 全过） |
 | headless 服务层（CLI/MCP 共用） | `cargo test -p latteset-server`（lib 12 passed / 4 ignored + cli 8 passed）；`-- --ignored` 跑 4 个真编 + 1 个 MCP 真编，闸门 = **编进来 + 有可用 bundle**（不再探测 PATH 上的 `tectonic`）；`--test mcp_stdio` 跑真实二进制的 MCP 管道链路（5 passed + 1 ignored），见 §8.1.1 |
 | 公式预览命令面（㊸） | `npm run lib:cli` 后 `latteset-cli --project <夹具> math '<公式>'`；落点 `<项目>/tmp/snippet/<键>/`，权威 `main.pdf` 与 `tmp/main.*` 逐字节不变 |
-| 前端 store / composable / services（含路径口径 ㊿） | `npm run test`（**17 files / 161 tests passed**，T19 实测） |
+| 前端 store / composable / services（含路径口径 ㊿；T35–T42 文案/状态批） | `npm run test`（**18 files / 189 tests passed**，T38/T41 复核；新增 `errorGroups`/`compileStatus` 与 StatusBar/ErrorList/SettingsPanel/compile reset 用例） |
 | 类型检查与构建 | `npm run build`（`vue-tsc --noEmit` + `vite build`） |
 | CI 发布前链路（③段 T22 B2） | `.github/workflows/ci.yml` 的 `build-windows` **无条件先** `Build release CLI`（`./scripts/with-tectonic-lib.ps1 -Mode cli`）——它是下面两处的共同前置：① 代表集 bundle 生成、② `Offline first compile`（直接执行 `src-tauri/target/release/latteset-cli.exe`）。**不得**再把它塞回某个缓存分支：代表集缓存命中而 rust-cache 无 release 产物时，② 必红（T22 review 修复） |
-| 绑定生成物（DTO/命令/事件改过后必跑） | `cargo test -p latteset -- --ignored export_bindings`（本机受 WebView2 限制不可用）或**启动一次 debug 构建**自动导出；T19 核对 **13/13 PASS**（命令 **19 条** / 事件 9 个与 Rust 一致） |
+| 绑定生成物（DTO/命令/事件改过后必跑） | `cargo test -p latteset -- --ignored export_bindings`（本机受 WebView2 限制不可用）或**启动一次 debug 构建**自动导出；T38/T41 复核 **13/13 PASS**（命令 **19 条** / 事件 9 个与 Rust 一致；`src/bindings.ts` 无 diff） |
 | 流式反馈真机时间线 | `node scripts/gen-stream-fixture.mjs test_file/projects/_stream-lab [--error]` → `VITE_LATTESET_PROJECT=<夹具> npm run tauri dev` → 用 tauri server 记录事件时间线（页进度可用；**错误提前量 `[未测]`**） |
 | 编辑器侧大文档性能（每击键 / 折叠 / 大纲往返 / 多文件） | `node scripts/gen-large-project.mjs` → `node scripts/editor-report.mjs --tier multi20 --json out.json`（WS 直驱真机、零第三方依赖、超门槛退出码 1） |
 | DVI/XDV 产物（页索引 / 页级差分 / 截断可读性） | `node scripts/xdv-report.mjs <tmp/*.xdv>`（`--diff=<other.xdv>`、`--truncate-at=N`、`--watch=ms`）。内嵌形态的 `tmp/<stem>.xdv` 恒存在 ⇒ 对现役产物有效 |

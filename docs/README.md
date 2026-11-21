@@ -21,6 +21,7 @@ Latteset 的全部文档从这里进入。当前是 **Windows 首发 MVP 已落�
 | [logo.md](./logo.md) | 设计 / 分发 | 品牌标识：概念、色板、文件清单与使用规则 |
 | [dev/README.md](./dev/README.md) | 开发者 | 开发者导航：环境、构建、验证入口与代码结构 |
 | [dev/modules.md](./dev/modules.md) | 开发者 | 模块实现契约：拆分、接口、通信契约、已知债与验证入口 |
+| [dev/copy-guide.md](./dev/copy-guide.md) | 前端 / 评审 | 用户文案规范：8 条硬规则、术语唯一说法、可见串检查方法 |
 | [dev/testing.md](./dev/testing.md) | 开发者 | 测试与验证：各层测试、真机验收、基准与确定性脚本 |
 | [dev/tectonic-library.md](./dev/tectonic-library.md) | 开发者 | 内嵌 Tectonic（唯一形态）：构建入口、装配点、能力面与验证入口 |
 | [dev/tectonic-licensing.md](./dev/tectonic-licensing.md) | 开发者 / 分发 | 分发许可审计：Rust/C 依赖与宏包集的许可证、义务清单、G-L1..G-L9 门禁状态 |

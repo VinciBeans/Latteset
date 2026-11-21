@@ -138,7 +138,7 @@
 | headless | `cargo test -p latteset-server` | lib 12 passed / 4 ignored + cli 8 passed；`-- --ignored` 4 个真编全过 |
 | MCP 协议链路 | `cargo test -p latteset-server --test mcp_stdio` | 5 passed / 1 ignored（`--ignored` 下真编过） |
 | 全仓 Rust（唯一入口） | `npm run lib:test` | **399 passed / 8 ignored** |
-| 前端构建 / 单测 | `npm run build` / `npm run test` | 0 error；**17 files / 161 tests passed** |
+| 前端构建 / 单测 | `npm run build` / `npm run test` | 0 error；**18 files / 189 tests passed**（T38/T41 复核） |
 | bindings 生成物 | `src/bindings.ts` + T7 核对脚本 | **13/13 PASS**（命令 **19 条** / 事件 9 个与 Rust 一致） |
 | 六档性能基线 | `node scripts/bench-embedded.mjs --samples=3` | **T22 环境税清零版**：三轮独立运行取中位、极差除 tiny 热路径 ≤7.2%；完整表进 [design.md](../design.md) §2.8；`multifile` 归 large 后 cold 2.94 s / e2e 2.01 s EXCELLENT（**临界**）；**唯一硬缺口 `large` cold 6.41 s 超 5 s（已登记）** |
 | 随包断网首编 | `make-bundle.mjs` + 坏代理 + 空缓存 + `latteset-cli compile` + `validate-pdf.mjs` | **exit 0 / 4.4 s**（Fandol 四款、0 U+FFFD）；二次 1.2 s；缺包 `enumitem` ⇒ `missing_package` + hint，显式切在线后 exit 0（首编含取包 344 s） |

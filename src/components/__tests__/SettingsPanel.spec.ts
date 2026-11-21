@@ -36,6 +36,11 @@ function freshSettings(bundle: string | null): PanelSettings {
   };
 }
 
+// A-06：关于页版本号来自运行时（`getVersion()`），不是前端硬编码
+vi.mock("@tauri-apps/api/app", () => ({
+  getVersion: vi.fn(async () => "9.9.9"),
+}));
+
 // 桩，不是后端复刻：只把本文件用到的键写回（bundle），其余原样返回。
 vi.mock("../../services/ipc", () => ({
   ipc: {
@@ -171,10 +176,19 @@ describe("SettingsPanel：引擎页（唯一引擎，ADR-0015）", () => {
     }
   });
 
-  it("「恢复默认」不再写 engine 键（字段已从设置里删除）", async () => {
+  it("「恢复默认」先二次确认（A-14）：列出影响范围，确认后才写 patch，且不写 engine 键", async () => {
     const w = await mountPanel();
-    const reset = w.findAll("button").find((b) => b.text() === "恢复默认")!;
+    const reset = w.findAll("button").find((b) => b.text() === "恢复编译项默认")!;
     await reset.trigger("click");
+    await flushPromises();
+    // 确认前不得动设置
+    expect(lastPatch).toBeNull();
+    const dialog = w.find('[data-testid="confirm-dialog"]');
+    expect(dialog.exists()).toBe(true);
+    expect(dialog.text()).toContain("根文件覆盖与引擎资源设置");
+    expect(dialog.text()).toContain("防抖 = 500 毫秒");
+
+    await w.find('[data-testid="confirm-ok"]').trigger("click");
     await flushPromises();
     expect(lastPatch, "恢复默认应发过一次 patch").not.toBeNull();
     expect(Object.keys(lastPatch!)).not.toContain("engine");
@@ -188,6 +202,55 @@ describe("SettingsPanel：引擎页（唯一引擎，ADR-0015）", () => {
     await openTab(w, "编译");
     expect(w.find("#set-bundle-source").exists()).toBe(false);
     expect(w.find("#set-mode").exists()).toBe(true);
+    w.unmount();
+  });
+});
+
+describe("SettingsPanel：未应用输入（A-15/C-14）", () => {
+  it("有未应用输入时切页先确认；取消则留在原页且输入不丢", async () => {
+    const w = await mountPanel(null, "编译");
+    await w.find("#set-debounce").setValue("700");
+    expect(w.find('[data-testid="pending-inputs"]').exists()).toBe(true);
+
+    await openTab(w, "项目"); // 触发确认框
+    expect(w.find('[data-testid="confirm-dialog"]').exists()).toBe(true);
+    expect(w.find(".tab-btn.on").text()).toBe("编译");
+
+    await w.find('[data-testid="confirm-cancel"]').trigger("click");
+    await flushPromises();
+    expect(w.find(".tab-btn.on").text()).toBe("编译");
+    // 输入没有被清掉（不丢输入）
+    expect((w.find("#set-debounce").element as HTMLInputElement).value).toBe("700");
+    w.unmount();
+  });
+
+  it("确认丢弃后才切页", async () => {
+    const w = await mountPanel(null, "编译");
+    await w.find("#set-timeout").setValue("999");
+    await openTab(w, "项目");
+    await w.find('[data-testid="confirm-ok"]').trigger("click");
+    await flushPromises();
+    expect(w.find(".tab-btn.on").text()).toBe("项目");
+    w.unmount();
+  });
+});
+
+// B-23：防抖/超时越界要可见说明；不静默改值
+describe("SettingsPanel：数值范围提示（B-23）", () => {
+  it("防抖超出上限：提示被调整到上限，并把值写进设置", async () => {
+    const w = await mountPanel(null, "编译");
+    await w.find("#set-debounce").setValue("99999");
+    await w.find("#set-debounce").trigger("blur");
+    await flushPromises();
+    expect(w.find('[data-testid="range-note"]').text()).toContain("5000");
+    expect(lastPatch).toMatchObject({ debounce_ms: 5000 });
+    w.unmount();
+  });
+
+  it("字段下给出范围与默认值", async () => {
+    const w = await mountPanel(null, "编译");
+    expect(w.text()).toContain("范围 100–5000 毫秒（默认 500）");
+    expect(w.text()).toContain("范围 5–1800 秒（默认 120）");
     w.unmount();
   });
 });
@@ -236,14 +299,14 @@ describe("SettingsPanel：宏包集来源三档（ADR-0016 候选 A）", () => {
     expect(w.find("#set-bundle-path").exists()).toBe(false);
     // 三档按钮都在
     expect(w.findAll("#set-bundle-source .seg-btn").map((b) => b.text())).toEqual([
-      "内置（默认）",
-      "在线完整",
-      "本地目录",
+      "内置精简宏包集",
+      "在线完整宏包集",
+      "本地目录宏包集",
     ]);
     w.unmount();
   });
 
-  it("点「在线完整」才把默认在线地址显式写进设置（不静默改网络）", async () => {
+  it("点「在线完整宏包集」才把默认在线地址显式写进设置（不静默改网络）", async () => {
     const w = await mountPanel(null);
     const onlineBtn = w.findAll("#set-bundle-source .seg-btn")[1];
     await onlineBtn.trigger("click");
@@ -253,7 +316,7 @@ describe("SettingsPanel：宏包集来源三档（ADR-0016 候选 A）", () => {
     w.unmount();
   });
 
-  it("从在线切回「内置（默认）」写空串 = 清除（不保留在线地址）", async () => {
+  it("从在线切回「内置精简宏包集」写空串 = 清除（不保留在线地址）", async () => {
     const w = await mountPanel("https://relay.fullyjustified.net/default_bundle_v33.tar");
     const shippedBtn = w.findAll("#set-bundle-source .seg-btn")[0];
     await shippedBtn.trigger("click");
@@ -276,10 +339,66 @@ describe("SettingsPanel：宏包集来源三档（ADR-0016 候选 A）", () => {
   });
 });
 
+// C-06：分段选择器的 label 以前 `for` 指向 `div`（无效关联）；改成 radiogroup + aria-labelledby，
+// 选项带 aria-checked，且全页面不留悬空 label[for]。
+describe("SettingsPanel：控件可标注（C-06）", () => {
+  it("分段选择器是 radiogroup（label 不再指向 div），选项带 aria-checked", async () => {
+    const w = await mountPanel(null, "外观");
+    const theme = w.find("#set-theme");
+    expect(theme.attributes("role")).toBe("radiogroup");
+    expect(theme.attributes("aria-labelledby")).toBe("set-theme-label");
+    expect(w.find("#set-theme-label").text()).toBe("主题");
+    expect(theme.findAll('[role="radio"]')).toHaveLength(3);
+
+    await openTab(w, "编译");
+    expect(w.find("#set-mode").attributes("role")).toBe("radiogroup");
+    expect(w.find("#set-mode button").attributes("aria-checked")).toBe("true");
+    expect(w.find("#set-wizard").attributes("role")).toBe("radiogroup");
+
+    await openTab(w, "引擎（Tectonic）");
+    const bundleGroup = w.find("#set-bundle-source");
+    expect(bundleGroup.attributes("role")).toBe("radiogroup");
+    // 三档全部是 radio（此前漏了「本地目录宏包集」），aria-checked 与当前来源一致
+    const radios = () => w.findAll('#set-bundle-source [role="radio"]');
+    expect(radios()).toHaveLength(3);
+    expect(radios().map((r) => r.attributes("aria-checked"))).toEqual(["true", "false", "false"]);
+
+    // 切换来源后 aria-checked 跟着更新（不是写死的）
+    await radios()[1].trigger("click");
+    await flushPromises();
+    expect(radios().map((r) => r.attributes("aria-checked"))).toEqual(["false", "true", "false"]);
+    w.unmount();
+  });
+
+  it("没有悬空 label[for]（每个 for 都指向本页存在的控件）", async () => {
+    for (const tab of ["外观", "编译", "引擎（Tectonic）", "项目"]) {
+      const w = await mountPanel(null, tab);
+      for (const label of w.findAll("label[for]")) {
+        const id = label.attributes("for")!;
+        expect(w.find(`#${id}`).exists(), `${tab} 页 label[for=${id}] 指向不存在的控件`).toBe(true);
+      }
+      w.unmount();
+    }
+  });
+});
+
 // T21b / G-L3：第三方许可材料（NOTICE + GPL 字体源码）随安装包分发。
 // 前端**不硬编码路径**：入口只调后端 `open_licenses`（后端解析资源目录并交系统打开），
 // 缺资源时显示可行动错误 —— 不静默。
 describe("SettingsPanel：关于页 / 第三方许可入口（G-L3）", () => {
+  it("关于页显示运行时版本号（A-06，非硬编码）", async () => {
+    const internals = window as unknown as { __TAURI_INTERNALS__?: unknown };
+    internals.__TAURI_INTERNALS__ = {};
+    try {
+      const w = await mountPanel(null, "关于");
+      await flushPromises();
+      expect(w.text()).toContain("Latteset 9.9.9");
+      w.unmount();
+    } finally {
+      delete internals.__TAURI_INTERNALS__;
+    }
+  });
+
   it("关于页有许可入口，文案如实（Tectonic MIT / 宏包集许可 / biber 边界 / 源码位置）", async () => {
     const w = await mountPanel(null, "关于");
     expect(w.find("#open-notices").exists()).toBe(true);

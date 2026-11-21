@@ -161,9 +161,9 @@ onBeforeUnmount(() => {
   position: fixed;
   z-index: 60;
   max-width: 380px;
-  background: var(--surface, #fff);
-  color: var(--text, #222);
-  border: 1px solid var(--border, #d8d8e0);
+  background: var(--surface);
+  color: var(--text);
+  border: 1px solid var(--border);
   border-radius: 8px;
   box-shadow: 0 8px 28px rgb(0 0 0 / 22%);
   padding: 8px 10px 6px;

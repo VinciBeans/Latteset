@@ -67,7 +67,7 @@ function onClick(node: OutlineNode) {
       >
         <span class="tag" :class="`lv-${row.node.level}`">{{ LEVEL_TAG[row.node.level] ?? "·" }}</span>
         <span class="title">{{ row.node.title }}</span>
-        <span class="loc">{{ row.node.fileBase }}:{{ row.node.line }}</span>
+        <!-- C-05：默认不显示「文件:行」坐标（title 里仍有完整位置）；长标题不再被挤压 -->
       </div>
     </div>
   </div>
@@ -145,13 +145,5 @@ function onClick(node: OutlineNode) {
   flex: 1 1 auto; min-width: 0;
   color: var(--ink);
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-}
-.loc {
-  flex: 0 0 auto;
-  color: var(--ink-faint);
-  font-family: var(--mono);
-  font-size: 10.5px;
-  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-  max-width: 40%;
 }
 </style>

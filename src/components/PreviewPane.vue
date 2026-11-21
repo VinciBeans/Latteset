@@ -721,8 +721,11 @@ async function load() {
       pagesReused: pagesReusedThisLoad,
     };
     (window as any).__previewLastReload = timing; // 端到端测试读取
-    // 无 Rust 变更的观测通道：把耗时放进窗口标题，便于外部(如 pc-control list_windows)读取
-    document.title = `Latteset | reload ${timing.total}ms (fetch ${timing.fetch} parse ${timing.parse} render ${timing.render}) pages ${timing.pages} rendered ${timing.pagesRendered} reused ${timing.pagesReused}${isPreviewLoad ? " LIVE" : ""}`;
+    // A-03：文档标题埋点**只留给开发构建**。生产（Tauri v2）不把 document.title 同步到窗口标题，
+    // 用户看不到它；留着只会在最显眼的表面写内部计时。观测通道以 `__previewLastReload` 为准。
+    if (import.meta.env.DEV) {
+      document.title = `Latteset | reload ${timing.total}ms (fetch ${timing.fetch} parse ${timing.parse} render ${timing.render}) pages ${timing.pages} rendered ${timing.pagesRendered} reused ${timing.pagesReused}${isPreviewLoad ? " LIVE" : ""}`;
+    }
     console.log(
       `[preview] reload#${mySeq} ${timing.file}${isPreviewLoad ? "（编译中预览）" : ""} pages=${timing.pages} bytes=${timing.bytes} ` +
         `fetch=${timing.fetch}ms parse=${timing.parse}ms render=${timing.render}ms ` +
@@ -931,7 +934,7 @@ onBeforeUnmount(() => clearTimeout(draftTimer));
     <div ref="container" class="preview-pane" @scroll.passive="onScroll" @wheel="onWheel">
       <div v-if="!preview.displayPath" class="empty">
         <span class="empty-icon">📕</span>
-        <span class="empty-title">PDF 在这里等你</span>
+        <span class="empty-title">还没有 PDF</span>
         <span class="empty-hint">打开项目并编译后，PDF 会显示在这里</span>
       </div>
       <div class="pages" v-if="numPages > 0">

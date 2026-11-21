@@ -26,7 +26,12 @@ async function closeTab(path: string) {
       <span class="dot" v-if="editor.dirty.has(t.path)">●</span>
       <span class="icon">📄</span>
       <span class="name">{{ t.name }}</span>
-      <span class="close" @click.stop="closeTab(t.path)" title="关闭">×</span>
+      <button
+        class="close"
+        :aria-label="`关闭 ${t.name}`"
+        title="关闭"
+        @click.stop="closeTab(t.path)"
+      >×</button>
     </div>
     <div v-if="editor.tabs.length === 0" class="tab-bar-empty" />
   </div>
@@ -75,9 +80,14 @@ async function closeTab(path: string) {
   flex: 0 0 auto;
   display: inline-flex; align-items: center; justify-content: center;
   width: 17px; height: 17px;
+  padding: 0;
+  border: none;
+  background: transparent;
+  font-family: inherit;
   border-radius: 5px;
   font-size: 13px; line-height: 1;
   color: var(--ink-faint);
+  cursor: pointer;
   transition: background 0.12s, color 0.12s;
 }
 .close:hover { background: var(--danger-tint-soft); color: var(--coral); }

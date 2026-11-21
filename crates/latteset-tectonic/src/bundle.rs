@@ -213,23 +213,24 @@ pub fn prewarm_plan(source: &BundleSource, cache_dir: &Path) -> PrewarmPlan {
 /// 默认（网络兜底）bundle 打不开时的**可行动出路**（阶段② D2：默认 bundle = 联网取包，
 /// 它是产品默认路径，失败时必须指向用户能操作的地方，不能只说"打开失败"）。
 ///
-/// 三条出口：设置面板「引擎 → bundle 源」、环境变量、以及"本地目录需自带 SHA256SUM"的格式要求
-/// （绝对 Windows 路径要写 `file:///…`，见 [`classify`]）。
+/// 三条出口：设置面板「引擎 → 宏包集来源」、环境变量、以及"本地目录需自带 SHA256SUM"的格式要求
+/// （设置面板可直接填 `E:\…`；环境变量/命令行要写 `file:///…` 或相对路径，见 [`classify`]）。
 pub const DEFAULT_BUNDLE_HINT: &str =
-    "默认 bundle 需要联网获取：① 检查网络/代理；② 或用本地目录 bundle —— 在「设置 → 引擎」把 \
-     bundle 源设为本地目录（目录需自带 SHA256SUM；写 file:///E:/… 或相对路径，不要写 E:\\…），\
-     或设置环境变量 LATTESET_TECTONIC_BUNDLE=<相对路径 或 file:///绝对路径>。";
+    "在线完整宏包集需要联网获取：① 检查网络/代理；② 或改用本地目录宏包集 —— 在「设置 → 引擎 → \
+     宏包集来源」选「本地目录宏包集」并填文件夹路径（E:\\bundles\\tex、E:/bundles/tex 或相对路径都可以；\
+     路径含空格、中文也支持；目录需自带 SHA256SUM）。命令行用户另可用环境变量 \
+     LATTESET_TECTONIC_BUNDLE=<相对路径 或 file:///绝对路径>。";
 
 /// 随安装包分发的内置精简宏包集缺失/损坏时的**可行动出路**（ADR-0016 决策 2：不静默回退）。
 ///
 /// 三档语义（与 ADR-0016 候选 A 一致）：
 /// - 产品默认 = 内置精简集（离线可用，覆盖代表性文档集）；
 /// - 在线完整 bundle = 用户**显式**选择（联网；覆盖全部 TeX Live 常用包）；
-/// - 本地目录 bundle = 用户/内网自备（需自带 SHA256SUM）。
+/// - 本地目录宏包集 = 用户/内网自备（需自带 SHA256SUM）。
 pub const SHIPPED_BUNDLE_HINT: &str =
-    "内置精简宏包集（安装包自带）缺失或损坏：① 重新安装 / 修复安装本应用；\
+    "内置精简宏包集（安装包自带）缺失或损坏：① 重新安装或修复安装 Latteset；\
      ② 或在「设置 → 引擎 → 宏包集来源」显式选「在线完整宏包集」（需联网，覆盖更全）\
-     或「本地目录」（自备 bundle，需自带 SHA256SUM）。不会静默改用网络。";
+     或「本地目录宏包集」（自备，需自带 SHA256SUM）。不会自动切换到在线宏包集，需要你在设置里显式选择。";
 
 /// 缺宏包/文件的**产品级补包出路**（内置精简集只覆盖代表性文档集，不是完整 TeX Live）。
 ///
@@ -237,9 +238,9 @@ pub const SHIPPED_BUNDLE_HINT: &str =
 /// 调用方（GUI/server）把它接到缺包诊断的 hint 上，不新造一套检测。
 pub fn missing_package_hint(missing: &str) -> String {
     format!(
-        "本应用随包的是精简宏包集（覆盖常用文档集），不是完整 TeX Live ⇒ 缺 {missing} 时：\
+        "Latteset 随包的是内置精简宏包集（覆盖常用文档集），不是完整 TeX Live ⇒ 缺 {missing} 时：\
          ① 在「设置 → 引擎 → 宏包集来源」切到「在线完整宏包集」（需联网）后重新编译；\
-         ② 或把该宏包补进本地目录 bundle（目录需自带 SHA256SUM，改完把来源指到它）；\
+         ② 或把该宏包补进本地目录宏包集（目录需自带 SHA256SUM，改完把来源指到它）；\
          ③ 若是模板自带文件，确认「打开项目」选的是模板根目录。"
     )
 }
@@ -252,8 +253,8 @@ fn classify(source: &str) -> Option<String> {
     #[cfg(not(feature = "network-bundle"))]
     if source.starts_with("https://") || source.starts_with("http://") {
         return Some(format!(
-            "bundle 源 {source} 是网络地址，但此版本不支持在线宏包集 ⇒ 请改用本地目录 bundle：\
-             在「设置 → 引擎」把宏包集来源设为「本地目录」（需自带 SHA256SUM），\
+            "宏包集来源 {source} 是网络地址，但此版本不支持在线宏包集 ⇒ 请改用本地目录宏包集：\
+             在「设置 → 引擎 → 宏包集来源」把来源设为「本地目录宏包集」（需自带 SHA256SUM），\
              或设置环境变量 {}=<相对路径 或 file:///绝对路径>",
             crate::BUNDLE_ENV
         ));
@@ -263,7 +264,8 @@ fn classify(source: &str) -> Option<String> {
     let is_abs_windows = source.len() > 2 && source.as_bytes().get(1) == Some(&b':');
     if is_abs_windows && !source.starts_with("file://") {
         return Some(format!(
-            "bundle 源 {source} 是绝对 Windows 路径：请写成 file:///{}（正斜杠）或相对路径",
+            "宏包集来源 {source} 是绝对 Windows 路径：在设置面板里直接填文件夹路径即可（应用会自动转换）；\
+             作为环境变量或命令行参数使用时请写成 file:///{}（正斜杠）或相对路径",
             source.replace('\\', "/")
         ));
     }
@@ -272,19 +274,19 @@ fn classify(source: &str) -> Option<String> {
         (!source.contains("://")).then(|| p.to_path_buf())
     })?;
     if !path.exists() {
-        return Some(format!("bundle 路径不存在：{}（请确认目录/文件已就位）", path.display()));
+        return Some(format!("宏包集路径不存在：{}（请确认目录/文件已就位）", path.display()));
     }
     if path.is_dir() {
         let entries = std::fs::read_dir(&path).ok()?.count();
         if entries == 0 {
             return Some(format!(
-                "bundle 目录是空的：{}（请放入宏包文件与 SHA256SUM）",
+                "本地目录宏包集是空的：{}（请放入宏包文件与 SHA256SUM）",
                 path.display()
             ));
         }
         if !path.join("SHA256SUM").is_file() {
             return Some(format!(
-                "目录 bundle 缺少 SHA256SUM 文件：{}（目录形态的 bundle 必须自带 SHA256SUM）",
+                "本地目录宏包集缺少 SHA256SUM 文件：{}（目录形态必须自带 SHA256SUM）",
                 path.display()
             ));
         }
@@ -353,21 +355,21 @@ pub fn open_bundle(
     // 随安装包分发的内置精简集：先做**显式**前置检查（ADR-0016 决策 2：缺失/损坏不得静默回退网络）。
     if let BundleSource::Shipped(path) = source {
         if !path.exists() {
-            return Err(format!("内置宏包集文件不存在：{}。{SHIPPED_BUNDLE_HINT}", path.display()));
+            return Err(format!("内置精简宏包集文件不存在：{}。{SHIPPED_BUNDLE_HINT}", path.display()));
         }
         let meta = std::fs::metadata(path)
-            .map_err(|e| format!("内置宏包集读不到（{}）：{e}。{SHIPPED_BUNDLE_HINT}", path.display()))?;
+            .map_err(|e| format!("内置精简宏包集读不到（{}）：{e}。{SHIPPED_BUNDLE_HINT}", path.display()))?;
         if meta.is_file() && meta.len() == 0 {
-            return Err(format!("内置宏包集文件是空的：{}。{SHIPPED_BUNDLE_HINT}", path.display()));
+            return Err(format!("内置精简宏包集文件是空的：{}。{SHIPPED_BUNDLE_HINT}", path.display()));
         }
         return match detect_bundle(path_to_file_url(path), only_cached, cache_dir) {
             Ok(Some(b)) => Ok(Some(b)),
             Ok(None) => Err(format!(
-                "内置宏包集无法识别：{}（安装包自带的 .zip/目录 bundle 形态不对）。{SHIPPED_BUNDLE_HINT}",
+                "内置精简宏包集无法识别：{}（安装包自带的 .zip/目录形态不对）。{SHIPPED_BUNDLE_HINT}",
                 path.display()
             )),
             Err(e) => Err(format!(
-                "内置宏包集打开失败（{}）：{e:#}。{SHIPPED_BUNDLE_HINT}",
+                "内置精简宏包集打开失败（{}）：{e:#}。{SHIPPED_BUNDLE_HINT}",
                 path.display()
             )),
         };
@@ -386,8 +388,8 @@ pub fn open_bundle(
         Ok(Some(b)) => Ok(Some(b)),
         Ok(None) => {
             let mut msg = format!(
-                "bundle 源无法识别：{src}。本地目录或文件请写成 file:///… 或相对路径；\
-                 网络宏包集需要此版本支持在线 bundle"
+                "宏包集来源无法识别：{src}。本地目录宏包集请填文件夹路径（如 E:\\bundles\\tex）\
+                 或 file:///… 绝对路径；在线完整宏包集需要此版本支持联网获取"
             );
             if matches!(source, BundleSource::Default) {
                 msg.push('。');
@@ -396,7 +398,7 @@ pub fn open_bundle(
             Err(msg)
         }
         Err(e) => {
-            let mut msg = format!("bundle 打开失败（{src}）：{e:#}");
+            let mut msg = format!("宏包集打开失败（{src}）：{e:#}");
             // D2：网络兜底是**产品默认路径**，失败时必须给用户可行动的出路（设置面板 / 环境变量）。
             if matches!(source, BundleSource::Default) {
                 msg.push('。');
@@ -666,7 +668,7 @@ mod tests {
             BundleSource::Explicit(format!("file:///{}", empty.dir.display()).replace('\\', "/")),
             "空目录 bundle",
         );
-        assert!(err.contains("目录是空的"), "{err}");
+        assert!(err.contains("本地目录宏包集是空的"), "{err}");
 
         let no_sum = TempDir::new("nosum");
         std::fs::write(no_sum.dir.join("article.cls"), "x").expect("写占位文件");
@@ -744,6 +746,9 @@ mod tests {
         assert!(DEFAULT_BUNDLE_HINT.contains(crate::BUNDLE_ENV), "{}", DEFAULT_BUNDLE_HINT);
         assert!(DEFAULT_BUNDLE_HINT.contains("SHA256SUM"), "{}", DEFAULT_BUNDLE_HINT);
         assert!(DEFAULT_BUNDLE_HINT.contains("file:///"), "{}", DEFAULT_BUNDLE_HINT);
+        // A-08：设置面板直接填 Windows 路径即可（应用会归一化），不再要求用户先转 file:///
+        assert!(DEFAULT_BUNDLE_HINT.contains("E:\\bundles\\tex"), "{}", DEFAULT_BUNDLE_HINT);
+        assert!(!DEFAULT_BUNDLE_HINT.contains("不要写"), "{}", DEFAULT_BUNDLE_HINT);
     }
 
     // ---------------------------------------------------------------- 本地路径 → file:// URL（T19 阻断回归）
@@ -813,10 +818,13 @@ mod tests {
     fn missing_shipped_bundle_gives_actionable_no_silent_fallback_message() {
         let missing = TempDir::new("shipped-missing").dir.join("tectonic-bundle.zip");
         let err = must_fail(BundleSource::Shipped(missing.clone()), "内置集缺失");
-        assert!(err.contains("内置宏包集"), "{err}");
+        assert!(err.contains("内置精简宏包集"), "{err}");
         assert!(err.contains("重新安装"), "要指到修复安装：{err}");
         assert!(err.contains("在线完整宏包集"), "要给出显式切在线的出路：{err}");
-        assert!(err.contains("不会静默改用网络"), "必须声明不静默回退（ADR-0016 D2）：{err}");
+        assert!(
+            err.contains("不会自动切换到在线宏包集"),
+            "必须声明不自动换源（ADR-0016 D2）：{err}"
+        );
     }
 
     /// 内置集是**目录 bundle**（离线/内网发行）时也要能打开并取到 digest（与 zip 同一口径）。

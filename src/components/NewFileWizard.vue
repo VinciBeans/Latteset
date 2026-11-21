@@ -30,7 +30,7 @@ const emit = defineEmits<{
 /** 面向新手只放两种语言 / 四种类型：`ctex*` 与标准类一一对应，多一个选项就多一次犹豫。 */
 const LANGS: { value: DocLanguage; label: string; hint: string }[] = [
   { value: "chinese", label: "中文", hint: "用 ctex 文档类，中文开箱可用" },
-  { value: "english", label: "English", hint: "用标准文档类" },
+  { value: "english", label: "英文", hint: "用标准文档类" },
 ];
 
 const KINDS: { value: DocKind; label: string; hint: string }[] = [
@@ -89,6 +89,7 @@ function confirm() {
     <div
       class="wizard-panel"
       role="dialog"
+      aria-modal="true"
       aria-label="新建 LaTeX 文档"
       tabindex="-1"
       @keydown.esc.prevent="emit('cancel')"
@@ -96,12 +97,12 @@ function confirm() {
       <header class="panel-head">
         <span class="head-icon">📄</span>
         <span class="head-title">新建 LaTeX 文档</span>
-        <button class="head-close" title="取消（不会创建文件）" @click="emit('cancel')">×</button>
+        <button class="head-close" title="取消（不会创建文件）" aria-label="取消" @click="emit('cancel')">×</button>
       </header>
 
       <form class="panel-body" @submit.prevent="confirm">
         <p class="lead">
-          这是项目里的第一份文档：选一下要写什么，我们生成一份<b>可以直接编译</b>的骨架。
+          这是项目里的第一份文档：选一下要写什么，Latteset 生成一份<b>可以直接编译</b>的起步文档。
           <code>{{ fileName }}</code>
         </p>
 
@@ -159,7 +160,7 @@ function confirm() {
 
         <div class="field">
           <span class="field-label">将写入的内容</span>
-          <pre class="preview" data-testid="wizard-preview">{{ previewFailed ? "（预览不可用，创建时仍会生成骨架）" : preview }}</pre>
+          <pre class="preview" data-testid="wizard-preview">{{ previewFailed ? "（预览不可用，创建时仍会生成起步文档）" : preview }}</pre>
         </div>
 
         <p class="err" v-if="error">{{ error }}</p>
@@ -167,7 +168,6 @@ function confirm() {
 
       <footer class="panel-foot">
         <span class="foot-hint">
-          不想要这一步？在「设置 → 编译」里关掉「新建文件向导」即可。
           <button class="link" :disabled="busy" data-testid="wizard-folder" @click="emit('folder')">
             或者先建个文件夹
           </button>

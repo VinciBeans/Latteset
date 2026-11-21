@@ -6,9 +6,11 @@
    即改即存：store.update(patch) 后端写盘 + 广播 settings-changed，面板从 store 同步回显。 -->
 <script setup lang="ts">
 import { computed, onMounted, ref } from "vue";
+import { getVersion } from "@tauri-apps/api/app";
 import { useSettingsStore } from "../stores/settings";
 import { ipc } from "../services/ipc";
 import { bundleSourceKind, bundleSourceLabel, ONLINE_BUNDLE_URL } from "../services/bundleSource";
+import ConfirmDialog from "./ConfirmDialog.vue";
 import type { BundleSourceKind } from "../services/bundleSource";
 import type { CompileMode, UiTheme } from "../bindings";
 
@@ -26,7 +28,7 @@ const tectonic = computed(
 
 const MODES: { value: CompileMode; label: string; hint: string }[] = [
   { value: "continuous", label: "连续编译", hint: "编辑停顿后自动编译（防抖时长见下）" },
-  { value: "on_save", label: "保存触发", hint: "手动点「编译」或保存时触发" },
+  { value: "on_save", label: "保存时编译", hint: "手动点「编译」或保存时触发" },
 ];
 
 /**
@@ -54,21 +56,65 @@ type TabId = (typeof TABS)[number]["id"];
  */
 const activeTab = ref<TabId>("appearance");
 
+/**
+ * 未应用输入（A-15/C-14）：文本框在失焦/回车时才提交；用户敲了但没确认就切页/关面板会丢输入。
+ * 这里只做**提示 + 二次确认**（不替用户提交，避免把没想好的值写进设置）。
+ */
+const pendingInput = computed(() => {
+  const s = settings.value;
+  if (!s) return false;
+  // `type="number"` 的 v-model 会把值转成 number ⇒ 统一转字符串比较（快照存的是字符串）。
+  return (
+    String(debounceInput.value) !== String(s.compile.debounce_ms) ||
+    String(timeoutInput.value) !== String(s.compile.timeout_secs) ||
+    String(rootFileInput.value).trim() !== (s.root_file ?? "")
+  );
+});
+/** 待确认的离开动作：切页（记住目标页）或关闭面板。 */
+const pendingAction = ref<{ kind: "tab"; tab: TabId } | { kind: "close" } | null>(null);
+
+function requestTab(tab: TabId) {
+  if (tab === activeTab.value) return;
+  if (pendingInput.value) {
+    pendingAction.value = { kind: "tab", tab };
+    return;
+  }
+  activeTab.value = tab;
+}
+
+function requestClose() {
+  if (pendingInput.value) {
+    pendingAction.value = { kind: "close" };
+    return;
+  }
+  emit("close");
+}
+
+function discardPendingAndProceed() {
+  const action = pendingAction.value;
+  pendingAction.value = null;
+  if (!action) return;
+  if (action.kind === "tab") activeTab.value = action.tab;
+  else emit("close");
+}
+
 /** 左右方向键切页（tablist 的键盘约定）。 */
 function onTabKey(e: KeyboardEvent) {
   const i = TABS.findIndex((t) => t.id === activeTab.value);
-  if (e.key === "ArrowRight") activeTab.value = TABS[(i + 1) % TABS.length].id;
-  else if (e.key === "ArrowLeft") activeTab.value = TABS[(i - 1 + TABS.length) % TABS.length].id;
-  else if (e.key === "Home") activeTab.value = TABS[0].id;
-  else if (e.key === "End") activeTab.value = TABS[TABS.length - 1].id;
+  let next: TabId | null = null;
+  if (e.key === "ArrowRight") next = TABS[(i + 1) % TABS.length].id;
+  else if (e.key === "ArrowLeft") next = TABS[(i - 1 + TABS.length) % TABS.length].id;
+  else if (e.key === "Home") next = TABS[0].id;
+  else if (e.key === "End") next = TABS[TABS.length - 1].id;
   else return;
   e.preventDefault();
+  requestTab(next);
 }
 
 /** 主题（roadmap ⑩）：全局设置，即点即存。"跟随系统"由前端监听 prefers-color-scheme 落实。 */
 const THEMES: { value: UiTheme; label: string; hint: string }[] = [
-  { value: "light", label: "浅色", hint: "Candy Desk（默认）" },
-  { value: "dark", label: "深色", hint: "夜间态：墨紫罗兰纸面 + 提亮的糖果色" },
+  { value: "light", label: "浅色", hint: "默认配色，明亮纸面" },
+  { value: "dark", label: "深色", hint: "暗色纸面，适合夜间" },
   { value: "system", label: "跟随系统", hint: "按操作系统的深浅色偏好切换" },
 ];
 const DEBOUNCE_MIN = 100;
@@ -83,6 +129,8 @@ const timeoutInput = ref("");
 const rootFileInput = ref("");
 const rootFileError = ref("");
 const lastAppliedRoot = ref("");
+/** 越界调整的可见说明（B-23：不静默 clamp）。 */
+const rangeNote = ref("");
 
 // 打开时快照输入框（失焦提交后失焦时可能正在编辑）
 function snapshotInputs() {
@@ -96,22 +144,32 @@ function snapshotInputs() {
 }
 onMounted(snapshotInputs);
 
-/** 防抖提交：clamp + 仅变化才发 patch。 */
+/** 防抖提交：clamp + 仅变化才发 patch；越界时给出可见说明（B-23，不静默改值）。 */
 async function submitDebounce() {
   const s = settings.value;
   if (!s) return;
-  const n = Math.min(DEBOUNCE_MAX, Math.max(DEBOUNCE_MIN, Number(debounceInput.value)));
+  const raw = Number(debounceInput.value);
+  const n = Math.min(DEBOUNCE_MAX, Math.max(DEBOUNCE_MIN, raw));
   const v = Number.isFinite(n) ? Math.round(n) : s.compile.debounce_ms;
+  rangeNote.value =
+    Number.isFinite(raw) && raw !== v
+      ? `防抖已调整为 ${v} 毫秒（允许范围 ${DEBOUNCE_MIN}–${DEBOUNCE_MAX}）`
+      : "";
   debounceInput.value = String(v);
   if (v !== s.compile.debounce_ms) await store.update({ debounce_ms: v });
 }
 
-/** 超时提交：clamp + 仅变化才发 patch。 */
+/** 超时提交：clamp + 仅变化才发 patch；越界时给出可见说明（B-23，不静默改值）。 */
 async function submitTimeout() {
   const s = settings.value;
   if (!s) return;
-  const n = Math.min(TIMEOUT_MAX, Math.max(TIMEOUT_MIN, Number(timeoutInput.value)));
+  const raw = Number(timeoutInput.value);
+  const n = Math.min(TIMEOUT_MAX, Math.max(TIMEOUT_MIN, raw));
   const v = Number.isFinite(n) ? Math.round(n) : s.compile.timeout_secs;
+  rangeNote.value =
+    Number.isFinite(raw) && raw !== v
+      ? `超时已调整为 ${v} 秒（允许范围 ${TIMEOUT_MIN}–${TIMEOUT_MAX}）`
+      : "";
   timeoutInput.value = String(v);
   if (v !== s.compile.timeout_secs) await store.update({ timeout_secs: v });
 }
@@ -176,8 +234,11 @@ async function applyRootFile() {
   lastAppliedRoot.value = target;
 }
 
-/** 恢复默认（编译各项 → 默认值；root_file 不动）。引擎已无「可选」一说（ADR-0015），不写 `engine` 键。 */
+/** A-14：恢复默认是"一次改多项"的动作 ⇒ 先弹二次确认，并把影响范围写清楚。 */
+const resetConfirm = ref(false);
+
 async function resetDefaults() {
+  resetConfirm.value = false;
   await store.update({
     mode: "continuous",
     debounce_ms: 500,
@@ -185,8 +246,22 @@ async function resetDefaults() {
     // 向导也是"编译"页的项 ⇒ 一并回默认开（按钮的字面意思就是"恢复默认"）
     new_file_wizard: true,
   });
+  rangeNote.value = "";
   snapshotInputs();
 }
+
+/** A-06：关于页版本号来自运行时（`getVersion()`，不硬编码、不新增后端命令）。 */
+const appVersion = ref("");
+async function loadVersion() {
+  // 单测/纯浏览器里没有 Tauri 运行时：静默跳过，别让面板挂载失败。
+  if (!(window as unknown as { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__) return;
+  try {
+    appVersion.value = await getVersion();
+  } catch (e) {
+    console.error("读取版本号失败：", e);
+  }
+}
+onMounted(loadVersion);
 
 // ---------------------------------------------------------------- Tectonic 资源（⑫ 里程碑）
 
@@ -263,11 +338,11 @@ async function applyBundle() {
   resourceError.value = "";
   const raw = bundleInput.value.trim();
   if (raw === "") {
-    resourceError.value = "本地目录不能为空；想用内置宏包集请点「内置（默认）」";
+    resourceError.value = "本地目录不能为空；想用内置精简宏包集请点「内置精简宏包集」";
     return;
   }
   if (/^https?:\/\//i.test(raw)) {
-    resourceError.value = "网络地址请用「在线完整」选项，不要填在本地目录里";
+    resourceError.value = "网络地址请用「在线完整宏包集」选项，不要填在本地目录里";
     return;
   }
   if (raw === bundleDisplay(tectonic.value.bundle)) return;
@@ -321,12 +396,12 @@ async function openLicenses(kind: "notices" | "sources") {
 </script>
 
 <template>
-  <div class="settings-backdrop" @click.self="emit('close')">
-    <div class="settings-panel" role="dialog" aria-label="设置">
+  <div class="settings-backdrop" @click.self="requestClose">
+    <div class="settings-panel" role="dialog" aria-modal="true" aria-label="设置">
       <header class="panel-head">
         <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M19.14 12.94c.04-.3.06-.61.06-.94 0-.32-.02-.64-.07-.94l2.03-1.58c.18-.14.23-.41.12-.61l-1.92-3.32c-.12-.22-.37-.29-.59-.22l-2.39.96c-.5-.38-1.03-.7-1.62-.94l-.36-2.54c-.04-.24-.24-.41-.48-.41h-3.84c-.24 0-.43.17-.47.41l-.36 2.54c-.59.24-1.13.57-1.62.94l-2.39-.96c-.22-.08-.47 0-.59.22L2.74 8.87c-.12.21-.08.47.12.61l2.03 1.58c-.05.3-.09.63-.09.94s.02.64.07.94l-2.03 1.58c-.18.14-.23.41-.12.61l1.92 3.32c.12.22.37.29.59.22l2.39-.96c.5.38 1.03.7 1.62.94l.36 2.54c.05.24.24.41.48.41h3.84c.24 0 .44-.17.47-.41l.36-2.54c.59-.24 1.13-.56 1.62-.94l2.39.96c.22.08.47 0 .59-.22l1.92-3.32c.12-.22.07-.47-.12-.61l-2.01-1.58zM12 15.6c-1.98 0-3.6-1.62-3.6-3.6s1.62-3.6 3.6-3.6 3.6 1.62 3.6 3.6-1.62 3.6-3.6 3.6z"/></svg>
         <span class="head-title">设置</span>
-        <button class="head-close" title="关闭" @click="emit('close')">×</button>
+        <button class="head-close" title="关闭" aria-label="关闭设置" @click="requestClose">×</button>
       </header>
 
       <!-- 标签栏：**下划线式**（而不是面板里选值用的胶囊式）——两级控件要一眼分得开：
@@ -341,7 +416,7 @@ async function openLicenses(kind: "notices" | "sources") {
           :aria-selected="activeTab === t.id"
           :aria-controls="`tabpanel-${t.id}`"
           :tabindex="activeTab === t.id ? 0 : -1"
-          @click="activeTab = t.id"
+          @click="requestTab(t.id)"
         >
           {{ t.label }}
         </button>
@@ -352,14 +427,16 @@ async function openLicenses(kind: "notices" | "sources") {
         <section class="sec" v-if="activeTab === 'appearance'" id="tabpanel-appearance" role="tabpanel">
           <h3 class="sec-title">外观</h3>
           <div class="field">
-            <label class="field-label" for="set-theme">主题</label>
-            <div class="mode-seg" id="set-theme">
+            <span class="field-label" id="set-theme-label">主题</span>
+            <div class="mode-seg" id="set-theme" role="radiogroup" aria-labelledby="set-theme-label">
               <button
                 v-for="t in THEMES"
                 :key="t.value"
                 class="seg-btn"
                 :class="{ on: themeOf(settings) === t.value }"
                 :title="t.hint"
+                role="radio"
+                :aria-checked="themeOf(settings) === t.value"
                 @click="setTheme(t.value)"
               >{{ t.label }}</button>
             </div>
@@ -372,14 +449,16 @@ async function openLicenses(kind: "notices" | "sources") {
           <h3 class="sec-title">编译</h3>
 
           <div class="field">
-            <label class="field-label" for="set-mode">编译模式</label>
-            <div class="mode-seg" id="set-mode">
+            <span class="field-label" id="set-mode-label">编译模式</span>
+            <div class="mode-seg" id="set-mode" role="radiogroup" aria-labelledby="set-mode-label">
               <button
                 v-for="m in MODES"
                 :key="m.value"
                 class="seg-btn"
                 :class="{ on: settings.compile.mode === m.value }"
                 :title="m.hint"
+                role="radio"
+                :aria-checked="settings.compile.mode === m.value"
                 @click="setMode(m.value)"
               >{{ m.label }}</button>
             </div>
@@ -388,25 +467,29 @@ async function openLicenses(kind: "notices" | "sources") {
 
           <!-- 新建向导（roadmap ㊺ §6.13.1-A）：只影响"空项目里建第一个 .tex"那一次 -->
           <div class="field">
-            <label class="field-label" for="set-wizard">新建文件向导</label>
-            <div class="mode-seg" id="set-wizard">
+            <span class="field-label" id="set-wizard-label">新建文件向导</span>
+            <div class="mode-seg" id="set-wizard" role="radiogroup" aria-labelledby="set-wizard-label">
               <button
                 class="seg-btn"
                 :class="{ on: wizardOn }"
-                title="在空项目里新建第一个 .tex 时问一次「文档语言 / 类型 / 标题」，直接生成能编译的骨架"
+                title="新建首个文档时询问"
+                role="radio"
+                :aria-checked="wizardOn"
                 @click="setWizard(true)"
               >开</button>
               <button
                 class="seg-btn"
                 :class="{ on: !wizardOn }"
                 title="新建 .tex 一律得到空文件（已有根文档的项目本来就不会弹）"
+                role="radio"
+                :aria-checked="!wizardOn"
                 @click="setWizard(false)"
               >关</button>
             </div>
             <p class="field-hint">
               {{ wizardOn
-                ? "仅在「项目里还没有根文件」时、新建第一个 .tex 时弹一次；已有根文件的项目不受影响"
-                : "关闭：新建 .tex 得到空文件（需要自己写 \\documentclass）" }}
+                ? "空项目新建第一个 .tex 时询问文档语言 / 类型 / 标题，生成可直接编译的起步文档；已有根文件的项目不受影响"
+                : "关闭后，新建 .tex 得到空文件" }}
             </p>
           </div>
 
@@ -424,6 +507,7 @@ async function openLicenses(kind: "notices" | "sources") {
                 @blur="submitDebounce"
                 @keydown.enter="($event.target as HTMLInputElement).blur()"
               />
+              <p class="field-hint">范围 {{ DEBOUNCE_MIN }}–{{ DEBOUNCE_MAX }} 毫秒（默认 500）</p>
             </div>
             <div class="field">
               <label class="field-label" for="set-timeout">超时（秒）</label>
@@ -438,22 +522,25 @@ async function openLicenses(kind: "notices" | "sources") {
                 @blur="submitTimeout"
                 @keydown.enter="($event.target as HTMLInputElement).blur()"
               />
+              <p class="field-hint">范围 {{ TIMEOUT_MIN }}–{{ TIMEOUT_MAX }} 秒（默认 120）</p>
             </div>
           </div>
+          <!-- B-23：越界被调整时说一句，不静默改值 -->
+          <p class="field-hint err" v-if="rangeNote" data-testid="range-note">{{ rangeNote }}</p>
         </section>
 
         <!-- 项目：只影响当前项目的覆盖项 -->
         <section class="sec" v-if="activeTab === 'project'" id="tabpanel-project" role="tabpanel">
           <h3 class="sec-title">项目</h3>
           <div class="field">
-            <label class="field-label" for="set-root">根文件（覆盖自动探测）</label>
+            <label class="field-label" for="set-root">根文件（留空 = 自动探测）</label>
             <div class="root-row">
               <input
                 id="set-root"
                 class="input"
                 type="text"
                 spellcheck="false"
-                placeholder="main.tex / chapters/main.tex（留空 = 自动探测）"
+                placeholder="main.tex / chapters/main.tex"
                 v-model="rootFileInput"
                 @keydown.enter="applyRootFile"
               />
@@ -463,10 +550,10 @@ async function openLicenses(kind: "notices" | "sources") {
                 :disabled="!settings.root_file && !rootFileInput"
                 title="清除项目覆盖，回到自动探测"
                 @click="rootFileInput = ''; applyRootFile()"
-              >清除</button>
+              >恢复自动探测</button>
             </div>
             <p class="field-hint" :class="{ err: rootFileError }">
-              {{ rootFileError || (settings.root_file ? `当前覆盖：${settings.root_file}` : "留空时自动探测根文件") }}
+              {{ rootFileError || (settings.root_file ? `当前覆盖：${settings.root_file}` : "未设置覆盖") }}
             </p>
           </div>
         </section>
@@ -476,30 +563,41 @@ async function openLicenses(kind: "notices" | "sources") {
         <section class="sec" v-if="activeTab === 'engine'" id="tabpanel-engine" role="tabpanel">
           <h3 class="sec-title">编译引擎（Tectonic）</h3>
           <p class="field-hint">
-            引擎固定为 <b>内嵌 Tectonic</b>：自带宏包集，不依赖本机 TeX Live / latexmk；不提供其它引擎或驱动形态。
+            引擎固定为 <b>内嵌 Tectonic</b>：自带宏包集，不依赖本机 TeX Live / latexmk；不提供其它引擎。
           </p>
 
           <div class="field">
-            <label class="field-label" for="set-bundle-path">宏包集（bundle）来源</label>
-            <div class="mode-seg" id="set-bundle-source">
+            <span class="field-label" id="set-bundle-source-label">宏包集（bundle）来源</span>
+            <div
+              class="mode-seg"
+              id="set-bundle-source"
+              role="radiogroup"
+              aria-labelledby="set-bundle-source-label"
+            >
               <button
                 class="seg-btn"
                 :class="{ on: bundleMode === 'shipped' }"
-                title="随安装包分发的精简宏包集：离线可用、覆盖常用文档；缺包时再切在线完整集"
+                title="内置精简宏包集：随安装包分发，离线可用、覆盖常用文档；缺包时可切在线完整宏包集"
+                role="radio"
+                :aria-checked="bundleMode === 'shipped'"
                 @click="setBundleMode('shipped')"
-              >内置（默认）</button>
+              >内置精简宏包集</button>
               <button
                 class="seg-btn"
                 :class="{ on: bundleMode === 'online' }"
                 title="在线完整宏包集：需联网，覆盖全部常用 TeX 宏包；不会自动切换，需你显式选择"
+                role="radio"
+                :aria-checked="bundleMode === 'online'"
                 @click="setBundleMode('online')"
-              >在线完整</button>
+              >在线完整宏包集</button>
               <button
                 class="seg-btn"
                 :class="{ on: bundleMode === 'local' }"
-                title="使用本地目录中的宏包集：离线/内网部署或自备（需是本产品可识别的宏包集目录）"
+                title="本地目录宏包集：离线/内网部署或自备（需是 Latteset 可识别的宏包集目录）"
+                role="radio"
+                :aria-checked="bundleMode === 'local'"
                 @click="setBundleMode('local')"
-              >本地目录</button>
+              >本地目录宏包集</button>
             </div>
             <div class="root-row" v-if="bundleMode === 'local'" style="margin-top: 6px">
               <input
@@ -507,6 +605,7 @@ async function openLicenses(kind: "notices" | "sources") {
                 class="input"
                 type="text"
                 spellcheck="false"
+                aria-label="本地目录宏包集路径"
                 placeholder="E:/bundles/tex  或  bundles/tex"
                 v-model="bundleInput"
                 @keydown.enter="applyBundle"
@@ -515,10 +614,10 @@ async function openLicenses(kind: "notices" | "sources") {
             </div>
             <p class="field-hint" id="set-bundle-current">{{ currentBundleLabel }}</p>
             <p class="field-hint" v-if="bundleMode === 'shipped'">
-              内置精简集不是完整 TeX Live：文档用到集合外的宏包时会报缺文件，届时可切「在线完整」或把宏包补进本地目录。
+              内置精简宏包集不是完整 TeX Live：文档用到集合外的宏包时会报缺文件，届时可切「在线完整宏包集」或把宏包补进本地目录宏包集。
             </p>
             <p class="field-hint" v-else-if="bundleMode === 'online'">
-              在线完整集首次编译需联网（之后离线复用缓存）；换来源不会自动回退，失败会显式报错。
+              在线完整宏包集首次编译需联网（之后离线复用缓存）；换来源不会自动回退，失败会显式报错。
             </p>
           </div>
 
@@ -530,7 +629,7 @@ async function openLicenses(kind: "notices" | "sources") {
                 class="input"
                 type="text"
                 spellcheck="false"
-                placeholder="留空 = 应用缓存目录"
+                placeholder="留空 = 程序缓存目录"
                 v-model="cacheInput"
                 @keydown.enter="applyCacheDir"
               />
@@ -538,12 +637,12 @@ async function openLicenses(kind: "notices" | "sources") {
               <button
                 class="btn small ghost"
                 :disabled="!tectonic.cache_dir"
-                title="回到应用缓存目录"
+                title="回到程序缓存目录"
                 @click="cacheInput = ''; applyCacheDir()"
-              >清除</button>
+              >用默认目录</button>
             </div>
             <p class="field-hint">
-              可留空（用应用缓存目录）；填写时必须是绝对路径。缓存文件（约 24 MB）<b>不会</b>落进你的项目目录。
+              可留空（用程序缓存目录）；填写时必须是绝对路径。缓存文件<b>不会</b>落进你的项目目录。
             </p>
           </div>
 
@@ -556,23 +655,23 @@ async function openLicenses(kind: "notices" | "sources") {
         <section class="sec" v-if="activeTab === 'about'" id="tabpanel-about" role="tabpanel">
           <h3 class="sec-title">关于</h3>
           <p class="field-hint">
-            <b>Latteset</b>：LaTeX 编辑器。编译引擎固定为内嵌 <b>Tectonic</b>（MIT 许可，随产品静态链接），
+            <b>Latteset{{ appVersion ? ` ${appVersion}` : "" }}</b>：LaTeX 编辑器。编译引擎固定为内嵌 <b>Tectonic</b>（MIT 许可，随产品静态链接），
             不依赖本机 TeX Live / latexmk。
           </p>
 
           <div class="field">
             <label class="field-label">第三方组件</label>
             <p class="field-hint">
-              随安装包分发的精简宏包集以 LPPL 系许可为主，另含 OFL（amsfonts）、GFL（Latin Modern）、
+              内置精简宏包集以 LPPL 系许可为主，另含 OFL（amsfonts）、GFL（Latin Modern）、
               Knuth（CM）与 GPL 字体（Fandol / zapfding）等；Rust / C 依赖与逐包清单见第三方声明。
             </p>
             <p class="field-hint">
               内嵌引擎<b>不运行外部工具</b>：文档请求 biber 时参考文献可能未解析（biblatex 请用
               <code>backend=bibtex</code>，或先自行生成 <code>.bbl</code>）；makeindex / glossaries 也不会自动运行。
-              出现这类情况时，状态栏会给出提示，不会静默降级。
+              出现这类情况时，状态栏会给出提示。
             </p>
             <p class="field-hint">
-              GPL 字体的 Corresponding Source（Fandol 6 套 + zapfding AFM）随安装包分发在
+              GPL 字体的源码（Fandol 6 套 + zapfding AFM）随安装包分发在
               <code>licenses/sources/</code> 下。
             </p>
           </div>
@@ -601,10 +700,37 @@ async function openLicenses(kind: "notices" | "sources") {
       </div>
 
       <footer class="panel-foot">
-        <button class="btn small ghost" @click="resetDefaults">恢复默认</button>
+        <button class="btn small ghost" @click="resetConfirm = true">恢复编译项默认</button>
+        <!-- A-15/B-08：未应用的输入要有可见标记（关面板/切页前会二次确认，不直接丢） -->
+        <span v-if="pendingInput" class="foot-pending" data-testid="pending-inputs">· 有未应用的输入</span>
         <span class="foot-spacer" />
-        <button class="btn small primary" @click="emit('close')">完成</button>
+        <button class="btn small primary" @click="requestClose">关闭</button>
       </footer>
+
+      <!-- A-14：恢复默认的影响范围 -->
+      <ConfirmDialog
+        v-if="resetConfirm"
+        title="恢复编译项的默认值？"
+        :lines="[
+          '将重置：编译模式 = 连续编译、防抖 = 500 毫秒、超时 = 120 秒、新建文件向导 = 开。',
+          '根文件覆盖与引擎资源设置（宏包集 / 缓存目录）不受影响。',
+        ]"
+        confirm-label="恢复默认"
+        @confirm="resetDefaults"
+        @cancel="resetConfirm = false"
+      />
+      <!-- A-15/C-14：有未应用输入时，切页 / 关闭前确认，避免静默丢弃 -->
+      <ConfirmDialog
+        v-if="pendingAction"
+        title="有未应用的输入"
+        :lines="[
+          '当前页有改了但还没应用的输入（防抖 / 超时 / 根文件）。',
+          pendingAction.kind === 'tab' ? '切换分页会丢弃这些输入。' : '关闭设置面板会丢弃这些输入。',
+        ]"
+        confirm-label="丢弃并继续"
+        @confirm="discardPendingAndProceed"
+        @cancel="pendingAction = null"
+      />
     </div>
   </div>
 </template>
@@ -790,4 +916,6 @@ async function openLicenses(kind: "notices" | "sources") {
   flex: 0 0 auto;
 }
 .foot-spacer { flex: 1; }
+/* A-15：未应用输入的可见标记（不是错误，给中性提示色） */
+.foot-pending { font-size: 11px; color: var(--warn-ink); font-weight: 600; }
 </style>

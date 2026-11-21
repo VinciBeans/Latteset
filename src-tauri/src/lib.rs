@@ -123,7 +123,7 @@ pub fn run() {
                 if !path.exists() {
                     tracing::error!(
                         path = %path.display(),
-                        "内置精简宏包集缺失：安装包应带 tectonic-bundle.zip；不会回退网络（ADR-0016 决策 2）"
+                        "内置精简宏包集缺失：安装包应带 tectonic-bundle.zip；不会自动切换到在线宏包集（ADR-0016 决策 2；需用户在设置里显式选择）"
                     );
                 }
             }

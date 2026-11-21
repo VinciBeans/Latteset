@@ -12,11 +12,11 @@
 | 内嵌 Tectonic（真编） | `cargo test -p latteset-tectonic -- --ignored` | **闸门 = 编进来 + 有可用 bundle**（不再探测 PATH 上的 `tectonic`）：真编 / **预热后首编（`format_ms=0` + 页哈希一致）** / **随包 `Shipped` verbatim 真编**。T22 复核 **3 个用例全过（17.07 s）**；crate 全集 **65 passed / 3 ignored** |
 | headless（CLI / MCP） | `cargo test -p latteset-server`（`-- --ignored` 真编译） | `Session`（打开 / 读写 / 树 / 大纲 / 非 UTF-8 / 编译拒绝 / 配置目录 / D4 资源优先级）；lib **12 passed / 4 ignored** + cli **8 passed**（T22 复核） |
 | MCP 协议链路 | `cargo test -p latteset-server --test mcp_stdio` | **真实二进制 + stdio 管道**：握手 / `tools/list` / 工具往返 / 错误语义 / 逐调用切项目（**5 passed + 1 个 `#[ignore]`** 编译用例，闸门同上） |
-| 前端 | `npm run test`（`test:watch` 监视） | stores（project/editor/compile/preview/outline）、composables（useAutoSave / useIdleConvergence / useSyncTex / useTheme）、组件（ErrorList / RootFilePicker / SettingsPanel / StatusBar）、services（paths / fuzzy / draftPatch）；T22 复核 **17 files / 161 tests** |
+| 前端 | `npm run test`（`test:watch` 监视） | stores（project/editor/compile/preview/outline）、composables（useAutoSave / useIdleConvergence / useSyncTex / useTheme）、组件（ErrorList / RootFilePicker / SettingsPanel / StatusBar）、services（paths / fuzzy / draftPatch / **compileStatus / errorGroups**）；T38/T41 复核 **18 files / 189 tests**（T35–T42 文案批：T40 为 18/182、T41 定点复验 +7；覆盖 A-01/A-02/A-04/A-11/A-12/A-14/A-15/A-18/B-08/C-02/C-06/A-06 与 compile reset） |
 | 全仓 Rust（唯一入口） | `npm run lib:test` | 四个 crate 一起跑：core 269 + infra 40 + server 12+8+5（mcp_stdio）+ tectonic 65；T22 复核 **399 passed / 8 ignored**（8 个真编在各自 `--ignored` 下全过） |
 | **性能基线（六档，现行）** | `node scripts/bench-embedded.mjs`（先 `npm run lib:cli`、`node scripts/gen-bench-projects.mjs`） | 内嵌 release CLI 的六档 × `cold-format` / `cold-project` / `noop` / `noop2` / `edit`（A 闸门命中）/ `edit2`（真实改动），跨项目 format 命中、进程地板；每档 3 次中位 + min/max + 原始值；输出 JSON + Markdown；超预算/复现差>10%/档失败退出码 1。口径、预算与未覆盖项见 §性能基线 |
 | 交付前 | `npm run build` | `copy:pdf-worker` + `vue-tsc --noEmit` + `vite build` |
-| 绑定生成物 | 启动一次 debug 构建自动导出 `src/bindings.ts`（Tauri 测试二进制在本机起不来，`export_bindings` 捷径不可用）；T22 复核 **13/13 PASS**（命令 **19 条**，含 `openLicenses` / 事件 9 个与 Rust 一致） |
+| 绑定生成物 | 启动一次 debug 构建自动导出 `src/bindings.ts`（Tauri 测试二进制在本机起不来，`export_bindings` 捷径不可用）；T38/T41 复核 **13/13 PASS**（命令 **19 条**，含 `openLicenses` / 事件 9 个与 Rust 一致；`src/bindings.ts` 无 diff） |
 
 模块分工与各用例的判据见 [modules.md](./modules.md)；**现行**性能基线用 `node scripts/bench-embedded.mjs`（内嵌 release CLI，见下「性能基线（六档）」），`node scripts/bench.mjs` 是 latexmk/xelatex 时代的历史脚本（见「脚本失效说明」）。
 
@@ -39,7 +39,7 @@
 | # | 检查项 | 操作 | 期望 |
 |---|---|---|---|
 | 1 | 项目打开 | `manage_window list` 确认窗口 → `webview_screenshot` | 标题栏显示项目绝对路径；左栏文件树非空 |
-| 2 | 错误列表 | 点「编译」→ `webview_dom_snapshot` scoped `.error-list` | 条目两行式（原因 + `→` 建议）；头部「已诊断 N」；原始 `.log` 在 `title` |
+| 2 | 问题面板 | 点「编译」（先用会失败的夹具）→ `webview_dom_snapshot` scoped `.error-list` | 面板标题「问题」；条目两行式（原因 + `→` 建议，`.hint` 可换行完整显示）；头部计数为 `N 个问题`（与状态栏折叠头同源，无「已诊断 N」）；空态按未编译/排版中/完成三态显示 |
 | 3 | 错误跳转 | `webview_find_element .entry` 取几何 → `webview_interact` 点第 2 条 → 读 `.cursor-pos` | 状态栏行号变为该条目的 `:行号` |
 | 4 | 根文件选择器 | 打开多候选工程 → `webview_dom_snapshot` scoped `.picker-panel` → 点 `.file-row` | 弹窗列出候选（title 为绝对路径）；点选后弹窗关闭、`.needs-root` 匹配数归 0 |
 | 5 | 编译出 PDF | 点 `.btn.primary` → `webview_wait_for .page-wrap canvas` → `webview_screenshot` | 预览渲染出页面；页计数 `n / N` 正常 |
@@ -47,14 +47,18 @@
 | 7 | 反向 SyncTeX | `webview_find_element .page-wrap canvas` 取页几何 → 点击正文区 → 读状态栏 | 编辑器切到对应 `.tex` 且行号≈点击句所在行（`multifile` 实测点第 5 页正文 → `chapters/intro.tex` **Ln 3**，跨文件）。**点目录区**不打开生成的 `.toc`：工具条出现「此处来自自动生成的文件 main.toc…」或「已回落到最近的源码（main.tex:37）」提示 |
 | 8 | 中文路径渲染 | 用 `中文测试工程` 夹具重复 1/5 | 中文标题/目录/正文/公式正常渲染，`fetch` 无 404 |
 | 9 | 编辑期草稿 + 空闲收敛 | 点「编译」建产物 → **在编辑器里敲一行**（见下「如何在应用内输入文字」）→ 记录状态栏时间线 | `排版中…` → `就绪` + **「引用待更新」** → 约 2s 后再次 `排版中…`（空闲收敛的 Full）→ 提示消失；同 cycle 的 dev stdout / 日志与 `kind` 字段可区分实际强度（内嵌形态的 Quick 是请求强度：预算内收敛会如实报 Full，此时**不该**亮「引用待更新」） |
-| 10 | 超时诊断 + 一键提超时重试 | 设置面板把超时改 **5s** → 清掉 `tmp/` 制造首编 → 点「编译」→ 读 `.error-list .entry` | 状态栏「失败·超时」；列表一条：原因含「**引擎输出显示**已经排版到第 N 页——是在推进」（或「**引擎输出里**还没出现任何页面输出」）+ 建议 + 按钮**「提高到 900s 并重试」**（首编跳档）；点按钮后 `get_settings` 超时变为 900、编译启动并转「就绪」、条目消失。**证据口径**：证据 = 捕获的 `.log`（内嵌形态边写边在内存里）+ 引擎状态环尾部 + 已上报最大页，合并后判定。⚠ 该路径**真实超时未在阶段②真机跑过**（单测覆盖），跑之前先按 `test_file/phase2/REPORT-gates.md` 的记录补「真实超时真编 `[未测]`」状态。**注意**：这一项会把全局 `settings.json` 的超时改掉，验完记得改回 120 |
+| 10 | 超时诊断 + 一键提超时重试 | 设置面板把超时改 **5s** → 清掉 `tmp/` 制造首编 → 点「编译」→ 读 `.error-list .entry` | 状态栏「失败· 超时」；列表一条：原因含「**引擎输出显示**已经排版到第 N 页——是在推进」（或「**引擎输出里**还没出现任何页面输出」）+ 建议 + 按钮**「提高到 900s 并重试」**（首编跳档）；点按钮后 `get_settings` 超时变为 900、编译启动并转「就绪」、条目消失。**证据口径**：证据 = 捕获的 `.log`（内嵌形态边写边在内存里）+ 引擎状态环尾部 + 已上报最大页，合并后判定。⚠ 该路径**真实超时未在阶段②真机跑过**（单测覆盖），跑之前先按 `test_file/phase2/REPORT-gates.md` 的记录补「真实超时真编 `[未测]`」状态。**注意**：这一项会把全局 `settings.json` 的超时改掉，验完记得改回 120 |
 | 11 | SyncTeX 生成产物回落 | 点 PDF **目录区**（`multifile` 第 3 页中部，x≈20% 页宽 / y≈65–85% 页高）→ 读 `.sync-note` 与标签页 | 工具条提示「此处来自自动生成的文件 main.toc（…）」或「已回落到最近的源码（main.tex:37，向下探测）」；**标签页不得出现 `main.toc`**；提示约 5s 后自动消失 |
 | 12 | 正向 SyncTeX 高亮（`webview_interact` 无修饰键） | 用 Vite 预打包 URL 动态 import Monaco → `ed.setPosition(...)` → 对编辑器 DOM 派发 `mousedown/mouseup/click`（带 `ctrlKey: true`）→ 读 `.highlight` 的 `display/left/top` | 恰好一个 `.highlight` 为 `display: block` 且落在目标页；编辑器 `onMouseDown(ctrlKey)` 是真实入口，派发等价于用户 Ctrl+点击 |
 | 13 | 非 UTF-8 源文件提示 | 夹具 `中文GBK工程` → 展开 `子目录` → 点 `gbk.tex` → 读 `.open-error` 与标签页 | 状态栏出现中文提示「…不是 UTF-8 编码…另存为 UTF-8…」；**不开新标签**（此前是无人接的 rejection） |
 | 14 | 源码版模板提示 | 夹具 `源码版模板工程`（`\documentclass{nosuchthesis}` + `nosuchthesis.ins/.dtx`）→ 点「编译」→ 读第一条错误 | 「缺少文档类文件 nosuchthesis.cls」+「项目里有源码版模板文件 `nosuchthesis.ins`：先执行 `xelatex nosuchthesis.ins`…」（**必须是 `.ins`**，不能是 `.dtx`） |
 | 15 | 外部改 settings.json 生效 | 夹具 `多候选工程`（先把 `.latteset/settings.json` 置为 `{}` 并让它生效）→ 从**外部**写入 `{"root_file":"main.tex"}` → 看状态栏；随后改回 `{}` | 第一次：日志 `设置热更新：内存 root_file 已同步 from=None to=Some(…)` 且「未确定根文件」消失；改回：`from=Some(…) to=None` 且提示**回来**。**必须用非原子写法**（PowerShell `Set-Content` 就会"截断 → 写入"，正好覆盖竞态），原子替换测不出这条 |
 | 16 | 空目录第一条路：新建向导 | **空目录**起 dev（`VITE_LATTESET_PROJECT=<空目录>`）→ 点 `.new-file` `＋` → 输 `main.tex` + Enter → 向导里选语言/类型 → 点 `[data-testid=wizard-create]` | **打开空目录时不弹根文件选择器**（只有状态栏那条标签）；向导出现且**预览**随选项变；创建后文件落盘（含 `\documentclass`）、树里出现、编辑器打开、状态栏标签**消失**、日志出现 `打开项目…候选 1 个` → `手动编译` → `编译成功`，预览**自动**出图（不用点「编译」）。关掉设置里「新建文件向导」后重来一次：**不弹向导**、得到 0 B 空文件 |
-| 17 | 无根文档的静默重探测 | 有 `.tex` 但**没有 `\documentclass`** 的目录 → 确认状态栏出现「未确定根文件 · 点击选择」→ 在编辑器里补上 `\documentclass{article}` + 文档体（输入法见下节）→ 等自动保存（或 Ctrl+S） | 标签**消失**；磁盘上文件已写全；`main.pdf` **自动产出**；日志三段：`不触发编译：尚未确定根文件` → `打开项目…（根文件 Some(…)，候选 1 个）` → `手动编译` → `编译成功`。全程**无弹窗** |
+| 17 | 无根文档的静默重探测 | 有 `.tex` 但**没有 `\documentclass`** 的目录 → 确认状态栏出现「尚未指定根文件 · 点击选择」→ 在编辑器里补上 `\documentclass{article}` + 文档体（输入法见下节）→ 等自动保存（或 Ctrl+S） | 标签**消失**；磁盘上文件已写全；`main.pdf` **自动产出**；日志三段：`不触发编译：尚未确定根文件` → `打开项目…（根文件 Some(…)，候选 1 个）` → `手动编译` → `编译成功`。全程**无弹窗** |
+| 18 | 未编译态 / 四态（A-01/A-02/A-18） | ① 启动**无项目**：看状态栏与问题面板；② 打开项目**不编译**：看 phase chip 与空态；③ 点「编译」；④ 用失败夹具编译；⑤ **无在途编译**时切到另一个项目 | 无项目：**不渲染** phase chip、文件树提示「还没打开项目 / 点顶部「打开项目」开始」；未编译：灰「未编译」+ 灰圈「还没有编译」；进行中：`排队中…`/`排版中…` + 按钮「排版中…」disabled；成功：「就绪」+「✓没有发现问题」；失败：「失败· 内容错误」+ 问题条目；切项目：**仍是「未编译」**、旧错误不残留（T38 证据 `a01-*.json`）。⚠ 在途编译时切项目会触发 F1 已知债（见 [modules.md](./modules.md) §12.1），不在本条通过范围 |
+| 19 | 不可逆动作二次确认（A-11/A-14/A-15/C-10） | ① 外部改盘上文件 → 点状态栏「外部修改」chip；分别点 `取消` 与 `采用磁盘版本`；② 设置 → 编译页点「恢复编译项默认」→ 取消；③ 把防抖改成未应用值 → 点「关闭」/切页 | ① 先弹「采用磁盘上的版本？」（正文含"覆盖未保存的修改，且无法撤销"）；取消后冲突 chip 与本地内容都在，确认后才换成磁盘版本；② 弹「恢复编译项的默认值？」并列出将重置项，取消后输入值不变、不写 patch；③ 弹「有未应用的输入」，取消留在原页且输入不丢，确认「丢弃并继续」才继续（T38 证据 `a11b-conflict.json`、`final-items.json`） |
+| 20 | 深色 token / 无白块（C-15） | 设置里切深色 → 开搜索行 / 新建文件输入 / 文件树重命名 / 确认框 → 截图 + `getComputedStyle` | `<html data-theme="dark">`；`--surface/--text/--border` 均有定义（浅/深各一套）；可见元素**浅色/白色背景 0 处**；确认框面板/文字为深色（T38 证据 `c15-dark*.json`、`shot-dark-dialog-final.png`）。`[未测]` 三处未截到深色图：MathPreviewCard 深色、NewFileWizard 深色、FileTreeItem 重命名输入（静态 token 无回退已确认） |
+| 21 | 窗口标题是死通道（A-03，2026-11-21 证伪） | 真窗口内 CDP 执行 `document.title='PROBE-123'` → 读页面标题、CDP `/json` 标题与原生进程 `MainWindowTitle` | 页面/CDP 标题变 `PROBE-123`，**原生窗口标题仍是 `Latteset`**（Tauri v2/wry 不同步 ⇒ 不是生产可见通道）；生产 `dist/assets/*.js` 中 `document.title =` 写入 **0**、`Latteset \| reload` **0**、`__previewLastReload` 保留；dev 门控在 `PreviewPane.vue`；E2E 观测**仍用 `window.__previewLastReload`**（证据 `test_file/prose2/evidence/a03-*.json/txt`、`a03-prod-dist-grep.txt`） |
 
 **取预览耗时的一行命令**（第 6 步的具体形态）：
 
@@ -148,7 +152,7 @@ node scripts/synctex-report.mjs --projects=<dir> --recompile
 
 - **tauri-driver 不打印 "listening"**：`beforeSession` 靠字符串匹配会永久卡住；改成**轮询 127.0.0.1:4444 是否可连**（`net.connect`）。
 - **受限沙箱跑不起来**：见上「两个已知边界」；npm 缓存写 `%LocalAppData%` 也被拒，需把 `NPM_CONFIG_CACHE` 指到工作区。
-- **读取前端控制台**：pc-control 的 `screenshot` 返回 base64，需解码成图片再读；devtools 快捷键（F12/Ctrl+Shift+I）需窗口聚焦才生效。窗口标题不随 `document.title` 改变（Tauri 不同步），**不要**用它做观测通道。
+- **读取前端控制台**：pc-control 的 `screenshot` 返回 base64，需解码成图片再读；devtools 快捷键（F12/Ctrl+Shift+I）需窗口聚焦才生效。**窗口标题是死通道**——`document.title` 不随 Tauri 同步到原生窗口标题（T38 2026-11-21 真机证伪：页面标题改 `PROBE-123`、`MainWindowTitle` 仍是 `Latteset`；生产 `dist` 无 `document.title =` 写入，dev 门控在 `PreviewPane.vue`），**不要**用它做观测通道；E2E 仍读 `window.__previewLastReload`。
 - **`webview_keyboard` 无法向 Monaco 插入文本**：**不是 MCP 服务 bug**（`type` 能在普通 `<input>` 上写入 `hello`，实测）；**是 Monaco（EditContext 架构）对合成事件不响应的限制**。Monaco 可编辑区是 `.native-edit-context`（DIV，`role=textbox`，走 EditContext）；`press` 只派发 `keydown/keypress/keyup`（**全部 `isTrusted:false`，且不产生 `beforeinput`/`input`**），合成键不触发浏览器默认文本插入，故 Monaco 不写入。`type` 靠 set `value` + `input` 事件，仅对原生 input/textarea 有效，且对 Monaco 唯一 textarea `.ime-text-area`（**readonly** 的 IME 缓冲）无效。**凡是涉及 Monaco 文本编辑的自动化，用真实 OS 按键（pc-control，`isTrusted:true` 触发 EditContext 插入，已实测 `Q` 写入），或改用 Monaco `executeEdits` API**（需实例，MCP 触不到）。
 - **e2e 操作要点**：① **pc-control 打字前先 `Ctrl+Space` 关闭中文输入法**——否则 IME 会截走按键转义（实测 `% E2E_MARKER` 被 IME 吞掉/乱插）；② **状态栏「外部修改：文件名」可点击**——点击即从磁盘重载该文件（`acceptExternal`），用于外部修改冲突恢复（没有独立「重载」按钮时，此 span 即入口）；③ 原生目录对话框流程：`Ctrl+L` 聚焦地址栏 → 粘贴路径 → Enter → 再补 `Enter`（连按确认）即可选中并关闭。
 
@@ -295,5 +299,21 @@ $env:RUST_LOG = 'info'
 
 - 验收判据（T19）：进程→setup/Ready **126 ms**、后台预热 **992 ms**（不挡窗口）、`.fmt` **24,451,466 B** 落盘、首编 **`format_cached=true / format_ms=0`**；温启动 **144–171 ms**（`AlreadyCached`）；预热前后页哈希逐页相等（`--ignored` 真编用例 `prewarm_then_first_compile_hits_format_cache`）。
 - **两个已修缺陷（T19）**：① `lib:test` 特性耦合（`network-bundle` 打开后，在线源 + 冷缓存时预热会联网）→ `bundle::prewarm_plan` 零网络零写判定；② 随包 zip 的 Windows verbatim 路径（`\\?\…`）⇒ `path_to_file_url` 未剥前缀、`Url::to_file_path()` 失败 → 修复后预热/默认离线编译双绿（单测 + `Shipped` 真编）。**T22 B2**：CI 的 release CLI 构建改为**无条件前置**（代表集缓存命中但 rust-cache 无 release 产物时，离线首编曾必红）。**T22 B3**：GC / runner / 预热共用 `resolve_cache_dir`（设置 > env > 宿主），当前 digest 由同一 bundle 解析器给出、解析不出时 GC 整体不动。
-- **门禁数字（T22 复核）**：core 269 / infra 40 / tectonic **65+3ign** / server **12+4ign+8** / mcp_stdio **5+1ign** / `lib:test` **399 passed / 8 ignored**；`npm run build` 0 error；vitest **17 files / 161 tests**；bindings **13/13**（命令 19 条）；安装包体积 **NSIS 88.46 MiB / MSI 109.63 MiB ≤200 MB**。
+- **门禁数字（T22 复核）**：core 269 / infra 40 / tectonic **65+3ign** / server **12+4ign+8** / mcp_stdio **5+1ign** / `lib:test` **399 passed / 8 ignored**；`npm run build` 0 error；vitest **18 files / 189 tests**（T38/T41 最终快照；T22 时为 17/161，T35–T42 文案批新增 1 file / 28 tests）；bindings **13/13**（命令 19 条）；安装包体积 **NSIS 88.46 MiB / MSI 109.63 MiB ≤200 MB**。
 - **未覆盖**（详见 `test_file/phase3/REPORT-gates.md` §8）：NSIS 安装版冷/温启动与窗口内可编辑/About 点击 `[未测-会话环境限制]`；在线 → 随包**反向**切换未单独重测；真实超时真编、makeindex/glossaries 真编 `[未测]`；GC 与预热/编译的**并发对抗样例**未构造（单测已覆盖保留当前/解析不出不动）。**每进程 +200–240 ms 已归因：fontconfig 环境税（2026-11-21），不是代码回归。**
+
+## 文案一致性（T35–T42，2026-11-21）
+
+> 规范：[copy-guide.md](./copy-guide.md)；实现契约：[modules.md](./modules.md) §2.7 状态/文案派生、§9.1 services、§9.4 组件、§10 事件表。证据：`test_file/review-prose3/REPORT.md`（T40）、`REPORT2.md`（T41）、`test_file/prose2/REPORT-verify.md`（T38）。
+
+**门禁（T38 最终快照，19:16–19:20）**：`npm run build` **exit 0**（`✓ built in 13.20s`）；vitest **18 files / 189 tests passed**；`npm run lib:test` **399 passed / 8 ignored**（core 269 / infra 40 / server 12+4ign+8 / mcp_stdio 5+1ign / tectonic 65+3ign）；wrapper 环境下 `cargo check -p latteset --tests` **exit 0**；bindings **13/13 PASS**（命令 19 / 事件 9，`src/bindings.ts` 无 diff）。**日志**：`test_file/prose2/evidence/gate-*.log`。
+
+**真机抽验（T38，8 项全过）**：A-01/A-02 四态与未编译态、A-03 窗口标题、A-11 外部修改确认、A-14 恢复默认确认、A-15 未应用输入确认、A-06 版本号、C-15 深色 token、B-20/C-02 chip 展开不销毁；A-12 模式菜单键盘与 C-06 radiogroup 键盘可达另有真机证据（见「真机验收」#18–#21 与 T38 报告 §2）。**可见串扫描**：13 个内部/旧术语在用户可见串 **0 命中**（命中全在注释/测试/doc 注释）；`title=` 52、`aria-label` 15、`aria-labelledby` 4（T38 §4）。
+
+**A-03 结论（证伪）**：`document.title` → 原生窗口标题是**死通道**（Tauri v2/wry 不同步）；页面标题改 `PROBE-123` 时 `MainWindowTitle` 仍为 `Latteset`。T37 已把内部计时收进 `import.meta.env.DEV` 门控（`PreviewPane.vue`），**生产 `dist` 无 `document.title =` 写入**、`window.__previewLastReload` 保留用于 E2E；无需回改。
+
+**非阻断已知债（来自 T38，未在本轮修复）**：
+- **F1 跨项目在途编译事件泄漏**：编译 A 中切到 B，B 先显示「未编译」、约 **441 ms** 后被 A 的 `compile-status success` 覆写为「就绪」；事件无项目标识、`open_project` 不 abort 在途编译。登记 [modules.md](./modules.md) §12.1（`[待修]`，建议 abort 或事件带项目根过滤）。
+- **F2 切项目后旧项目标签页残留**：`openProjectInto` 不清 `openTabs`，标签栏可能同时含新旧 `main.tex`；疑似既有行为、非 60 条范围，登记 `[待复现/定级]`（[modules.md](./modules.md) §12.1），不写成已确认缺陷。
+
+**`[未测]` / 后续批**：C-01 全仓 `title` 规则系统性整改、C-04 图标体系、C-11 面板高度/自动展开、C-13 设置三入口收敛未做（T38 未复核）；C-15 的 MathPreviewCard/NewFileWizard/FileTreeItem 重命名输入三处深色未截到真机图（静态 token 无回退已确认）；A-14 确认后写盘 patch 的真机可观测面以单测为准。

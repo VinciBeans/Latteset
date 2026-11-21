@@ -20,6 +20,8 @@ import { useIdleConvergence } from "./composables/useIdleConvergence";
 import { ipc } from "./services/ipc";
 import { subscribeEvents } from "./services/events";
 import { errorText } from "./services/errors";
+import { groupErrors } from "./services/errorGroups";
+import { compileButtonText } from "./services/compileStatus";
 import { useTheme } from "./composables/useTheme";
 import SettingsPanel from "./components/SettingsPanel.vue";
 import RootFilePicker from "./components/RootFilePicker.vue";
@@ -43,13 +45,13 @@ const cursorCol = ref(0);
 /** 底部报告面板是否折叠（默认折叠，回收竖向空间给主编辑/预览区；点报告头展开）。 */
 const bottomCollapsed = ref(true);
 /**
- * 折叠头部摘要：**只在编译失败时**显示错误条数。
+ * 折叠头部摘要：**只在编译失败时**显示问题条数。
  *
- * 就绪 / 排版中… 不在这里出现——状态栏 phase chip 读的是同一个 compile store，
- * 两处一起渲染就是重复的「就绪」。折叠细条上独有的信息只有错误条数。
+ * 数字走 `services/errorGroups` 的**同一份口径**（同源错误去重后的组数）——与展开后
+ * 错误列表头部计数一致（A-18）；不能直接用 `compile.errors.length`（那是去重前的条数）。
  */
 const bottomStatus = computed(() =>
-  compile.hasError ? { text: `${compile.errors.length} 个错误` } : null,
+  compile.hasError ? { text: `${groupErrors(compile.errors).total} 个问题` } : null,
 );
 
 let unsubscribe: (() => void) | null = null;
@@ -96,6 +98,8 @@ onBeforeUnmount(() => {
 /** 打开项目公共流程：openProject → 打开根文件 → 重建大纲。返回 info 供调用方按需提示。 */
 async function openProjectInto(dir: string): Promise<ProjectInfo> {
   const info = await project.openProject(dir);
+  // B1：切项目必须清空上一项目的编译态（否则 B 未编译却显示 A 的「就绪」/旧错误）。
+  compile.reset();
   if (info.root_file) await editor.openFile(info.root_file);
   await outline.refresh();
   return info;
@@ -161,7 +165,7 @@ async function onRootPicked(relPath: string) {
 
 /** 打开项目（dialog 选文件夹）。 */
 async function chooseProject() {
-  const dir = await open({ directory: true, title: "打开 TeX 项目文件夹" });
+  const dir = await open({ directory: true, title: "选择项目文件夹" });
   if (!dir) return;
   try {
     const info = await openProjectInto(dir);
@@ -217,13 +221,13 @@ const settingsOpen = ref(false);
           @click="manualCompile"
         >
           <svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor"><path d="M4.5 2.8a1 1 0 0 1 1.53-.85l8 5.2a1 1 0 0 1 0 1.7l-8 5.2a1 1 0 0 1-1.53-.85V2.8Z"/></svg>
-          <span>{{ isRunning() ? "排版中…" : "编译" }}</span>
+          <span>{{ compileButtonText(compile.phase) }}</span>
         </button>
         <button class="btn ghost" :disabled="!isRunning()" @click="abort">
           <svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor"><rect x="3" y="3" width="10" height="10" rx="1.5"/></svg>
           <span>终止</span>
         </button>
-        <button class="btn icon" title="设置" @click="settingsOpen = true">
+        <button class="btn icon" title="设置" aria-label="设置" @click="settingsOpen = true">
           <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M19.14 12.94c.04-.3.06-.61.06-.94 0-.32-.02-.64-.07-.94l2.03-1.58c.18-.14.23-.41.12-.61l-1.92-3.32c-.12-.22-.37-.29-.59-.22l-2.39.96c-.5-.38-1.03-.7-1.62-.94l-.36-2.54c-.04-.24-.24-.41-.48-.41h-3.84c-.24 0-.43.17-.47.41l-.36 2.54c-.59.24-1.13.57-1.62.94l-2.39-.96c-.22-.08-.47 0-.59.22L2.74 8.87c-.12.21-.08.47.12.61l2.03 1.58c-.05.3-.09.63-.09.94s.02.64.07.94l-2.03 1.58c-.18.14-.23.41-.12.61l1.92 3.32c.12.22.37.29.59.22l2.39-.96c.5.38 1.03.7 1.62.94l.36 2.54c.05.24.24.41.48.41h3.84c.24 0 .44-.17.47-.41l.36-2.54c.59-.24 1.13-.56 1.62-.94l2.39.96c.22.08.47 0 .59-.22l1.92-3.32c.12-.22.07-.47-.12-.61l-2.01-1.58zM12 15.6c-1.98 0-3.6-1.62-3.6-3.6s1.62-3.6 3.6-3.6 3.6 1.62 3.6 3.6-1.62 3.6-3.6 3.6z"/></svg>
         </button>
       </div>
@@ -270,16 +274,15 @@ const settingsOpen = ref(false);
       <!-- 折叠头：状态摘要 + 折叠/展开 -->
       <button
         class="bottom-toggle"
-        :title="bottomCollapsed ? '展开报告' : '收起报告'"
+        :title="bottomCollapsed ? '展开问题' : '收起问题'"
         @click="bottomCollapsed = !bottomCollapsed"
       >
         <span class="caret">{{ bottomCollapsed ? "▸" : "▾" }}</span>
-        <span class="toggle-label">报告</span>
+        <span class="toggle-label">问题</span>
         <span v-if="bottomStatus" class="toggle-status">
           <span class="dot" />{{ bottomStatus.text }}
         </span>
         <span class="spacer" />
-        <span class="toggle-hint">{{ bottomCollapsed ? "展开" : "收起" }}</span>
       </button>
       <!-- 内容（折叠时隐藏）：错误列表（大纲已移至左侧栏） -->
       <div class="bottom-content" v-show="!bottomCollapsed">
@@ -287,7 +290,12 @@ const settingsOpen = ref(false);
       </div>
     </div>
 
-    <StatusBar :cursor-line="cursorLine" :cursor-col="cursorCol" @pick-root="openRootPicker" />
+    <StatusBar
+      :cursor-line="cursorLine"
+      :cursor-col="cursorCol"
+      @pick-root="openRootPicker"
+      @expand-problems="bottomCollapsed = false"
+    />
 
     <SettingsPanel v-if="settingsOpen" @close="settingsOpen = false" />
 
@@ -376,6 +384,11 @@ const settingsOpen = ref(false);
   --danger-tint-soft: #ffe9e5;
   --scroll-thumb: #c9c2e4;
   --scroll-thumb-hover: #b3aad6;
+  /* 组件级表面 token（C-15）：输入框/浮层等"自成一块的面"走这三项，
+     组件不再各自写死回退值（深色下会变白块）。 */
+  --surface: #ffffff;
+  --text: #2b2438;
+  --border: #d8d8e0;
   /* 实底强调色上的文字（主按钮 / 选中的分段按钮）。
      浅色：白字（底是深蓝莓）；深色：**翻成墨色**（底提亮成 #8a8cff，白字只有 2.4:1）——
      这是深色主题唯一必须"反转"的一对，实测见 design.md 的主题一节。 */
@@ -440,6 +453,10 @@ const settingsOpen = ref(false);
   --danger-tint-soft: #3a2530;
   --scroll-thumb: #3c3550;
   --scroll-thumb-hover: #4d4566;
+  /* 组件级表面 token（C-15）：深色下输入框/浮层保持"卡片面"，不是白块 */
+  --surface: #1f1b2c;
+  --text: #ece9f7;
+  --border: #372f49;
   /* 深色下实底强调色是**亮**的 ⇒ 上面的文字必须翻成墨色（白字只有 2.4:1，实测） */
   --on-accent: #16131f;
 }
@@ -569,7 +586,6 @@ html, body, #app { height: 100%; margin: 0; }body {
 }
 .bottom-toggle .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--coral); }
 .bottom-toggle .spacer { flex: 1 1 auto; }
-.bottom-toggle .toggle-hint { color: var(--ink-faint); font-size: 11px; font-weight: 500; letter-spacing: 0.5px; }
 .editor-area { display: flex; flex-direction: column; height: 100%; background: var(--card); }
 .editor-area > :last-child { flex: 1; min-height: 0; }
 .error-area { height: 100%; }

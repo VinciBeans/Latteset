@@ -448,7 +448,7 @@ fn run_xml_binary_requests_biber(text: &str) -> bool {
 ///
 /// 文案只给**本产品内真实可行的出路**（Tectonic 自带 bundle、不依赖 TeX Live；"换用完整 TeX Live"
 /// 在产品里没有对应操作，等于没给出路）。
-const BIBER_NOTICE: &str = "检测到该文档需要外部 biber（biblatex）：内嵌引擎不运行外部工具，\
+const BIBER_NOTICE: &str = "检测到该文档需要外部 biber（biblatex）：Latteset 内嵌引擎不运行外部工具，\
      引用/参考文献可能停在未解析状态（不会生成 .bbl）。出路：① biblatex 写 \
      \\usepackage[backend=bibtex]{biblatex}（走内建 BibTeX，正常生成 .bbl，改动最小）；\
      ② 或改用传统 \\bibliography{...} + \\bibliographystyle{...}（同样走内建 BibTeX）；\
@@ -456,11 +456,11 @@ const BIBER_NOTICE: &str = "检测到该文档需要外部 biber（biblatex）�
      本机 biber 的版本要与文档的 biblatex 匹配），或改用支持外部工具的其它构建流程；\
      ④ 先接受引用显示为空。";
 
-const MAKEINDEX_NOTICE: &str = "检测到文档需要 makeindex（索引）：本引擎不会自动运行 makeindex，\
-     生成的 PDF 里索引为空。出路：暂时去掉 \\makeindex/\\printindex（在正文里手工列出条目），或在命令行对 \
-     tmp/<stem>.idx 跑一次 makeindex 后再编译；也可以接受索引为空。";
+const MAKEINDEX_NOTICE: &str = "检测到文档需要 makeindex（索引）：Latteset 内嵌引擎不会自动运行 makeindex，\
+     生成的 PDF 里索引为空。出路：暂时去掉 \\makeindex/\\printindex（在正文里手工列出条目），或在命令行对项目里 \
+     该文档的 <stem>.idx 跑一次 makeindex 后再编译；也可以接受索引为空。";
 
-const GLOSSARIES_NOTICE: &str = "检测到文档需要 glossaries（术语表）：本引擎不会自动运行 \
+const GLOSSARIES_NOTICE: &str = "检测到文档需要 glossaries（术语表）：Latteset 内嵌引擎不会自动运行 \
      makeglossaries，术语表为空。出路：暂时去掉 \\makeglossaries/\\printglossaries，或在命令行跑一次 \
      makeglossaries 后再编译；也可以接受术语表为空。";
 
@@ -605,7 +605,7 @@ fn timeout_entry(
     };
     ErrorEntry {
         message: format!(
-            "内嵌引擎编译超过 {timeout_secs}s 上限，已请求中止（引擎随应用进程运行、无法强制结束）：\
+            "Latteset 内嵌引擎编译超过 {timeout_secs} 秒上限，已请求中止（引擎随应用进程运行、无法强制结束）：\
              {stop}。证据（引擎输出）：{}",
             facts.join("，")
         ),
@@ -1982,7 +1982,7 @@ mod tests {
     fn timeout_entry_carries_diagnosis_and_cooperative_cancel_wording() {
         let entry = timeout_entry(Duration::from_secs(120), true, Some(3), "[1] [2]\n", true);
         assert_eq!(entry.kind, ErrorKind::Timeout);
-        assert!(entry.message.contains("内嵌引擎编译超过 120s"), "{}", entry.message);
+        assert!(entry.message.contains("Latteset 内嵌引擎编译超过 120 秒"), "{}", entry.message);
         assert!(entry.message.contains("无法强制结束"), "{}", entry.message);
         assert!(entry.message.contains("证据（引擎输出）"), "{}", entry.message);
         assert!(entry.message.contains("已排版到第 2 页"), "{}", entry.message);
@@ -2545,7 +2545,7 @@ mod tests {
         match outcome {
             CompileOutcome::Timeout { entry } => {
                 assert_eq!(entry.kind, ErrorKind::Timeout);
-                assert!(entry.message.contains("内嵌引擎编译超过"), "{}", entry.message);
+                assert!(entry.message.contains("Latteset 内嵌引擎编译超过"), "{}", entry.message);
                 assert!(entry.message.contains("无法强制结束"), "{}", entry.message);
                 assert!(entry.diagnosis.is_some(), "超时必须带证据化诊断");
             }
